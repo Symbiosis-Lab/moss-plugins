@@ -1,5 +1,8 @@
 # moss-plugins
 
+[![Test](https://github.com/Symbiosis-Lab/moss-plugins/actions/workflows/test.yml/badge.svg)](https://github.com/Symbiosis-Lab/moss-plugins/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/Symbiosis-Lab/moss-plugins/graph/badge.svg)](https://codecov.io/gh/Symbiosis-Lab/moss-plugins)
+
 Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
 
 ## Plugins

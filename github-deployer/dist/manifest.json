@@ -1,0 +1,16 @@
+{
+  "name": "github-deployer",
+  "version": "1.0.0",
+  "description": "Deploy to GitHub Pages via GitHub Actions",
+  "author": "moss team",
+  "entry": "main.bundle.js",
+  "category": "deployer",
+  "global_name": "GitHubDeployer",
+  "icon": "icon.svg",
+  "config": {
+    "auto_commit": true
+  },
+  "config_schema": {
+    "auto_commit": "boolean"
+  }
+}

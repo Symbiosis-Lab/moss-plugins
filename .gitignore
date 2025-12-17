@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+target/
+
+# Build outputs (keep dist/ for now, will be gitignored later)
+# dist/
+
+# Coverage
+coverage/
+*.lcov
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Lock files (optional - remove if you want to track them)
+# package-lock.json
+# Cargo.lock

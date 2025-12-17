@@ -1,0 +1,144 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Detect which plugins changed
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      js_plugins: ${{ steps.changes.outputs.js_plugins }}
+      rust_plugins: ${{ steps.changes.outputs.rust_plugins }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed plugins
+        id: changes
+        run: |
+          # Get changed files
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1)
+          fi
+
+          # Find JavaScript plugins at root level (have package.json)
+          JS_PLUGINS="[]"
+          for dir in */; do
+            plugin_name=$(basename "$dir")
+            # Skip hidden directories and .github
+            if [[ "$plugin_name" == .* ]] || [[ "$plugin_name" == ".github" ]]; then
+              continue
+            fi
+            if [ -f "${dir}package.json" ]; then
+              if echo "$CHANGED_FILES" | grep -q "^$plugin_name/"; then
+                JS_PLUGINS=$(echo "$JS_PLUGINS" | jq -c ". + [\"$plugin_name\"]")
+              fi
+            fi
+          done
+
+          # Find Rust plugins at root level (have Cargo.toml)
+          RUST_PLUGINS="[]"
+          for dir in */; do
+            plugin_name=$(basename "$dir")
+            # Skip hidden directories and .github
+            if [[ "$plugin_name" == .* ]] || [[ "$plugin_name" == ".github" ]]; then
+              continue
+            fi
+            if [ -f "${dir}Cargo.toml" ]; then
+              if echo "$CHANGED_FILES" | grep -q "^$plugin_name/"; then
+                RUST_PLUGINS=$(echo "$RUST_PLUGINS" | jq -c ". + [\"$plugin_name\"]")
+              fi
+            fi
+          done
+
+          echo "js_plugins=$JS_PLUGINS" >> $GITHUB_OUTPUT
+          echo "rust_plugins=$RUST_PLUGINS" >> $GITHUB_OUTPUT
+          echo "Changed JS plugins: $JS_PLUGINS"
+          echo "Changed Rust plugins: $RUST_PLUGINS"
+
+  # Test JavaScript plugins
+  test-javascript:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.js_plugins != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJson(needs.detect-changes.outputs.js_plugins) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.plugin }}
+          npm ci
+
+      - name: Run tests with coverage
+        run: |
+          cd ${{ matrix.plugin }}
+          npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ matrix.plugin }}/coverage/lcov.info
+          flags: ${{ matrix.plugin }}
+          name: ${{ matrix.plugin }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Test Rust plugins
+  test-rust:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_plugins != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJson(needs.detect-changes.outputs.rust_plugins) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run tests with coverage
+        run: |
+          cd ${{ matrix.plugin }}
+          cargo llvm-cov --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ matrix.plugin }}/lcov.info
+          flags: ${{ matrix.plugin }}
+          name: ${{ matrix.plugin }}-rust
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Summary job for branch protection
+  test-summary:
+    needs: [test-javascript, test-rust]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test-javascript.result }}" == "failure" ] || \
+             [ "${{ needs.test-rust.result }}" == "failure" ]; then
+            echo "Some tests failed"
+            exit 1
+          fi
+          echo "All tests passed (or skipped)"

@@ -1,0 +1,19 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+    patch:
+      default:
+        target: 80%
+
+flags:
+  github-deployer:
+    paths:
+      - github-deployer/
+    carryforward: true
+  matters-syndicator:
+    paths:
+      - matters-syndicator/
+    carryforward: true
+  # Add more plugins as they're added to the repo

@@ -1,0 +1,160 @@
+name: Release Plugin
+
+on:
+  push:
+    tags:
+      - '*-v*'  # Matches: github-deployer-v1.0.0, matters-syndicator-v2.1.0
+
+jobs:
+  # Parse the tag to extract plugin name and version
+  parse-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_name: ${{ steps.parse.outputs.plugin_name }}
+      version: ${{ steps.parse.outputs.version }}
+      plugin_type: ${{ steps.parse.outputs.plugin_type }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: parse
+        run: |
+          # Tag format: plugin-name-vX.Y.Z
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Extract plugin name (everything before -vX.Y.Z)
+          PLUGIN_NAME="${TAG%-v*}"
+
+          # Extract version (everything after -v)
+          VERSION="${TAG##*-v}"
+
+          echo "plugin_name=$PLUGIN_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Determine plugin type (plugins at root level)
+          if [ -f "$PLUGIN_NAME/Cargo.toml" ]; then
+            echo "plugin_type=binary" >> $GITHUB_OUTPUT
+          elif [ -f "$PLUGIN_NAME/package.json" ]; then
+            echo "plugin_type=javascript" >> $GITHUB_OUTPUT
+          else
+            echo "Unknown plugin type for $PLUGIN_NAME"
+            exit 1
+          fi
+
+          echo "Plugin: $PLUGIN_NAME"
+          echo "Version: $VERSION"
+
+  # Build JavaScript plugin
+  build-javascript:
+    needs: parse-tag
+    if: needs.parse-tag.outputs.plugin_type == 'javascript'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install and build
+        run: |
+          cd ${{ needs.parse-tag.outputs.plugin_name }}
+          npm ci
+          npm run build
+
+      - name: Package
+        run: |
+          cd ${{ needs.parse-tag.outputs.plugin_name }}/dist
+          zip -r ../../${{ needs.parse-tag.outputs.plugin_name }}-${{ needs.parse-tag.outputs.version }}.zip .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ needs.parse-tag.outputs.plugin_name }}-${{ needs.parse-tag.outputs.version }}.zip
+          generate_release_notes: true
+
+  # Build binary plugin (Rust)
+  build-binary:
+    needs: parse-tag
+    if: needs.parse-tag.outputs.plugin_type == 'binary'
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_suffix: darwin-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_suffix: darwin-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_suffix: windows-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_suffix: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: |
+          cd ${{ needs.parse-tag.outputs.plugin_name }}
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          PLUGIN_NAME="${{ needs.parse-tag.outputs.plugin_name }}"
+          VERSION="${{ needs.parse-tag.outputs.version }}"
+          SUFFIX="${{ matrix.artifact_suffix }}"
+
+          mkdir -p artifact
+          cp $PLUGIN_NAME/manifest.json artifact/
+          cp target/${{ matrix.target }}/release/$PLUGIN_NAME artifact/
+
+          cd artifact
+          tar -czf ../${PLUGIN_NAME}-${VERSION}-${SUFFIX}.tar.gz .
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $PLUGIN_NAME = "${{ needs.parse-tag.outputs.plugin_name }}"
+          $VERSION = "${{ needs.parse-tag.outputs.version }}"
+          $SUFFIX = "${{ matrix.artifact_suffix }}"
+
+          mkdir artifact
+          Copy-Item "$PLUGIN_NAME/manifest.json" artifact/
+          Copy-Item "target/${{ matrix.target }}/release/$PLUGIN_NAME.exe" artifact/
+
+          Compress-Archive -Path artifact/* -DestinationPath "${PLUGIN_NAME}-${VERSION}-${SUFFIX}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.parse-tag.outputs.plugin_name }}-${{ matrix.artifact_suffix }}
+          path: |
+            *.tar.gz
+            *.zip
+
+  # Create release with all binary artifacts
+  release-binary:
+    needs: [parse-tag, build-binary]
+    if: needs.parse-tag.outputs.plugin_type == 'binary'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

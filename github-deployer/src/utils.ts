@@ -12,7 +12,7 @@ import {
   reportError as sdkReportError,
   type TauriCore,
   type PluginMessage,
-} from "moss-api";
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Plugin Configuration

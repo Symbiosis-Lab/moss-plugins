@@ -11,7 +11,7 @@ import {
   reportProgress as sdkReportProgress,
   reportError as sdkReportError,
   type PluginMessage,
-} from "moss-api";
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Plugin Configuration

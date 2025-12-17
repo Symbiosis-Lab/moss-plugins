@@ -14,7 +14,7 @@ export type {
   ProjectInfo,
   ArticleInfo,
   PluginMessage,
-} from "moss-api";
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Matters API Types

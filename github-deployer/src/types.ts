@@ -12,7 +12,7 @@ export type {
   DeploymentInfo,
   ProjectInfo,
   PluginMessage,
-} from "moss-api";
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Plugin-Specific Types

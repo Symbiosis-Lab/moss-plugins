@@ -33,7 +33,7 @@ import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 // Browser Utilities (via SDK)
 // ============================================================================
 
-import { openBrowser, closeBrowser } from "moss-api";
+import { openBrowser, closeBrowser } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Authentication Helpers

@@ -1,7 +1,8 @@
 /**
  * GitHub Actions workflow template and creation
  */
-import { getTauriCore, log } from "./utils";
+import { readFile, writeFile, fileExists } from "@symbiosis-lab/moss-api";
+import { log } from "./utils";
 /**
  * GitHub Actions workflow template for deploying to GitHub Pages
  * This is extracted from the original deploy.rs
@@ -60,11 +61,7 @@ export function generateWorkflowContent(branch) {
 export async function createWorkflowFile(projectPath, branch) {
     await log("log", "   Creating .github/workflows/moss-deploy.yml...");
     const content = generateWorkflowContent(branch);
-    await getTauriCore().invoke("write_project_file", {
-        projectPath,
-        relativePath: ".github/workflows/moss-deploy.yml",
-        content,
-    });
+    await writeFile(projectPath, ".github/workflows/moss-deploy.yml", content);
     await log("log", "   Workflow file created");
 }
 /**
@@ -75,10 +72,7 @@ export async function updateGitignore(projectPath) {
     // Read current gitignore
     let currentContent = "";
     try {
-        currentContent = await getTauriCore().invoke("read_project_file", {
-            projectPath,
-            relativePath: ".gitignore",
-        });
+        currentContent = await readFile(projectPath, ".gitignore");
     }
     catch {
         // File doesn't exist, that's fine
@@ -110,26 +104,13 @@ export async function updateGitignore(projectPath) {
     if (!hasSiteException) {
         newContent += "!.moss/site/\n";
     }
-    await getTauriCore().invoke("write_project_file", {
-        projectPath,
-        relativePath: ".gitignore",
-        content: newContent,
-    });
+    await writeFile(projectPath, ".gitignore", newContent);
     await log("log", "   .gitignore updated");
 }
 /**
  * Check if the workflow file already exists
  */
 export async function workflowExists(projectPath) {
-    try {
-        await getTauriCore().invoke("read_project_file", {
-            projectPath,
-            relativePath: ".github/workflows/moss-deploy.yml",
-        });
-        return true;
-    }
-    catch {
-        return false;
-    }
+    return fileExists(projectPath, ".github/workflows/moss-deploy.yml");
 }
 //# sourceMappingURL=workflow.js.map

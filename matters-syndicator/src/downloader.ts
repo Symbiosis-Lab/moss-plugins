@@ -7,15 +7,68 @@ import {
   reportProgress,
   downloadAsset as downloadAssetRust,
   sleep,
-  generateLocalFilename,
 } from "./utils";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
+import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const MAX_RETRIES = 3;
+
+// ============================================================================
+// Pure Helper Functions (exported for testing)
+// ============================================================================
+
+/**
+ * Extract UUID from a URL (Matters asset IDs are UUIDs)
+ * Handles URLs from both assets.matters.news and imagedelivery.net
+ */
+export function extractAssetUuid(url: string): string | null {
+  const match = url.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build a regex pattern that matches any URL containing the given asset ID
+ * Used for updating references when the same asset has multiple CDN URLs
+ */
+export function buildAssetUrlPattern(assetId: string): RegExp {
+  return new RegExp(
+    `https?://[^)\\s"]*${escapeRegex(assetId)}[^)\\s"]*`,
+    'g'
+  );
+}
+
+/**
+ * Replace all URLs containing the asset ID with a local path
+ * Returns the modified content and whether any replacements were made
+ */
+export function replaceAssetUrls(
+  content: string,
+  assetId: string,
+  localPath: string
+): { content: string; replaced: boolean } {
+  const pattern = buildAssetUrlPattern(assetId);
+  const hasMatch = pattern.test(content);
+
+  if (!hasMatch) {
+    return { content, replaced: false };
+  }
+
+  // Reset regex lastIndex after test() call
+  pattern.lastIndex = 0;
+  const newContent = content.replace(pattern, localPath);
+  return { content: newContent, replaced: true };
+}
 const CONCURRENCY = 5;
 const OVERALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes total for all downloads
 const PROGRESS_LOG_INTERVAL_MS = 10 * 1000; // Log progress every 10 seconds when slow
@@ -143,17 +196,6 @@ async function runWorkerPool<T>(
   return { completed: completedCount, aborted: signal.aborted };
 }
 
-// ============================================================================
-// Tauri Interface
-// ============================================================================
-
-interface TauriCore {
-  invoke: <T>(cmd: string, args: unknown) => Promise<T>;
-}
-
-function getTauriCore(): TauriCore {
-  return (window as unknown as { __TAURI__: { core: TauriCore } }).__TAURI__.core;
-}
 
 // ============================================================================
 // Asset Download
@@ -177,28 +219,18 @@ class DownloadError extends Error {
 /**
  * Download a single asset (single attempt, no retry).
  * Uses Rust to download and save directly to disk (avoids JS base64 blocking).
+ * Moss handles filename derivation and extension from content-type.
  * Throws DownloadError on failure with retry classification.
  */
 async function downloadAsset(
   url: string,
-  localFilename: string,
   projectPath: string,
   existingAssets?: Set<string>
-): Promise<{ localPath: string; skipped: boolean }> {
-  const hasExtension = /\.\w+$/.test(localFilename);
-
-  // For files without extension, add .bin (we can't know content-type before download)
-  const finalFilename = hasExtension ? localFilename : `${localFilename}.bin`;
-  const localPath = `assets/${finalFilename}`;
-
-  // Check if file already exists
-  if (existingAssets?.has(localPath)) {
-    return { localPath, skipped: true };
-  }
-
+): Promise<{ actualPath: string; skipped: boolean }> {
   let result;
   try {
-    result = await downloadAssetRust(url, projectPath, localPath, 30000);
+    // Pass just the target directory - Moss handles filename and extension
+    result = await downloadAssetRust(url, projectPath, "assets", 30000);
   } catch (fetchError: unknown) {
     // Network error - retryable (Rust error already includes URL for timeouts)
     const message = fetchError instanceof Error ? fetchError.message : String(fetchError);
@@ -209,7 +241,12 @@ async function downloadAsset(
     throw new DownloadError(`HTTP ${result.status} from ${url}`, result.status);
   }
 
-  return { localPath, skipped: false };
+  const actualPath = result.actual_path;
+
+  // Check if file already existed (we still download but can mark as skipped for stats)
+  const wasExisting = existingAssets?.has(actualPath) ?? false;
+
+  return { actualPath, skipped: wasExisting };
 }
 
 // ============================================================================
@@ -227,7 +264,6 @@ interface FileState {
 /** Media task for worker pool */
 interface MediaTask {
   url: string;
-  localFilename: string;
 }
 
 /** Reference from URL to files */
@@ -259,7 +295,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   // Get all project files once
   let allProjectFiles: string[];
   try {
-    allProjectFiles = await getTauriCore().invoke<string[]>("list_project_files", { projectPath });
+    allProjectFiles = await listFiles(projectPath);
   } catch (err) {
     log("error", `Failed to list project files: ${err}`);
     result.errors.push(`Failed to list files: ${err}`);
@@ -288,10 +324,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
   for (const filePath of allMdFiles) {
     try {
-      const content = await getTauriCore().invoke<string>("read_project_file", {
-        projectPath,
-        relativePath: filePath,
-      });
+      const content = await readFile(projectPath, filePath);
 
       const parsed = parseFrontmatter(content);
       if (!parsed) continue;
@@ -330,17 +363,14 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
       // Process cover media
       if (hasCoverMedia) {
         const coverUrl = cover as string;
-        const localFilename = generateLocalFilename(coverUrl);
-        if (localFilename) {
-          if (!urlToFiles.has(coverUrl)) {
-            urlToFiles.set(coverUrl, []);
-          }
-          urlToFiles.get(coverUrl)!.push({ filePath, inBody: false, inCover: true });
+        if (!urlToFiles.has(coverUrl)) {
+          urlToFiles.set(coverUrl, []);
+        }
+        urlToFiles.get(coverUrl)!.push({ filePath, inBody: false, inCover: true });
 
-          if (!seenUrls.has(coverUrl)) {
-            seenUrls.add(coverUrl);
-            mediaTasks.push({ url: coverUrl, localFilename });
-          }
+        if (!seenUrls.has(coverUrl)) {
+          seenUrls.add(coverUrl);
+          mediaTasks.push({ url: coverUrl });
         }
       }
     } catch {
@@ -377,7 +407,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
       // Check max retries BEFORE attempting download
       if (attempts >= MAX_RETRIES) {
-        log("error", `   [✗] Max retries exceeded: ${media.localFilename}`);
+        log("error", `   [✗] Max retries exceeded: ${media.url}`);
         result.errors.push(`${media.url}: Max retries exceeded`);
         result.imagesSkipped++;
         permanentlyFailed.add(media.url);
@@ -391,42 +421,59 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
         return; // Don't retry
       }
 
-      log("log", `   [${attempts + 1}/${MAX_RETRIES}] Downloading: ${media.localFilename}`);
+      log("log", `   [${attempts + 1}/${MAX_RETRIES}] Downloading: ${media.url}`);
 
       try {
         const downloadResult = await downloadAsset(
           media.url,
-          media.localFilename,
           projectPath,
           existingAssets
         );
 
-        const localPath = downloadResult.localPath;
+        const actualPath = downloadResult.actualPath;
 
         if (downloadResult.skipped) {
-          log("log", `   [~] Skipped (exists): ${media.localFilename}`);
+          log("log", `   [~] Skipped (exists): ${actualPath}`);
         } else {
-          log("log", `   [✓] Downloaded: ${media.localFilename}`);
+          log("log", `   [✓] Downloaded: ${actualPath}`);
           result.imagesDownloaded++;
-          existingAssets.add(localPath); // Track for future checks
+          existingAssets.add(actualPath); // Track for future checks
         }
 
         // Immediately update all file states that reference this URL
+        // Use UUID-based matching to handle different CDN URLs for the same asset
         const refs = urlToFiles.get(media.url) || [];
+        const assetId = extractAssetUuid(media.url);
+
         for (const ref of refs) {
           const fileState = fileStates.get(ref.filePath);
           if (!fileState) continue;
 
-          if (ref.inBody && fileState.body.includes(media.url)) {
-            fileState.body = fileState.body.split(media.url).join(localPath);
-            fileState.modified = true;
-            log("log", `   [→] Updated reference in body: ${ref.filePath}`);
+          // Calculate relative path from markdown file to asset
+          const relativePath = calculateRelativePath(ref.filePath, actualPath);
+
+          if (ref.inBody && assetId) {
+            // Use UUID-based replacement to handle different CDN URLs
+            const { content: newBody, replaced } = replaceAssetUrls(
+              fileState.body,
+              assetId,
+              relativePath
+            );
+            if (replaced) {
+              fileState.body = newBody;
+              fileState.modified = true;
+              log("log", `   [→] Updated reference in body: ${ref.filePath}`);
+            }
           }
 
-          if (ref.inCover && fileState.frontmatter.cover === media.url) {
-            fileState.frontmatter = { ...fileState.frontmatter, cover: localPath };
-            fileState.modified = true;
-            log("log", `   [→] Updated cover reference: ${ref.filePath}`);
+          if (ref.inCover && assetId) {
+            // Check if cover URL contains the same asset ID (handles different CDN URLs)
+            const coverStr = String(fileState.frontmatter.cover || '');
+            if (coverStr.includes(assetId)) {
+              fileState.frontmatter = { ...fileState.frontmatter, cover: relativePath };
+              fileState.modified = true;
+              log("log", `   [→] Updated cover reference: ${ref.filePath}`);
+            }
           }
         }
 
@@ -449,14 +496,14 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
         if (isRetryable && attempts < MAX_RETRIES - 1) {
           const delay = getFibonacciDelay(attempts + 1);
-          log("warn", `   [!] ${media.localFilename}: ${errorMsg}, retrying in ${delay}ms (attempt ${attempts + 1}/${MAX_RETRIES})`);
+          log("warn", `   [!] ${media.url}: ${errorMsg}, retrying in ${delay}ms (attempt ${attempts + 1}/${MAX_RETRIES})`);
           retryCount.set(media.url, attempts + 1);
           await sleep(delay);
           return { retry: true };
         }
 
         // Permanent failure
-        log("error", `   [✗] Failed: ${media.localFilename} - ${errorMsg}`);
+        log("error", `   [✗] Failed: ${media.url} - ${errorMsg}`);
         result.errors.push(`${media.url}: ${errorMsg}`);
         result.imagesSkipped++;
         permanentlyFailed.add(media.url);
@@ -477,11 +524,14 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
       timeoutMs: OVERALL_TIMEOUT_MS,
       progressIntervalMs: PROGRESS_LOG_INTERVAL_MS,
       onProgress: (done, total, inProgress) => {
-        const inProgressNames = inProgress.map(m => m.localFilename).join(", ");
-        log("warn", `   [⏳ Progress] ${done}/${total} done. Currently downloading: ${inProgressNames}`);
+        const inProgressUrls = inProgress.map(m => m.url).join(", ");
+        log("warn", `   [⏳ Progress] ${done}/${total} done. Currently downloading: ${inProgressUrls}`);
       },
     }
   );
+
+  // Log Phase 2 completion for debugging
+  log("log", `   Phase 2 complete: completed=${completed}, aborted=${aborted}`);
 
   // Log if aborted due to timeout
   if (aborted) {
@@ -495,24 +545,36 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   // Phase 3: Write modified files
   // ========================================================================
 
-  log("log", "   Writing updated files...");
+  const modifiedCount = [...fileStates.values()].filter(f => f.modified).length;
+  log("log", `   Phase 3 starting: ${fileStates.size} files scanned, ${modifiedCount} modified`);
 
-  for (const [filePath, fileState] of fileStates) {
-    if (!fileState.modified) continue;
+  try {
+    log("log", "   Writing updated files...");
+    let writeErrors = 0;
 
-    try {
-      const newContent = regenerateFrontmatter(fileState.frontmatter) + "\n" + fileState.body;
-      await getTauriCore().invoke("write_project_file", {
-        projectPath,
-        relativePath: filePath,
-        data: newContent,
-      });
-      result.filesProcessed++;
-      log("log", `   [📝] Wrote: ${filePath}`);
-    } catch (err) {
-      result.errors.push(`Failed to write ${filePath}: ${err}`);
-      log("error", `   [✗] Failed to write: ${filePath} - ${err}`);
+    for (const [filePath, fileState] of fileStates) {
+      if (!fileState.modified) continue;
+
+      try {
+        const newContent = regenerateFrontmatter(fileState.frontmatter) + "\n" + fileState.body;
+        await writeFile(projectPath, filePath, newContent);
+        result.filesProcessed++;
+        log("log", `   [📝] Wrote: ${filePath}`);
+      } catch (err) {
+        writeErrors++;
+        result.errors.push(`Failed to write ${filePath}: ${err}`);
+        log("error", `   [✗] Failed to write: ${filePath} - ${err}`);
+      }
     }
+
+    if (writeErrors > 0) {
+      log("warn", `   ⚠️ ${writeErrors} file(s) failed to write`);
+    }
+
+    log("log", `   Phase 3 complete: ${result.filesProcessed} files written`);
+  } catch (err) {
+    log("error", `   Phase 3 FAILED with unexpected error: ${err}`);
+    result.errors.push(`Phase 3 failed: ${err}`);
   }
 
   // Final report
@@ -599,7 +661,7 @@ function rewriteLinksInContent(
  * Calculate relative path from one file to another
  * e.g., from "article/collection/post.md" to "article/other.md" → "../other.md"
  */
-function calculateRelativePath(fromPath: string, toPath: string): string {
+export function calculateRelativePath(fromPath: string, toPath: string): string {
   const fromParts = fromPath.split("/").slice(0, -1); // Remove filename, keep directory
   const toParts = toPath.split("/");
 
@@ -651,8 +713,8 @@ export async function rewriteAllInternalLinks(
 
   let allFiles: string[];
   try {
-    const allProjectFiles = await getTauriCore().invoke<string[]>("list_project_files", { projectPath });
-    allFiles = allProjectFiles.filter(f => f.endsWith(".md"));
+    const allProjectFiles = await listFiles(projectPath);
+    allFiles = allProjectFiles.filter((f: string) => f.endsWith(".md"));
   } catch (err) {
     log("error", `Failed to list project files: ${err}`);
     result.errors.push(`Failed to list files: ${err}`);
@@ -666,10 +728,7 @@ export async function rewriteAllInternalLinks(
 
   for (const file of allFiles) {
     try {
-      const content = await getTauriCore().invoke<string>("read_project_file", {
-        projectPath,
-        relativePath: file,
-      });
+      const content = await readFile(projectPath, file);
 
       const parsed = parseFrontmatter(content);
       if (!parsed) continue;
@@ -684,11 +743,7 @@ export async function rewriteAllInternalLinks(
       if (linksRewritten > 0) {
         const newContent = regenerateFrontmatter(parsed.frontmatter) + "\n" + modifiedBody;
 
-        await getTauriCore().invoke("write_project_file", {
-          projectPath,
-          relativePath: file,
-          data: newContent,
-        });
+        await writeFile(projectPath, file, newContent);
 
         result.filesProcessed++;
         result.linksRewritten += linksRewritten;

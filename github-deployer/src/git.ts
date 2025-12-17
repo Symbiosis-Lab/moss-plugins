@@ -1,11 +1,11 @@
 /**
  * Git command helpers for the GitHub Pages Publisher Plugin
  *
- * Executes git commands via Tauri's execute_binary command.
+ * Executes git commands via moss-api's executeBinary.
  */
 
-import type { BinaryResult } from "./types";
-import { getTauriCore, log } from "./utils";
+import { executeBinary } from "@symbiosis-lab/moss-api";
+import { log } from "./utils";
 
 /**
  * Run a git command and return the output
@@ -13,7 +13,7 @@ import { getTauriCore, log } from "./utils";
 async function runGit(args: string[], cwd: string): Promise<string> {
   await log("log", `   git ${args.join(" ")}`);
 
-  const result = await getTauriCore().invoke<BinaryResult>("execute_binary", {
+  const result = await executeBinary({
     binaryPath: "git",
     args,
     workingDir: cwd,
@@ -21,7 +21,7 @@ async function runGit(args: string[], cwd: string): Promise<string> {
   });
 
   if (!result.success) {
-    const error = result.stderr || `Git command failed with exit code ${result.exit_code}`;
+    const error = result.stderr || `Git command failed with exit code ${result.exitCode}`;
     throw new Error(error);
   }
 

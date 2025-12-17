@@ -2,21 +2,23 @@
  * Unit tests for validation.ts
  *
  * These tests verify the validation logic structure.
- * Functions that call Tauri require integration tests, but we can test
- * the error message formatting and validation flow.
+ * Functions that call moss-api require mocking those modules.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Create mock functions
-vi.mock("./utils", () => {
-  const mockInvoke = vi.fn();
-  return {
-    getTauriCore: () => ({ invoke: mockInvoke }),
-    log: vi.fn().mockResolvedValue(undefined),
-    __mockInvoke: mockInvoke,
-  };
-});
+// Mock moss-api functions
+const mockExecuteBinary = vi.fn();
+const mockListFiles = vi.fn();
+
+vi.mock("@symbiosis-lab/moss-api", () => ({
+  executeBinary: (...args: unknown[]) => mockExecuteBinary(...args),
+  listFiles: (...args: unknown[]) => mockListFiles(...args),
+}));
+
+vi.mock("./utils", () => ({
+  log: vi.fn().mockResolvedValue(undefined),
+}));
 
 // Import after mocking
 import {
@@ -25,10 +27,6 @@ import {
   validateGitHubRemote,
   validateAll,
 } from "./validation";
-import * as utils from "./utils";
-
-// Access the mock through module
-const getMockInvoke = () => (utils as { __mockInvoke: ReturnType<typeof vi.fn> }).__mockInvoke;
 
 describe("validateGitRepository", () => {
   beforeEach(() => {
@@ -40,15 +38,15 @@ describe("validateGitRepository", () => {
   });
 
   it("passes when git repository exists", async () => {
-    // Mock successful git check
-    getMockInvoke().mockResolvedValueOnce({ success: true, stdout: ".git", stderr: "", exit_code: 0 });
+    // Mock successful git check (isGitRepository calls executeBinary with git rev-parse)
+    mockExecuteBinary.mockResolvedValueOnce({ success: true, stdout: ".git", stderr: "", exitCode: 0 });
 
     await expect(validateGitRepository("/project")).resolves.toBeUndefined();
   });
 
   it("throws descriptive error when not a git repository", async () => {
     // Mock failed git check
-    getMockInvoke().mockRejectedValueOnce(new Error("Not a git repo"));
+    mockExecuteBinary.mockResolvedValueOnce({ success: false, stdout: "", stderr: "Not a git repo", exitCode: 128 });
 
     await expect(validateGitRepository("/project")).rejects.toThrow(
       "This folder is not a git repository"
@@ -56,7 +54,7 @@ describe("validateGitRepository", () => {
   });
 
   it("includes helpful instructions in error message", async () => {
-    getMockInvoke().mockRejectedValueOnce(new Error("Not a git repo"));
+    mockExecuteBinary.mockResolvedValueOnce({ success: false, stdout: "", stderr: "Not a git repo", exitCode: 128 });
 
     try {
       await validateGitRepository("/project");
@@ -75,23 +73,25 @@ describe("validateSiteCompiled", () => {
   });
 
   it("passes when site directory has files", async () => {
-    getMockInvoke().mockResolvedValueOnce(["index.html", "style.css"]);
+    // listFiles returns all project files, including those in .moss/site/
+    mockListFiles.mockResolvedValueOnce([".moss/site/index.html", ".moss/site/style.css", "README.md"]);
 
-    await expect(validateSiteCompiled("/project/.moss/site")).resolves.toBeUndefined();
+    await expect(validateSiteCompiled("/project", ".moss/site")).resolves.toBeUndefined();
   });
 
   it("throws when site directory is empty", async () => {
-    getMockInvoke().mockResolvedValueOnce([]);
+    // No files in .moss/site/
+    mockListFiles.mockResolvedValueOnce(["README.md", "package.json"]);
 
-    await expect(validateSiteCompiled("/project/.moss/site")).rejects.toThrow(
+    await expect(validateSiteCompiled("/project", ".moss/site")).rejects.toThrow(
       "Site directory is empty"
     );
   });
 
-  it("throws when site directory doesn't exist", async () => {
-    getMockInvoke().mockRejectedValueOnce(new Error("Directory not found"));
+  it("throws when project listing fails", async () => {
+    mockListFiles.mockRejectedValueOnce(new Error("Failed to list files"));
 
-    await expect(validateSiteCompiled("/project/.moss/site")).rejects.toThrow(
+    await expect(validateSiteCompiled("/project", ".moss/site")).rejects.toThrow(
       "Site not found at .moss/site"
     );
   });
@@ -103,19 +103,19 @@ describe("validateGitHubRemote", () => {
   });
 
   it("passes and returns URL for valid GitHub remote", async () => {
-    // First call: hasGitRemote check
-    getMockInvoke().mockResolvedValueOnce({
+    // First call: hasGitRemote check (git remote get-url origin)
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://github.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
-    // Second call: getRemoteUrl
-    getMockInvoke().mockResolvedValueOnce({
+    // Second call: getRemoteUrl (git remote get-url origin)
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://github.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
 
     const result = await validateGitHubRemote("/project");
@@ -123,25 +123,31 @@ describe("validateGitHubRemote", () => {
   });
 
   it("throws when no remote is configured", async () => {
-    getMockInvoke().mockRejectedValueOnce(new Error("No remote"));
+    // hasGitRemote fails
+    mockExecuteBinary.mockResolvedValueOnce({
+      success: false,
+      stdout: "",
+      stderr: "No remote",
+      exitCode: 128,
+    });
 
     await expect(validateGitHubRemote("/project")).rejects.toThrow("No git remote configured");
   });
 
   it("throws for non-GitHub remotes", async () => {
     // First call: hasGitRemote check (pass)
-    getMockInvoke().mockResolvedValueOnce({
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://gitlab.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
     // Second call: getRemoteUrl
-    getMockInvoke().mockResolvedValueOnce({
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://gitlab.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
 
     await expect(validateGitHubRemote("/project")).rejects.toThrow("is not a GitHub URL");
@@ -154,38 +160,39 @@ describe("validateAll", () => {
   });
 
   it("runs all validations in sequence", async () => {
-    // isGitRepository
-    getMockInvoke().mockResolvedValueOnce({ success: true, stdout: ".git", stderr: "", exit_code: 0 });
-    // validateSiteCompiled - list_directory_files
-    getMockInvoke().mockResolvedValueOnce(["index.html"]);
-    // hasGitRemote
-    getMockInvoke().mockResolvedValueOnce({
+    // isGitRepository (git rev-parse --git-dir)
+    mockExecuteBinary.mockResolvedValueOnce({ success: true, stdout: ".git", stderr: "", exitCode: 0 });
+    // validateSiteCompiled - listFiles returns files including ones in .moss/site
+    mockListFiles.mockResolvedValueOnce([".moss/site/index.html", "README.md"]);
+    // hasGitRemote (git remote get-url origin)
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://github.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
-    // getRemoteUrl
-    getMockInvoke().mockResolvedValueOnce({
+    // getRemoteUrl (git remote get-url origin)
+    mockExecuteBinary.mockResolvedValueOnce({
       success: true,
       stdout: "https://github.com/user/repo.git",
       stderr: "",
-      exit_code: 0,
+      exitCode: 0,
     });
 
-    const result = await validateAll("/project", "/project/.moss/site");
+    const result = await validateAll("/project", ".moss/site");
     expect(result).toBe("https://github.com/user/repo.git");
   });
 
   it("stops on first validation failure", async () => {
     // Fail on git repository check
-    getMockInvoke().mockRejectedValueOnce(new Error("Not a git repo"));
+    mockExecuteBinary.mockResolvedValueOnce({ success: false, stdout: "", stderr: "Not a git repo", exitCode: 128 });
 
-    await expect(validateAll("/project", "/project/.moss/site")).rejects.toThrow(
+    await expect(validateAll("/project", ".moss/site")).rejects.toThrow(
       "This folder is not a git repository"
     );
 
-    // Should not have continued to other validations
-    expect(getMockInvoke()).toHaveBeenCalledTimes(1);
+    // Should not have continued to other validations (only 1 executeBinary call, no listFiles call)
+    expect(mockExecuteBinary).toHaveBeenCalledTimes(1);
+    expect(mockListFiles).not.toHaveBeenCalled();
   });
 });

@@ -5,12 +5,10 @@
  */
 
 import {
-  getTauriCore as sdkGetTauriCore,
   setMessageContext,
   sendMessage as sdkSendMessage,
   reportProgress as sdkReportProgress,
   reportError as sdkReportError,
-  type TauriCore,
   type PluginMessage,
 } from "@symbiosis-lab/moss-api";
 
@@ -26,10 +24,6 @@ setMessageContext(PLUGIN_NAME, "on_deploy");
 // ============================================================================
 // Re-exports from SDK (with plugin context)
 // ============================================================================
-
-export function getTauriCore(): TauriCore {
-  return sdkGetTauriCore();
-}
 
 /**
  * Set the current hook name for message routing

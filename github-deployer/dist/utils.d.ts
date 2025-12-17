@@ -3,8 +3,7 @@
  *
  * This module wraps SDK utilities with plugin-specific functionality.
  */
-import { type TauriCore, type PluginMessage } from "moss-plugin-sdk";
-export declare function getTauriCore(): TauriCore;
+import { type PluginMessage } from "@symbiosis-lab/moss-api";
 /**
  * Set the current hook name for message routing
  */

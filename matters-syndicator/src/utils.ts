@@ -10,6 +10,8 @@ import {
   sendMessage as sdkSendMessage,
   reportProgress as sdkReportProgress,
   reportError as sdkReportError,
+  fetchUrl,
+  downloadAsset as sdkDownloadAsset,
   type PluginMessage,
 } from "@symbiosis-lab/moss-api";
 
@@ -197,39 +199,22 @@ export function sleep(ms: number): Promise<void> {
 }
 
 // ============================================================================
-// Tauri Interface
+// HTTP Utilities (using moss-api)
 // ============================================================================
 
-interface TauriCore {
-  invoke: <T>(cmd: string, args: unknown) => Promise<T>;
-}
-
-function getTauriCore(): TauriCore {
-  return (window as unknown as { __TAURI__: { core: TauriCore } }).__TAURI__.core;
-}
-
 /**
- * Result from Tauri's fetch_url command
+ * Result from downloadAsset function
  */
-interface FetchResult {
-  status: number;
-  ok: boolean;
-  body_base64: string;
-  content_type: string | null;
-}
-
-/**
- * Result from Tauri's download_and_save_asset command
- */
-interface DownloadAssetResult {
+export interface DownloadAssetResult {
   status: number;
   ok: boolean;
   content_type: string | null;
   bytes_written: number;
+  actual_path: string;
 }
 
 /**
- * Fetch a URL using Tauri's Rust HTTP client (bypasses WebKit CORS).
+ * Fetch a URL using moss-api (bypasses WebKit CORS).
  *
  * Returns a Response-like object for compatibility with existing code.
  */
@@ -237,67 +222,52 @@ export async function fetchWithTimeout(
   url: string,
   timeoutMs = 30000
 ): Promise<Response> {
-  try {
-    const result = await getTauriCore().invoke<FetchResult>("fetch_url", {
-      url,
-      timeoutMs,
-    });
+  const result = await fetchUrl(url, { timeoutMs });
 
-    // Convert base64 body to Uint8Array
-    const binaryString = atob(result.body_base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    // Create Response-like object
-    const headers = new Headers();
-    if (result.content_type) {
-      headers.set("content-type", result.content_type);
-    }
-
-    return new Response(bytes, {
-      status: result.status,
-      headers,
-    });
-  } catch (error: unknown) {
-    // Tauri invoke errors come as strings
-    const message = typeof error === "string" ? error : (error instanceof Error ? error.message : String(error));
-    throw new Error(message);
+  // Create Response-like object
+  const headers = new Headers();
+  if (result.contentType) {
+    headers.set("content-type", result.contentType);
   }
+
+  return new Response(result.body.buffer as ArrayBuffer, {
+    status: result.status,
+    headers,
+  });
 }
 
 /**
- * Download a URL and save directly to disk using Rust (bypasses JS base64 overhead).
+ * Download a URL and save directly to disk using moss-api.
  *
  * This function downloads a file and writes it directly to disk without
  * passing the binary data through JavaScript. This avoids event loop blocking
  * that occurs with large files when using base64 encoding/decoding.
  *
+ * Moss handles filename derivation from the URL and adds file extension from
+ * Content-Type if the URL has no extension.
+ *
  * @param url - URL to download
  * @param projectPath - Absolute path to the project directory
- * @param relativePath - Relative path within project to save the file
+ * @param targetDir - Target directory within project (e.g., "assets")
  * @param timeoutMs - Optional timeout in milliseconds (defaults to 30 seconds)
- * @returns Result with status, content-type, and bytes written
+ * @returns Result with status, content-type, bytes written, and actual_path
  */
 export async function downloadAsset(
   url: string,
   projectPath: string,
-  relativePath: string,
+  targetDir: string,
   timeoutMs = 30000
 ): Promise<DownloadAssetResult> {
-  try {
-    return await getTauriCore().invoke<DownloadAssetResult>("download_asset", {
-      url,
-      projectPath,
-      relativePath,
-      timeoutMs,
-    });
-  } catch (error: unknown) {
-    // Tauri invoke errors come as strings
-    const message = typeof error === "string" ? error : (error instanceof Error ? error.message : String(error));
-    throw new Error(message);
-  }
+  const result = await sdkDownloadAsset(url, projectPath, targetDir, { timeoutMs });
+
+  // Map moss-api result to existing interface for backward compatibility
+  return {
+    status: result.status,
+    ok: result.ok,
+    content_type: result.contentType,
+    bytes_written: result.bytesWritten,
+    actual_path: result.actualPath,
+  };
 }
 
 // ============================================================================

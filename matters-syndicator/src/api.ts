@@ -13,6 +13,7 @@ import type {
   ViewerProfileResponse,
 } from "./types";
 import { log } from "./utils";
+import { getPluginCookie } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Configuration
@@ -163,11 +164,7 @@ export async function getAccessToken(): Promise<string | null> {
 
   try {
     await log("log", `Getting cookies for project: ${projectPath}`);
-    const tauri = (window as unknown as { __TAURI__: { core: { invoke: <T>(cmd: string, args: unknown) => Promise<T> } } }).__TAURI__;
-    const cookies = await tauri.core.invoke<Array<{ name: string; value: string }>>("get_plugin_cookie", {
-      pluginName: "matters-syndicator",
-      projectPath: projectPath,
-    });
+    const cookies = await getPluginCookie("matters-syndicator", projectPath);
 
     await log("log", `Received ${cookies?.length ?? 0} cookies`);
 

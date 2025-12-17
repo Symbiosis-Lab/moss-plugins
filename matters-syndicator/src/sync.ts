@@ -43,18 +43,7 @@ import type {
 } from "./types";
 import { slugify, reportProgress, reportError } from "./utils";
 import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
-
-// ============================================================================
-// Tauri Interface
-// ============================================================================
-
-interface TauriCore {
-  invoke: <T>(cmd: string, args: unknown) => Promise<T>;
-}
-
-function getTauriCore(): TauriCore {
-  return (window as unknown as { __TAURI__: { core: TauriCore } }).__TAURI__.core;
-}
+import { readFile, writeFile } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Helper Functions
@@ -130,10 +119,7 @@ async function findAvailableFilename(
 
   while (true) {
     try {
-      await getTauriCore().invoke("read_project_file", {
-        projectPath,
-        relativePath: filename,
-      });
+      await readFile(projectPath, filename);
       counter++;
       filename = `${basePath}/${slug}-${counter}.md`;
     } catch {
@@ -202,11 +188,7 @@ export async function syncToLocalFiles(
     });
     const homepageContent = homepageFrontmatter + "\n\n" + (profile.description || "");
 
-    await getTauriCore().invoke("write_project_file", {
-      projectPath,
-      relativePath: "index.md",
-      data: homepageContent,
-    });
+    await writeFile(projectPath, "index.md", homepageContent);
 
     console.log(`   ✅ Created homepage: index.md`);
     result.created++;
@@ -266,10 +248,7 @@ export async function syncToLocalFiles(
 
       let existingContent: string | null = null;
       try {
-        existingContent = await getTauriCore().invoke<string>("read_project_file", {
-          projectPath,
-          relativePath: collectionPath,
-        });
+        existingContent = await readFile(projectPath, collectionPath);
       } catch {
         // File doesn't exist
       }
@@ -296,11 +275,7 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
 
-      await getTauriCore().invoke("write_project_file", {
-        projectPath,
-        relativePath: collectionPath,
-        data: fullContent,
-      });
+      await writeFile(projectPath, collectionPath, fullContent);
 
       if (existingContent) {
         console.log(`   ✏️  Updated collection: ${collectionPath}`);
@@ -379,10 +354,7 @@ export async function syncToLocalFiles(
       // Try to read existing file
       let existingContent: string | null = null;
       try {
-        existingContent = await getTauriCore().invoke<string>("read_project_file", {
-          projectPath,
-          relativePath: filename,
-        });
+        existingContent = await readFile(projectPath, filename);
       } catch {
         // File doesn't exist
       }
@@ -417,11 +389,7 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
-      await getTauriCore().invoke("write_project_file", {
-        projectPath,
-        relativePath: filename,
-        data: fullContent,
-      });
+      await writeFile(projectPath, filename, fullContent);
 
       if (existingContent) {
         console.log(`   ✏️  Updated: ${filename}`);
@@ -457,10 +425,7 @@ export async function syncToLocalFiles(
 
         let existingContent: string | null = null;
         try {
-          existingContent = await getTauriCore().invoke<string>("read_project_file", {
-            projectPath,
-            relativePath: filename,
-          });
+          existingContent = await readFile(projectPath, filename);
         } catch {
           // File doesn't exist
         }
@@ -493,11 +458,7 @@ export async function syncToLocalFiles(
 
         const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
-        await getTauriCore().invoke("write_project_file", {
-          projectPath,
-          relativePath: filename,
-          data: fullContent,
-        });
+        await writeFile(projectPath, filename, fullContent);
 
         if (existingContent) {
           console.log(`   ✏️  Updated draft: ${filename}`);

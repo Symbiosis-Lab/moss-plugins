@@ -2,8 +2,9 @@
  * Requirement validation for GitHub Pages deployment
  */
 
+import { listFiles } from "@symbiosis-lab/moss-api";
 import { isGitRepository, hasGitRemote, getRemoteUrl } from "./git";
-import { getTauriCore, log } from "./utils";
+import { log } from "./utils";
 
 /**
  * Validate that the project is a git repository
@@ -24,15 +25,17 @@ export async function validateGitRepository(projectPath: string): Promise<void> 
 
 /**
  * Validate that the site has been compiled
+ * @param projectPath - Absolute path to the project directory
+ * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export async function validateSiteCompiled(outputDir: string): Promise<void> {
+export async function validateSiteCompiled(projectPath: string, outputDir: string): Promise<void> {
   try {
     // Check if the output directory exists and has files
-    const files = await getTauriCore().invoke<string[]>("list_directory_files", {
-      path: outputDir,
-    });
+    // listFiles returns all project files, filter to those in outputDir
+    const allFiles = await listFiles(projectPath);
+    const siteFiles = allFiles.filter((f) => f.startsWith(outputDir));
 
-    if (!files || files.length === 0) {
+    if (siteFiles.length === 0) {
       throw new Error("Site directory is empty. Please compile your site first.");
     }
   } catch (error) {
@@ -79,7 +82,11 @@ export async function validateAll(projectPath: string, outputDir: string): Promi
   await validateGitRepository(projectPath);
 
   await log("log", "   Validating compiled site...");
-  await validateSiteCompiled(outputDir);
+  // Extract relative path from outputDir (it may be absolute or relative)
+  const relativeOutputDir = outputDir.startsWith(projectPath)
+    ? outputDir.slice(projectPath.length).replace(/^\//, "")
+    : outputDir;
+  await validateSiteCompiled(projectPath, relativeOutputDir);
 
   await log("log", "   Validating GitHub remote...");
   const remoteUrl = await validateGitHubRemote(projectPath);

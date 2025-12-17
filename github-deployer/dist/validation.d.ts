@@ -7,8 +7,10 @@
 export declare function validateGitRepository(projectPath: string): Promise<void>;
 /**
  * Validate that the site has been compiled
+ * @param projectPath - Absolute path to the project directory
+ * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export declare function validateSiteCompiled(outputDir: string): Promise<void>;
+export declare function validateSiteCompiled(projectPath: string, outputDir: string): Promise<void>;
 /**
  * Validate that a GitHub remote is configured
  */

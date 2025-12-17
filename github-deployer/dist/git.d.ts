@@ -1,7 +1,7 @@
 /**
  * Git command helpers for the GitHub Pages Publisher Plugin
  *
- * Executes git commands via Tauri's execute_binary command.
+ * Executes git commands via moss-api's executeBinary.
  */
 /**
  * Check if a path exists using git status (works without direct filesystem access)

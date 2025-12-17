@@ -2,16 +2,7 @@
  * Plugin-specific type definitions for the GitHub Pages Deployer Plugin
  *
  * Common types (OnDeployContext, HookResult, PluginMessage, etc.) are imported
- * from moss-plugin-sdk.
+ * from @symbiosis-lab/moss-api.
  */
-export type { OnDeployContext, HookResult, DeploymentInfo, ProjectInfo, PluginMessage, } from "moss-plugin-sdk";
-/**
- * Result from executing a binary command via Tauri
- */
-export interface BinaryResult {
-    success: boolean;
-    stdout: string;
-    stderr: string;
-    exit_code: number;
-}
+export type { OnDeployContext, HookResult, DeploymentInfo, ProjectInfo, PluginMessage, } from "@symbiosis-lab/moss-api";
 //# sourceMappingURL=types.d.ts.map

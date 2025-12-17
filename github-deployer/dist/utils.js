@@ -3,7 +3,7 @@
  *
  * This module wraps SDK utilities with plugin-specific functionality.
  */
-import { getTauriCore as sdkGetTauriCore, setMessageContext, sendMessage as sdkSendMessage, reportProgress as sdkReportProgress, reportError as sdkReportError, } from "moss-plugin-sdk";
+import { setMessageContext, sendMessage as sdkSendMessage, reportProgress as sdkReportProgress, reportError as sdkReportError, } from "@symbiosis-lab/moss-api";
 // ============================================================================
 // Plugin Configuration
 // ============================================================================
@@ -13,9 +13,6 @@ setMessageContext(PLUGIN_NAME, "on_deploy");
 // ============================================================================
 // Re-exports from SDK (with plugin context)
 // ============================================================================
-export function getTauriCore() {
-    return sdkGetTauriCore();
-}
 /**
  * Set the current hook name for message routing
  */

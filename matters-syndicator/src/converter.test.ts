@@ -91,6 +91,13 @@ describe("htmlToMarkdown", () => {
     const html = "<figure><img src='img.jpg' alt='test'><figcaption>Caption</figcaption></figure>";
     expect(htmlToMarkdown(html)).toContain("*Caption*");
   });
+
+  it("handles empty figcaption without producing **", () => {
+    const html = "<figure><img src='img.jpg' alt='test'><figcaption></figcaption></figure>";
+    const result = htmlToMarkdown(html);
+    expect(result).toBe("![test](img.jpg)");
+    expect(result).not.toContain("**");
+  });
 });
 
 describe("generateFrontmatter", () => {

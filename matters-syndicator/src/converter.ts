@@ -97,7 +97,7 @@ function processNode(node: Node): string {
     case "figure":
       return children;
     case "figcaption":
-      return `*${children.trim()}*\n\n`;
+      return children.trim() ? `*${children.trim()}*\n\n` : "";
     case "div":
     case "span":
     case "section":

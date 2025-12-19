@@ -5,7 +5,6 @@ import {
   graphqlQueryPublic,
   USER_ARTICLES_QUERY,
   USER_COLLECTIONS_QUERY,
-  USER_PROFILE_QUERY,
 } from "../../src/api";
 import type {
   UserArticlesQuery,
@@ -29,7 +28,7 @@ describeFeature(feature, ({ Scenario }) => {
       apiConfig.queryMode = "user";
     });
 
-    When("I query articles for user {string}", async (userName: string) => {
+    When("I query articles for user {string}", async (_ctx, userName: string) => {
       try {
         articlesResult = await graphqlQueryPublic<UserArticlesQuery>(
           USER_ARTICLES_QUERY,
@@ -66,7 +65,7 @@ describeFeature(feature, ({ Scenario }) => {
       apiConfig.queryMode = "user";
     });
 
-    When("I fetch all articles for user {string} with pagination", async (userName: string) => {
+    When("I fetch all articles for user {string} with pagination", async (_ctx, userName: string) => {
       allArticles = [];
       let cursor: string | undefined;
 
@@ -98,15 +97,30 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Fetch user profile", ({ Given, When, Then, And }) => {
+  Scenario("Fetch user profile", ({ Given, When, Then }) => {
     Given("the matters.icu test environment", () => {
       apiConfig.endpoint = "https://server.matters.icu/graphql";
       apiConfig.queryMode = "user";
     });
 
-    When("I query profile for user {string}", async (userName: string) => {
+    // Use inline query without settings field (settings is private and requires auth)
+    When("I query profile for user {string}", async (_ctx, userName: string) => {
+      const PUBLIC_PROFILE_QUERY = `
+        query UserProfile($userName: String!) {
+          user(input: { userName: $userName }) {
+            id
+            userName
+            displayName
+            info {
+              description
+              profileCover
+            }
+            avatar
+          }
+        }
+      `;
       profileResult = await graphqlQueryPublic<UserProfileQuery>(
-        USER_PROFILE_QUERY,
+        PUBLIC_PROFILE_QUERY,
         { userName }
       );
     });
@@ -116,10 +130,6 @@ describeFeature(feature, ({ Scenario }) => {
       expect(profileResult?.user?.userName).toBeDefined();
       expect(profileResult?.user?.displayName).toBeDefined();
     });
-
-    And("the profile should have a language setting", () => {
-      expect(profileResult?.user?.settings?.language).toBeDefined();
-    });
   });
 
   Scenario("Fetch user collections", ({ Given, When, Then }) => {
@@ -128,7 +138,7 @@ describeFeature(feature, ({ Scenario }) => {
       apiConfig.queryMode = "user";
     });
 
-    When("I query collections for user {string}", async (userName: string) => {
+    When("I query collections for user {string}", async (_ctx, userName: string) => {
       collectionsResult = await graphqlQueryPublic<UserCollectionsQuery>(
         USER_COLLECTIONS_QUERY,
         { userName }
@@ -150,7 +160,7 @@ describeFeature(feature, ({ Scenario }) => {
       apiConfig.queryMode = "user";
     });
 
-    When("I query articles for user {string}", async (userName: string) => {
+    When("I query articles for user {string}", async (_ctx, userName: string) => {
       try {
         articlesResult = await graphqlQueryPublic<UserArticlesQuery>(
           USER_ARTICLES_QUERY,

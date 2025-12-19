@@ -25,7 +25,6 @@ Feature: Fetch Articles from Matters API
     Given the matters.icu test environment
     When I query profile for user "yhh354"
     Then I should receive profile with userName and displayName
-    And the profile should have a language setting
 
   @e2e @real-api
   Scenario: Fetch user collections

@@ -314,4 +314,262 @@ cover: "../assets/${uuid1}.jpg"
       ctx?.cleanup();
     });
   });
+
+  // ============================================================================
+  // Incremental Write Behavior Tests
+  // These tests verify the core design principle: files are written immediately
+  // after processing, not batched at the end.
+  // ============================================================================
+
+  // Additional UUIDs for multi-file tests
+  const uuid3 = "33333333-3333-3333-3333-333333333333";
+
+  // ============================================================================
+  // Scenario: Files are written immediately after processing (not batched)
+  // ============================================================================
+  Scenario("Files are written immediately after processing (not batched)", ({ Given, When, Then, And }) => {
+    Given("a mock Tauri environment", () => {
+      ctx = setupMockTauri();
+      downloadResult = null;
+      expect(ctx).toBeDefined();
+    });
+
+    And("an in-memory filesystem", () => {
+      expect(ctx!.filesystem).toBeDefined();
+    });
+
+    And("three markdown files each containing a unique remote image", () => {
+      ctx!.filesystem.setFile(`${projectPath}/文章/file1.md`, `---
+title: "File 1"
+---
+![](https://assets.matters.news/embed/${uuid1}/img1.jpg)
+`);
+      ctx!.filesystem.setFile(`${projectPath}/文章/file2.md`, `---
+title: "File 2"
+---
+![](https://assets.matters.news/embed/${uuid2}/img2.jpg)
+`);
+      ctx!.filesystem.setFile(`${projectPath}/文章/file3.md`, `---
+title: "File 3"
+---
+![](https://assets.matters.news/embed/${uuid3}/img3.jpg)
+`);
+    });
+
+    And("downloads are configured to succeed for all files", () => {
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid1}/img1.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid1}.jpg`,
+      });
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid2}/img2.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid2}.jpg`,
+      });
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid3}/img3.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid3}.jpg`,
+      });
+    });
+
+    When("I run downloadMediaAndUpdate", async () => {
+      const { downloadMediaAndUpdate } = await import("../../src/downloader");
+      downloadResult = await downloadMediaAndUpdate(projectPath);
+    });
+
+    Then("all three files should have updated references", () => {
+      const content1 = ctx!.filesystem.getFile(`${projectPath}/文章/file1.md`)?.content;
+      const content2 = ctx!.filesystem.getFile(`${projectPath}/文章/file2.md`)?.content;
+      const content3 = ctx!.filesystem.getFile(`${projectPath}/文章/file3.md`)?.content;
+
+      expect(content1).toContain(`![](../assets/${uuid1}.jpg)`);
+      expect(content2).toContain(`![](../assets/${uuid2}.jpg)`);
+      expect(content3).toContain(`![](../assets/${uuid3}.jpg)`);
+    });
+
+    And("all three files should be written to disk", () => {
+      // filesProcessed should be 3
+      expect(downloadResult!.filesProcessed).toBe(3);
+      ctx?.cleanup();
+    });
+  });
+
+  // ============================================================================
+  // Scenario: Early files are saved when later downloads fail
+  // ============================================================================
+  Scenario("Early files are saved when later downloads fail", ({ Given, When, Then, And }) => {
+    Given("a mock Tauri environment", () => {
+      ctx = setupMockTauri();
+      downloadResult = null;
+      expect(ctx).toBeDefined();
+    });
+
+    And("an in-memory filesystem", () => {
+      expect(ctx!.filesystem).toBeDefined();
+    });
+
+    And("three markdown files each containing a unique remote image", () => {
+      ctx!.filesystem.setFile(`${projectPath}/文章/file1.md`, `---
+title: "File 1"
+---
+![](https://assets.matters.news/embed/${uuid1}/img1.jpg)
+`);
+      ctx!.filesystem.setFile(`${projectPath}/文章/file2.md`, `---
+title: "File 2"
+---
+![](https://assets.matters.news/embed/${uuid2}/img2.jpg)
+`);
+      ctx!.filesystem.setFile(`${projectPath}/文章/file3.md`, `---
+title: "File 3"
+---
+![](https://assets.matters.news/embed/${uuid3}/img3.jpg)
+`);
+    });
+
+    And("the second file's download is configured to fail", () => {
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid1}/img1.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid1}.jpg`,
+      });
+      // Second file's download fails with 404
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid2}/img2.jpg`, {
+        status: 404,
+        ok: false,
+      });
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid3}/img3.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid3}.jpg`,
+      });
+    });
+
+    When("I run downloadMediaAndUpdate", async () => {
+      const { downloadMediaAndUpdate } = await import("../../src/downloader");
+      downloadResult = await downloadMediaAndUpdate(projectPath);
+    });
+
+    Then("the first file should have updated references and be written", () => {
+      const content1 = ctx!.filesystem.getFile(`${projectPath}/文章/file1.md`)?.content;
+      expect(content1).toContain(`![](../assets/${uuid1}.jpg)`);
+      expect(content1).not.toContain("https://assets.matters.news");
+    });
+
+    And("the second file should still have remote references", () => {
+      const content2 = ctx!.filesystem.getFile(`${projectPath}/文章/file2.md`)?.content;
+      // The remote URL should still be there since download failed
+      expect(content2).toContain(`https://assets.matters.news/embed/${uuid2}/img2.jpg`);
+    });
+
+    And("the third file should have updated references and be written", () => {
+      const content3 = ctx!.filesystem.getFile(`${projectPath}/文章/file3.md`)?.content;
+      expect(content3).toContain(`![](../assets/${uuid3}.jpg)`);
+      expect(content3).not.toContain("https://assets.matters.news");
+      ctx?.cleanup();
+    });
+  });
+
+  // ============================================================================
+  // Scenario: Write happens per-file not per-image
+  // ============================================================================
+  Scenario("Write happens per-file not per-image", ({ Given, When, Then, And }) => {
+    let writeCount = 0;
+
+    Given("a mock Tauri environment", () => {
+      ctx = setupMockTauri();
+      downloadResult = null;
+      writeCount = 0;
+
+      // Intercept writes to count them
+      const originalWriteProjectFile = (ctx!.filesystem as { _originalSetFile?: typeof ctx.filesystem.setFile })._originalSetFile
+        || ctx!.filesystem.setFile.bind(ctx!.filesystem);
+
+      // Store original if not already stored
+      if (!(ctx!.filesystem as { _originalSetFile?: typeof ctx.filesystem.setFile })._originalSetFile) {
+        (ctx!.filesystem as { _originalSetFile?: typeof ctx.filesystem.setFile })._originalSetFile = originalWriteProjectFile;
+      }
+
+      // Wrap setFile to count writes to our test file
+      const wrappedSetFile = (path: string, content: string) => {
+        if (path === `${projectPath}/文章/multi-image.md`) {
+          writeCount++;
+        }
+        return originalWriteProjectFile(path, content);
+      };
+      ctx!.filesystem.setFile = wrappedSetFile;
+
+      expect(ctx).toBeDefined();
+    });
+
+    And("an in-memory filesystem", () => {
+      expect(ctx!.filesystem).toBeDefined();
+    });
+
+    And("a markdown file with three remote images", () => {
+      ctx!.filesystem.setFile(`${projectPath}/文章/multi-image.md`, `---
+title: "Multi Image"
+---
+![](https://assets.matters.news/embed/${uuid1}/img1.jpg)
+![](https://assets.matters.news/embed/${uuid2}/img2.jpg)
+![](https://assets.matters.news/embed/${uuid3}/img3.jpg)
+`);
+      // Reset count after initial setup
+      writeCount = 0;
+    });
+
+    And("all three downloads are configured to succeed", () => {
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid1}/img1.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid1}.jpg`,
+      });
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid2}/img2.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid2}.jpg`,
+      });
+      ctx!.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid3}/img3.jpg`, {
+        status: 200,
+        ok: true,
+        contentType: "image/jpeg",
+        bytesWritten: 1024,
+        actualPath: `assets/${uuid3}.jpg`,
+      });
+    });
+
+    When("I run downloadMediaAndUpdate", async () => {
+      const { downloadMediaAndUpdate } = await import("../../src/downloader");
+      downloadResult = await downloadMediaAndUpdate(projectPath);
+    });
+
+    Then("the file should be written exactly once with all three references updated", () => {
+      // File should be written exactly once (after all images processed)
+      expect(writeCount).toBe(1);
+
+      // All three references should be updated
+      const content = ctx!.filesystem.getFile(`${projectPath}/文章/multi-image.md`)?.content;
+      expect(content).toContain(`![](../assets/${uuid1}.jpg)`);
+      expect(content).toContain(`![](../assets/${uuid2}.jpg)`);
+      expect(content).toContain(`![](../assets/${uuid3}.jpg)`);
+      expect(content).not.toContain("https://assets.matters.news");
+
+      ctx?.cleanup();
+    });
+  });
 });

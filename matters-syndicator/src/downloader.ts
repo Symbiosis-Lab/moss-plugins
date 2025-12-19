@@ -309,6 +309,16 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   const existingAssets = new Set(allProjectFiles.filter(f => f.startsWith("assets/")));
   log("log", `   Found ${existingAssets.size} existing assets`);
 
+  // Build UUID→asset path mapping for existing assets
+  // This allows us to skip downloads and still update references
+  const existingAssetsByUuid = new Map<string, string>();
+  for (const assetPath of existingAssets) {
+    const uuid = extractAssetUuid(assetPath);
+    if (uuid) {
+      existingAssetsByUuid.set(uuid, assetPath);
+    }
+  }
+
   const { parseFrontmatter, regenerateFrontmatter } = await import("./converter");
 
   // ========================================================================
@@ -317,8 +327,9 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
   const fileStates = new Map<string, FileState>(); // filePath → FileState
   const urlToFiles = new Map<string, UrlReference[]>(); // url → files that reference it
-  const mediaTasks: MediaTask[] = []; // unique URLs to download
-  const seenUrls = new Set<string>();
+  const mediaTasks: MediaTask[] = []; // unique URLs to download (one per UUID)
+  const seenUuids = new Set<string>(); // Track UUIDs to avoid duplicate downloads
+  const uuidToUrls = new Map<string, string[]>(); // uuid → all URLs that reference this asset
 
   log("log", "   Scanning files for remote media...");
 
@@ -347,15 +358,27 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
       // Process body media
       for (const media of bodyMedia) {
+        const uuid = extractAssetUuid(media.url);
+        // Use UUID for dedup if available, otherwise fall back to URL
+        const dedupKey = uuid || media.url;
+
         // Add to URL→files mapping
         if (!urlToFiles.has(media.url)) {
           urlToFiles.set(media.url, []);
         }
         urlToFiles.get(media.url)!.push({ filePath, inBody: true, inCover: false });
 
-        // Add to tasks if not seen
-        if (!seenUrls.has(media.url)) {
-          seenUrls.add(media.url);
+        // Track UUID→URLs for later reference updates
+        if (uuid) {
+          if (!uuidToUrls.has(uuid)) {
+            uuidToUrls.set(uuid, []);
+          }
+          uuidToUrls.get(uuid)!.push(media.url);
+        }
+
+        // Add to download tasks only if not seen (dedup by UUID if available, else by URL)
+        if (!seenUuids.has(dedupKey)) {
+          seenUuids.add(dedupKey);
           mediaTasks.push(media);
         }
       }
@@ -363,13 +386,26 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
       // Process cover media
       if (hasCoverMedia) {
         const coverUrl = cover as string;
+        const uuid = extractAssetUuid(coverUrl);
+        // Use UUID for dedup if available, otherwise fall back to URL
+        const dedupKey = uuid || coverUrl;
+
         if (!urlToFiles.has(coverUrl)) {
           urlToFiles.set(coverUrl, []);
         }
         urlToFiles.get(coverUrl)!.push({ filePath, inBody: false, inCover: true });
 
-        if (!seenUrls.has(coverUrl)) {
-          seenUrls.add(coverUrl);
+        // Track UUID→URLs for later reference updates
+        if (uuid) {
+          if (!uuidToUrls.has(uuid)) {
+            uuidToUrls.set(uuid, []);
+          }
+          uuidToUrls.get(uuid)!.push(coverUrl);
+        }
+
+        // Add to download tasks only if not seen (dedup by UUID if available, else by URL)
+        if (!seenUuids.has(dedupKey)) {
+          seenUuids.add(dedupKey);
           mediaTasks.push({ url: coverUrl });
         }
       }
@@ -421,36 +457,89 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
         return; // Don't retry
       }
 
-      log("log", `   [${attempts + 1}/${MAX_RETRIES}] Downloading: ${media.url}`);
+      const assetId = extractAssetUuid(media.url);
+      let actualPath: string | null = null;
+      let wasSkipped = false;
 
-      try {
-        const downloadResult = await downloadAsset(
-          media.url,
-          projectPath,
-          existingAssets
-        );
+      // Check if asset already exists locally (by UUID)
+      if (assetId) {
+        const existingPath = existingAssetsByUuid.get(assetId);
+        if (existingPath) {
+          actualPath = existingPath;
+          wasSkipped = true;
+          log("log", `   [~] Skipped (exists): ${existingPath}`);
+        }
+      }
 
-        const actualPath = downloadResult.actualPath;
+      // Download if not already exists
+      if (!actualPath) {
+        log("log", `   [${attempts + 1}/${MAX_RETRIES}] Downloading: ${media.url}`);
 
-        if (downloadResult.skipped) {
-          log("log", `   [~] Skipped (exists): ${actualPath}`);
-        } else {
+        try {
+          const downloadResult = await downloadAsset(
+            media.url,
+            projectPath,
+            existingAssets
+          );
+
+          actualPath = downloadResult.actualPath;
           log("log", `   [✓] Downloaded: ${actualPath}`);
           result.imagesDownloaded++;
           existingAssets.add(actualPath); // Track for future checks
-        }
 
-        // Immediately update all file states that reference this URL
-        // Use UUID-based matching to handle different CDN URLs for the same asset
-        const refs = urlToFiles.get(media.url) || [];
-        const assetId = extractAssetUuid(media.url);
+          // Update UUID→path mapping so other URLs with same UUID can skip
+          if (assetId) {
+            existingAssetsByUuid.set(assetId, actualPath);
+          }
+        } catch (err) {
+          // Check if aborted during download
+          if (signal.aborted) {
+            return; // Don't retry
+          }
+
+          const isRetryable = err instanceof DownloadError && err.isRetryable();
+          const errorMsg = err instanceof Error ? err.message : String(err);
+
+          if (isRetryable && attempts < MAX_RETRIES - 1) {
+            const delay = getFibonacciDelay(attempts + 1);
+            log("warn", `   [!] ${media.url}: ${errorMsg}, retrying in ${delay}ms (attempt ${attempts + 1}/${MAX_RETRIES})`);
+            retryCount.set(media.url, attempts + 1);
+            await sleep(delay);
+            return { retry: true };
+          }
+
+          // Permanent failure
+          log("error", `   [✗] Failed: ${media.url} - ${errorMsg}`);
+          result.errors.push(`${media.url}: ${errorMsg}`);
+          result.imagesSkipped++;
+          permanentlyFailed.add(media.url);
+          completedCount++;
+
+          reportProgress(
+            "downloading_media",
+            completedCount,
+            mediaTasks.length,
+            `Downloaded ${completedCount}/${mediaTasks.length} media files...`
+          );
+
+          return; // Don't retry
+        }
+      }
+
+      // Immediately update all file states that reference this UUID
+      // This handles different CDN URLs for the same asset (e.g., imagedelivery.net vs assets.matters.news)
+      // Get all URLs that reference this asset's UUID
+      const allUrlsForUuid = assetId ? (uuidToUrls.get(assetId) || []) : [media.url];
+
+      for (const url of allUrlsForUuid) {
+        const refs = urlToFiles.get(url) || [];
 
         for (const ref of refs) {
           const fileState = fileStates.get(ref.filePath);
           if (!fileState) continue;
 
           // Calculate relative path from markdown file to asset
-          const relativePath = calculateRelativePath(ref.filePath, actualPath);
+          const relativePath = calculateRelativePath(ref.filePath, actualPath!);
 
           if (ref.inBody && assetId) {
             // Use UUID-based replacement to handle different CDN URLs
@@ -476,46 +565,15 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
             }
           }
         }
-
-        completedCount++;
-        reportProgress(
-          "downloading_media",
-          completedCount,
-          mediaTasks.length,
-          `Downloaded ${completedCount}/${mediaTasks.length} media files...`
-        );
-
-      } catch (err) {
-        // Check if aborted during download
-        if (signal.aborted) {
-          return; // Don't retry
-        }
-
-        const isRetryable = err instanceof DownloadError && err.isRetryable();
-        const errorMsg = err instanceof Error ? err.message : String(err);
-
-        if (isRetryable && attempts < MAX_RETRIES - 1) {
-          const delay = getFibonacciDelay(attempts + 1);
-          log("warn", `   [!] ${media.url}: ${errorMsg}, retrying in ${delay}ms (attempt ${attempts + 1}/${MAX_RETRIES})`);
-          retryCount.set(media.url, attempts + 1);
-          await sleep(delay);
-          return { retry: true };
-        }
-
-        // Permanent failure
-        log("error", `   [✗] Failed: ${media.url} - ${errorMsg}`);
-        result.errors.push(`${media.url}: ${errorMsg}`);
-        result.imagesSkipped++;
-        permanentlyFailed.add(media.url);
-        completedCount++;
-
-        reportProgress(
-          "downloading_media",
-          completedCount,
-          mediaTasks.length,
-          `Downloaded ${completedCount}/${mediaTasks.length} media files...`
-        );
       }
+
+      completedCount++;
+      reportProgress(
+        "downloading_media",
+        completedCount,
+        mediaTasks.length,
+        `Downloaded ${completedCount}/${mediaTasks.length} media files...`
+      );
 
       return; // Don't retry
     },

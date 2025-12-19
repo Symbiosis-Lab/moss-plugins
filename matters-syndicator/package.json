@@ -13,9 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:features": "vitest run --config vitest.features.config.ts",
-    "test:e2e": "MATTERS_API_ENDPOINT=https://server.matters.icu/graphql MATTERS_QUERY_MODE=user vitest run --config vitest.features.config.ts",
-    "test:all": "npm run test && npm run test:features",
+    "test:unit": "vitest run --project unit",
+    "test:features": "vitest run --project features",
     "codegen": "graphql-codegen --config codegen.ts",
     "codegen:watch": "graphql-codegen --config codegen.ts --watch"
   },

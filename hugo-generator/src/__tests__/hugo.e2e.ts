@@ -16,11 +16,35 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { templates } from "../templates";
+
+/**
+ * Run Hugo with error capture for debugging.
+ */
+function runHugo(sourceDir: string, destDir: string, extraArgs: string[] = []): void {
+  const result = spawnSync("hugo", [
+    "--source", sourceDir,
+    "--destination", destDir,
+    ...extraArgs,
+  ], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (result.status !== 0) {
+    const stderr = result.stderr || "";
+    const stdout = result.stdout || "";
+    throw new Error(
+      `Hugo failed with exit code ${result.status}.\n` +
+      `Stderr: ${stderr}\n` +
+      `Stdout: ${stdout}`
+    );
+  }
+}
 
 // Paths to test fixtures
 const FIXTURES_DIR = path.resolve(__dirname, "../../test-fixtures");
@@ -217,10 +241,7 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       expect(fs.existsSync(path.join(runtimeDir, "hugo.toml"))).toBe(true);
 
       // Run Hugo
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputDir, ["--quiet"]);
 
       // Verify output
       expect(fs.existsSync(path.join(outputDir, "index.html"))).toBe(true);
@@ -270,10 +291,7 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       ).toBe(true);
 
       // Run Hugo
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputDir, ["--quiet"]);
 
       // Verify output structure
       expect(fs.existsSync(path.join(outputDir, "index.html"))).toBe(true);
@@ -320,10 +338,7 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       expect(fs.existsSync(assetsPath)).toBe(true);
 
       // Run Hugo
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputDir, ["--quiet"]);
 
       // Assets should be copied to output
       expect(
@@ -348,10 +363,7 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       createDefaultLayoutsForTest(runtimeDir);
 
       // Run Hugo
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputDir, ["--quiet"]);
 
       // Clean up
       fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -382,16 +394,10 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       fs.mkdirSync(outputMinify);
 
       // Build without minify
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputNormal}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputNormal, ["--quiet"]);
 
       // Build with minify
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputMinify}" --quiet --minify`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputMinify, ["--quiet", "--minify"]);
 
       const normalHtml = fs.readFileSync(
         path.join(outputNormal, "index.html"),
@@ -434,10 +440,7 @@ describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
       createDefaultLayoutsForTest(runtimeDir);
 
       // Hugo should still build (empty site)
-      execSync(
-        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
-        { stdio: "pipe" }
-      );
+      runHugo(runtimeDir, outputDir, ["--quiet"]);
 
       // Output directory exists (even if empty or with just hugo files)
       expect(fs.existsSync(outputDir)).toBe(true);

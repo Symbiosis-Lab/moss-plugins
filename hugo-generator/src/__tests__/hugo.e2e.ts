@@ -224,13 +224,14 @@ function createHugoConfigForTest(
 baseURL = "${baseUrl}"
 title = "${siteName}"
 
+# Disable features we don't need (must be before section headers)
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
 [permalinks]
   [permalinks.page]
     '*' = '/:sections/:filename/'
   [permalinks.section]
     '*' = '/:sections/'
-
-disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
 
 [markup]
   [markup.goldmark]

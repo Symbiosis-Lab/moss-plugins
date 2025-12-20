@@ -178,15 +178,15 @@ export async function createHugoConfig(
 baseURL = "${baseUrl}"
 title = "${siteName}"
 
+# Disable features we don't need (must be before section headers)
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
 # Preserve folder structure in URLs
 [permalinks]
   [permalinks.page]
     '*' = '/:sections/:filename/'
   [permalinks.section]
     '*' = '/:sections/'
-
-# Disable features we don't need
-disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
 
 # Enable goldmark for markdown
 [markup]

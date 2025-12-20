@@ -42,15 +42,22 @@ function listDirRecursive(dir, prefix = "") {
 }
 /**
  * Run Hugo with error capture for debugging.
+ * Don't use --quiet flag so we get verbose output on errors.
  */
-function runHugo(sourceDir, destDir, extraArgs = []) {
+function runHugo(sourceDir, destDir, _extraArgs = []) {
     // Debug: List source directory contents
     const dirContents = listDirRecursive(sourceDir);
     console.log(`Hugo source dir contents:\n${dirContents.join("\n")}`);
+    // Debug: Print hugo.toml contents
+    const hugoToml = path.join(sourceDir, "hugo.toml");
+    if (fs.existsSync(hugoToml)) {
+        console.log(`hugo.toml contents:\n${fs.readFileSync(hugoToml, "utf-8")}`);
+    }
+    // Note: Removed --quiet to get verbose output on errors
+    // Removed extraArgs to simplify debugging
     const result = spawnSync("hugo", [
         "--source", sourceDir,
         "--destination", destDir,
-        ...extraArgs,
     ], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],

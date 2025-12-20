@@ -7,6 +7,15 @@ import { isGitRepository, hasGitRemote, getRemoteUrl } from "./git";
 import { log } from "./utils";
 
 /**
+ * Check if a remote URL is using SSH protocol
+ * SSH URLs look like: git@github.com:user/repo.git
+ * HTTPS URLs look like: https://github.com/user/repo.git
+ */
+export function isSSHRemote(remoteUrl: string): boolean {
+  return remoteUrl.startsWith("git@") || remoteUrl.startsWith("ssh://");
+}
+
+/**
  * Validate that the project is a git repository
  */
 export async function validateGitRepository(): Promise<void> {

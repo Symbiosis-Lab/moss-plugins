@@ -4,13 +4,18 @@
  * Deploys sites to GitHub Pages via GitHub Actions.
  * This plugin extracts the deployment logic from the original Rust implementation
  * (src-tauri/src/preview/deploy.rs) into a TypeScript plugin.
+ *
+ * Authentication:
+ * - Uses OAuth Device Flow for browser-based GitHub login
+ * - Stores tokens in git credential helper for persistence
  */
 
 import type { OnDeployContext, HookResult } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
-import { validateAll } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl } from "./git";
+import { validateAll, isSSHRemote } from "./validation";
+import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
 import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
+import { checkAuthentication, promptLogin } from "./auth";
 
 // ============================================================================
 // Hook Implementation
@@ -20,6 +25,7 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  * deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
  * This capability:
+ * 0. Checks authentication (prompts login if needed for HTTPS remotes)
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/
@@ -27,17 +33,55 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function deploy(_context: OnDeployContext): Promise<HookResult> {
+async function deploy(context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
 
   try {
+    // Phase 0: Check authentication for HTTPS remotes
+    // SSH remotes use SSH keys, so we skip auth check for them
+    let remoteUrl: string;
+    try {
+      remoteUrl = await getRemoteUrl(context.project_path);
+    } catch {
+      // Will be handled by validateAll
+      remoteUrl = "";
+    }
+
+    const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
+
+    if (!useSSH && remoteUrl) {
+      await reportProgress("authentication", 0, 6, "Checking GitHub authentication...");
+      const authState = await checkAuthentication(context.project_path);
+
+      if (!authState.isAuthenticated) {
+        await log("log", "   HTTPS remote detected, authentication required");
+        await reportProgress("authentication", 0, 6, "GitHub login required...");
+
+        const loginSuccess = await promptLogin(context.project_path);
+
+        if (!loginSuccess) {
+          await reportError("GitHub authentication failed or was cancelled", "authentication", true);
+          return {
+            success: false,
+            message: "GitHub authentication failed. Please try again.",
+          };
+        }
+
+        await log("log", "   Successfully authenticated with GitHub");
+      } else {
+        await log("log", `   Already authenticated as ${authState.username}`);
+      }
+
+      await reportProgress("authentication", 1, 6, "Authenticated");
+    } else if (useSSH) {
+      await log("log", "   SSH remote detected, using SSH key authentication");
+    }
+
     // Phase 1: Validate requirements
-    // The site_files in context already contain relative paths to output dir
-    // Default output dir is ".moss/site" - we validate files exist there
-    await reportProgress("validating", 1, 5, "Validating requirements...");
-    const remoteUrl = await validateAll(".moss/site");
+    await reportProgress("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
+    remoteUrl = await validateAll(context.project_path, context.output_dir);
 
     // Phase 2: Detect default branch
     await reportProgress("configuring", 2, 5, "Detecting default branch...");

@@ -21,9 +21,32 @@ import * as path from "path";
 import * as os from "os";
 import { templates } from "../templates";
 /**
+ * Recursively list directory contents for debugging.
+ */
+function listDirRecursive(dir, prefix = "") {
+    const entries = [];
+    try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        for (const item of items) {
+            const itemPath = path.join(prefix, item.name);
+            entries.push(itemPath);
+            if (item.isDirectory()) {
+                entries.push(...listDirRecursive(path.join(dir, item.name), itemPath));
+            }
+        }
+    }
+    catch {
+        entries.push(`[error reading ${dir}]`);
+    }
+    return entries;
+}
+/**
  * Run Hugo with error capture for debugging.
  */
 function runHugo(sourceDir, destDir, extraArgs = []) {
+    // Debug: List source directory contents
+    const dirContents = listDirRecursive(sourceDir);
+    console.log(`Hugo source dir contents:\n${dirContents.join("\n")}`);
     const result = spawnSync("hugo", [
         "--source", sourceDir,
         "--destination", destDir,
@@ -36,6 +59,9 @@ function runHugo(sourceDir, destDir, extraArgs = []) {
         const stderr = result.stderr || "";
         const stdout = result.stdout || "";
         throw new Error(`Hugo failed with exit code ${result.status}.\n` +
+            `Source dir: ${sourceDir}\n` +
+            `Dest dir: ${destDir}\n` +
+            `Dir contents:\n${dirContents.join("\n")}\n` +
             `Stderr: ${stderr}\n` +
             `Stdout: ${stdout}`);
     }

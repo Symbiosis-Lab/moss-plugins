@@ -24,20 +24,28 @@ import { templates } from "../templates";
  * Run Hugo with error capture.
  */
 function runHugo(sourceDir, destDir, extraArgs = []) {
-    const args = extraArgs.join(" ");
-    try {
-        execSync(`hugo --source "${sourceDir}" --destination "${destDir}" ${args}`, {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-        });
-    }
-    catch (error) {
-        const execError = error;
-        throw new Error(`Hugo failed with exit code ${execError.status}.\n` +
+    // Use spawnSync for better error capture
+    const { spawnSync } = require("child_process");
+    const result = spawnSync("hugo", [
+        "--source", sourceDir,
+        "--destination", destDir,
+        "--logLevel", "debug",
+        ...extraArgs,
+    ], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+        const stderr = result.stderr || "";
+        const stdout = result.stdout || "";
+        const errMsg = result.error ? String(result.error) : "";
+        throw new Error(`Hugo failed with exit code ${result.status}.\n` +
+            `Signal: ${result.signal}\n` +
+            `Error: ${errMsg}\n` +
             `Source dir: ${sourceDir}\n` +
             `Dest dir: ${destDir}\n` +
-            `Stderr: ${execError.stderr || ""}\n` +
-            `Stdout: ${execError.stdout || ""}`);
+            `Stderr: ${stderr}\n` +
+            `Stdout: ${stdout}`);
     }
 }
 // Paths to test fixtures

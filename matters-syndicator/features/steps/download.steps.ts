@@ -208,7 +208,8 @@ ${allUrls.map((url) => `![](${url})`).join("\n")}
     And("the result should report both successes and failures", () => {
       expect(downloadResult).not.toBeNull();
       expect(downloadResult!.imagesDownloaded).toBe(3);
-      expect(downloadResult!.imagesSkipped).toBe(2);
+      // imagesSkipped only counts assets that already existed locally, not failed downloads
+      expect(downloadResult!.imagesSkipped).toBe(0);
       expect(downloadResult!.errors.length).toBe(2);
       ctx?.cleanup();
     });
@@ -319,7 +320,8 @@ title: Max Retry Test
 
     And("the download should fail with 503 error", () => {
       expect(downloadResult!.imagesDownloaded).toBe(0);
-      expect(downloadResult!.imagesSkipped).toBe(1);
+      // imagesSkipped only counts assets that already existed locally, not failed downloads
+      expect(downloadResult!.imagesSkipped).toBe(0);
       expect(downloadResult!.errors.some((e) => e.includes("503"))).toBe(true);
       ctx?.cleanup();
     });
@@ -364,7 +366,8 @@ title: No Retry Test
 
     And("the download should fail immediately with 404 error", () => {
       expect(downloadResult!.imagesDownloaded).toBe(0);
-      expect(downloadResult!.imagesSkipped).toBe(1);
+      // imagesSkipped only counts assets that already existed locally, not failed downloads
+      expect(downloadResult!.imagesSkipped).toBe(0);
       expect(downloadResult!.errors.some((e) => e.includes("404"))).toBe(true);
       expect(ctx!.downloadTracker.failedDownloads.length).toBe(1);
       ctx?.cleanup();

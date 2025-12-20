@@ -231,13 +231,11 @@ export async function before_build(context: BeforeBuildContext): Promise<HookRes
     await reportProgress("syncing", 1, 1, `Sync complete: ${summary}`);
     await log("log", `✅ Sync complete: ${summary}`);
 
-    // Phase 7: Post-sync processing (run in PARALLEL for performance)
-    // - Link rewriting: Fast (CPU-bound string operations)
-    // - Media download: Slow (network I/O with Fibonacci backoff retry)
-    const [linkResult, mediaResult] = await Promise.all([
-      rewriteAllInternalLinks(context.project_path, articlePathMap, userName),
-      downloadMediaAndUpdate(context.project_path),
-    ]);
+    // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
+    // Both operations read/write the same markdown files, so they must not run in parallel.
+    // Order: Media download first (updates image references), then link rewriting
+    const mediaResult = await downloadMediaAndUpdate(context.project_path);
+    const linkResult = await rewriteAllInternalLinks(context.project_path, articlePathMap, userName);
 
     const mediaSummary =
       mediaResult.imagesDownloaded > 0 || mediaResult.imagesSkipped > 0

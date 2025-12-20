@@ -30,8 +30,6 @@ const BASEOF_HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ .Title }}{{ with site.Title }} | {{ . }}{{ end }}</title>
   {{ with .Description }}<meta name="description" content="{{ . }}">{{ end }}
-  {{ $styles := resources.Get "css/style.css" }}
-  {{ with $styles }}<link rel="stylesheet" href="{{ .RelPermalink }}">{{ end }}
 </head>
 <body>
   {{ block "main" . }}{{ end }}

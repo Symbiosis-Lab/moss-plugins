@@ -16,67 +16,30 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
-import { execSync, spawnSync } from "child_process";
+import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { templates } from "../templates";
 
 /**
- * Recursively list directory contents for debugging.
+ * Run Hugo with error capture.
  */
-function listDirRecursive(dir: string, prefix = ""): string[] {
-  const entries: string[] = [];
+function runHugo(sourceDir: string, destDir: string, extraArgs: string[] = []): void {
+  const args = extraArgs.join(" ");
   try {
-    const items = fs.readdirSync(dir, { withFileTypes: true });
-    for (const item of items) {
-      const itemPath = path.join(prefix, item.name);
-      entries.push(itemPath);
-      if (item.isDirectory()) {
-        entries.push(...listDirRecursive(path.join(dir, item.name), itemPath));
-      }
-    }
-  } catch {
-    entries.push(`[error reading ${dir}]`);
-  }
-  return entries;
-}
-
-/**
- * Run Hugo with error capture for debugging.
- * Don't use --quiet flag so we get verbose output on errors.
- */
-function runHugo(sourceDir: string, destDir: string, _extraArgs: string[] = []): void {
-  // Debug: List source directory contents
-  const dirContents = listDirRecursive(sourceDir);
-  console.log(`Hugo source dir contents:\n${dirContents.join("\n")}`);
-
-  // Debug: Print hugo.toml contents
-  const hugoToml = path.join(sourceDir, "hugo.toml");
-  if (fs.existsSync(hugoToml)) {
-    console.log(`hugo.toml contents:\n${fs.readFileSync(hugoToml, "utf-8")}`);
-  }
-
-  // Note: Removed --quiet to get verbose output on errors
-  // Removed extraArgs to simplify debugging
-  const result = spawnSync("hugo", [
-    "--source", sourceDir,
-    "--destination", destDir,
-  ], {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-
-  if (result.status !== 0) {
-    const stderr = result.stderr || "";
-    const stdout = result.stdout || "";
+    execSync(`hugo --source "${sourceDir}" --destination "${destDir}" ${args}`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (error: unknown) {
+    const execError = error as { stderr?: string; stdout?: string; status?: number };
     throw new Error(
-      `Hugo failed with exit code ${result.status}.\n` +
+      `Hugo failed with exit code ${execError.status}.\n` +
       `Source dir: ${sourceDir}\n` +
       `Dest dir: ${destDir}\n` +
-      `Dir contents:\n${dirContents.join("\n")}\n` +
-      `Stderr: ${stderr}\n` +
-      `Stdout: ${stdout}`
+      `Stderr: ${execError.stderr || ""}\n` +
+      `Stdout: ${execError.stdout || ""}`
     );
   }
 }

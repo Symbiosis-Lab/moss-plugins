@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { WORKFLOW_TEMPLATE, generateWorkflowContent } from "./workflow";
+import { WORKFLOW_TEMPLATE, generateWorkflowContent } from "../workflow";
 
 describe("WORKFLOW_TEMPLATE", () => {
   it("contains the branch placeholder", () => {

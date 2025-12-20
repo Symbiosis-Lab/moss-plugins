@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl } from "./git";
+import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {

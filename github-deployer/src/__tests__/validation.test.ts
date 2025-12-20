@@ -16,7 +16,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   listFiles: (...args: unknown[]) => mockListFiles(...args),
 }));
 
-vi.mock("./utils", () => ({
+vi.mock("../utils", () => ({
   log: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -26,7 +26,7 @@ import {
   validateSiteCompiled,
   validateGitHubRemote,
   validateAll,
-} from "./validation";
+} from "../validation";
 
 describe("validateGitRepository", () => {
   beforeEach(() => {

@@ -5,7 +5,7 @@ import {
   buildAssetUrlPattern,
   replaceAssetUrls,
   calculateRelativePath,
-} from "./downloader";
+} from "../downloader";
 
 // Note: The downloader module heavily depends on:
 // 1. window.__TAURI__ for file operations
@@ -18,12 +18,12 @@ import {
 describe("Downloader Module", () => {
   describe("Module Structure", () => {
     it("exports downloadMediaAndUpdate function", async () => {
-      const module = await import("./downloader");
+      const module = await import("../downloader");
       expect(typeof module.downloadMediaAndUpdate).toBe("function");
     });
 
     it("exports rewriteAllInternalLinks function", async () => {
-      const module = await import("./downloader");
+      const module = await import("../downloader");
       expect(typeof module.rewriteAllInternalLinks).toBe("function");
     });
   });
@@ -31,7 +31,7 @@ describe("Downloader Module", () => {
   describe("Constants", () => {
     // These are internal constants, but we can verify the module loads correctly
     it("module loads without errors", async () => {
-      await expect(import("./downloader")).resolves.toBeDefined();
+      await expect(import("../downloader")).resolves.toBeDefined();
     });
   });
 });

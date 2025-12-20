@@ -2,6 +2,12 @@
  * Requirement validation for GitHub Pages deployment
  */
 /**
+ * Check if a remote URL is using SSH protocol
+ * SSH URLs look like: git@github.com:user/repo.git
+ * HTTPS URLs look like: https://github.com/user/repo.git
+ */
+export declare function isSSHRemote(remoteUrl: string): boolean;
+/**
  * Validate that the project is a git repository
  */
 export declare function validateGitRepository(projectPath: string): Promise<void>;

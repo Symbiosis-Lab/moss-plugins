@@ -4,12 +4,17 @@
  * Deploys sites to GitHub Pages via GitHub Actions.
  * This plugin extracts the deployment logic from the original Rust implementation
  * (src-tauri/src/preview/deploy.rs) into a TypeScript plugin.
+ *
+ * Authentication:
+ * - Uses OAuth Device Flow for browser-based GitHub login
+ * - Stores tokens in git credential helper for persistence
  */
 import type { OnDeployContext, HookResult } from "./types";
 /**
  * on_deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
  * This hook:
+ * 0. Checks authentication (prompts login if needed for HTTPS remotes)
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/

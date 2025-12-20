@@ -23,89 +23,25 @@ import * as os from "os";
 import { templates } from "../templates";
 
 /**
- * Recursively list all files in a directory (for debugging).
- */
-function listFilesRecursive(dir: string, prefix = ""): string[] {
-  const results: string[] = [];
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        results.push(`${relativePath}/`);
-        results.push(...listFilesRecursive(fullPath, relativePath));
-      } else {
-        results.push(relativePath);
-      }
-    }
-  } catch {
-    // Ignore errors
-  }
-  return results;
-}
-
-/**
  * Run Hugo with error capture.
  */
 function runHugo(sourceDir: string, destDir: string, extraArgs: string[] = []): void {
-  // Dump directory structure for debugging
-  console.log("=== Hugo source directory structure ===");
-  const files = listFilesRecursive(sourceDir);
-  for (const f of files) {
-    console.log(`  ${f}`);
-  }
-
-  // Dump hugo.toml contents
-  const hugoTomlPath = path.join(sourceDir, "hugo.toml");
-  if (fs.existsSync(hugoTomlPath)) {
-    console.log("=== hugo.toml contents ===");
-    console.log(fs.readFileSync(hugoTomlPath, "utf-8"));
-  }
-
-  // Dump baseof.html contents (first few lines)
-  const baseofPath = path.join(sourceDir, "layouts", "_default", "baseof.html");
-  if (fs.existsSync(baseofPath)) {
-    console.log("=== baseof.html contents ===");
-    console.log(fs.readFileSync(baseofPath, "utf-8"));
-  }
-
-  // Use spawnSync for better error capture
   const { spawnSync } = require("child_process");
-
-  // Filter out --quiet from extraArgs since we want debug output
-  const filteredArgs = extraArgs.filter(arg => arg !== "--quiet");
 
   const result = spawnSync("hugo", [
     "--source", sourceDir,
     "--destination", destDir,
-    "--logLevel", "debug",
-    ...filteredArgs,
+    ...extraArgs,
   ], {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // Always log output for debugging
-  if (result.stdout) {
-    console.log("=== Hugo stdout ===");
-    console.log(result.stdout);
-  }
-  if (result.stderr) {
-    console.log("=== Hugo stderr ===");
-    console.log(result.stderr);
-  }
-
   if (result.status !== 0) {
     const stderr = result.stderr || "";
     const stdout = result.stdout || "";
-    const errMsg = result.error ? String(result.error) : "";
     throw new Error(
       `Hugo failed with exit code ${result.status}.\n` +
-      `Signal: ${result.signal}\n` +
-      `Error: ${errMsg}\n` +
-      `Source dir: ${sourceDir}\n` +
-      `Dest dir: ${destDir}\n` +
       `Stderr: ${stderr}\n` +
       `Stdout: ${stdout}`
     );

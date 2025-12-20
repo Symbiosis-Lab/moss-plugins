@@ -152,32 +152,6 @@ jobs:
           cd hugo-generator
           npm ci
 
-      - name: Verify Hugo works
-        run: |
-          # Create a minimal Hugo site to verify Hugo works
-          mkdir -p /tmp/hugo-test/content /tmp/hugo-test/layouts/_default
-          cat > /tmp/hugo-test/content/_index.md << 'EOF'
-          ---
-          title: Test
-          ---
-          Hello
-          EOF
-          echo 'baseURL = "/"' > /tmp/hugo-test/hugo.toml
-          cat > /tmp/hugo-test/layouts/_default/baseof.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <body>{{ block "main" . }}{{ end }}</body>
-          </html>
-          EOF
-          echo '{{ define "main" }}{{ .Content }}{{ end }}' > /tmp/hugo-test/layouts/_default/list.html
-          echo '{{ define "main" }}{{ .Content }}{{ end }}' > /tmp/hugo-test/layouts/index.html
-          echo "=== Hugo site structure ==="
-          find /tmp/hugo-test -type f
-          echo "=== Running Hugo ==="
-          hugo --source /tmp/hugo-test --destination /tmp/hugo-out --logLevel debug 2>&1 || echo "Hugo failed with exit $?"
-          echo "=== Output directory ==="
-          ls -la /tmp/hugo-out 2>/dev/null || echo "Output dir not created"
-
       - name: Run E2E tests
         run: |
           cd hugo-generator

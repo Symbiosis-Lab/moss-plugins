@@ -128,16 +128,46 @@ jobs:
           name: ${{ matrix.plugin }}-rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # E2E tests for hugo-generator (requires Hugo installed)
+  test-hugo-e2e:
+    needs: detect-changes
+    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Hugo
+        run: |
+          wget -q https://github.com/gohugoio/hugo/releases/download/v0.139.0/hugo_extended_0.139.0_linux-amd64.deb
+          sudo dpkg -i hugo_extended_0.139.0_linux-amd64.deb
+          hugo version
+
+      - name: Install dependencies
+        run: |
+          cd hugo-generator
+          npm ci
+
+      - name: Run E2E tests
+        run: |
+          cd hugo-generator
+          npm run test:e2e
+
   # Summary job for branch protection
   test-summary:
-    needs: [test-javascript, test-rust]
+    needs: [test-javascript, test-rust, test-hugo-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check test results
         run: |
           if [ "${{ needs.test-javascript.result }}" == "failure" ] || \
-             [ "${{ needs.test-rust.result }}" == "failure" ]; then
+             [ "${{ needs.test-rust.result }}" == "failure" ] || \
+             [ "${{ needs.test-hugo-e2e.result }}" == "failure" ]; then
             echo "Some tests failed"
             exit 1
           fi

@@ -5,7 +5,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";
+import {
+  setupMockTauri,
+  type MockTauriContext,
+} from "@symbiosis-lab/moss-api/testing";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 // Mock the moss-api module before importing the plugin
 vi.mock("@symbiosis-lab/moss-api", async () => {
@@ -18,23 +24,40 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
 
 describe("Hugo Generator Plugin", () => {
   let ctx: MockTauriContext;
+  let tempDir: string;
+  let projectPath: string;
+  let mossDir: string;
+  let outputDir: string;
 
   beforeEach(() => {
     ctx = setupMockTauri();
     vi.clearAllMocks();
+
+    // Create temp directory structure for tests
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hugo-main-test-"));
+    projectPath = path.join(tempDir, "project");
+    mossDir = path.join(projectPath, ".moss");
+    outputDir = path.join(mossDir, "site-stage");
+    fs.mkdirSync(projectPath, { recursive: true });
+    fs.mkdirSync(mossDir, { recursive: true });
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    // Create a sample index.md
+    fs.writeFileSync(path.join(projectPath, "index.md"), "# Home");
   });
 
   afterEach(() => {
     ctx.cleanup();
     vi.resetModules();
+    // Clean up temp directory
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   const createContext = (overrides: Record<string, unknown> = {}) => ({
-    project_path: "/test/project",
-    moss_dir: "/test/project/.moss",
-    output_dir: "/test/project/.moss/site-stage",
+    project_path: projectPath,
+    moss_dir: mossDir,
+    output_dir: outputDir,
     project_info: {
-      project_type: "flat",
       content_folders: [],
       total_files: 1,
       homepage_file: "index.md",
@@ -185,16 +208,25 @@ describe("Hugo Generator Plugin", () => {
       const { on_build } = await import("../main");
       await on_build(createContext());
 
+      // Check scaffolding phase
+      expect(reportProgress).toHaveBeenCalledWith(
+        "scaffolding",
+        0,
+        3,
+        "Creating Hugo structure..."
+      );
+      // Check building phase
       expect(reportProgress).toHaveBeenCalledWith(
         "building",
-        0,
         1,
+        3,
         "Running Hugo..."
       );
+      // Check completion phase
       expect(reportProgress).toHaveBeenCalledWith(
         "complete",
-        1,
-        1,
+        3,
+        3,
         "Hugo build complete"
       );
     });
@@ -212,9 +244,15 @@ describe("Hugo Generator Plugin", () => {
       await on_build(createContext());
 
       expect(reportProgress).toHaveBeenCalledWith(
-        "building",
+        "scaffolding",
         0,
+        3,
+        "Creating Hugo structure..."
+      );
+      expect(reportProgress).toHaveBeenCalledWith(
+        "building",
         1,
+        3,
         "Running Hugo..."
       );
       expect(reportProgress).not.toHaveBeenCalledWith(
@@ -223,6 +261,44 @@ describe("Hugo Generator Plugin", () => {
         expect.anything(),
         expect.anything()
       );
+    });
+
+    it("cleans up runtime directory after build", async () => {
+      ctx.binaryConfig.setResult("hugo", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const { on_build } = await import("../main");
+      await on_build(createContext());
+
+      // Runtime directory should be cleaned up
+      const runtimeDir = path.join(
+        mossDir,
+        "plugins/hugo-generator/.runtime"
+      );
+      expect(fs.existsSync(runtimeDir)).toBe(false);
+    });
+
+    it("cleans up runtime directory even on failure", async () => {
+      ctx.binaryConfig.setResult("hugo", {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "Error",
+      });
+
+      const { on_build } = await import("../main");
+      await on_build(createContext());
+
+      // Runtime directory should still be cleaned up
+      const runtimeDir = path.join(
+        mossDir,
+        "plugins/hugo-generator/.runtime"
+      );
+      expect(fs.existsSync(runtimeDir)).toBe(false);
     });
   });
 

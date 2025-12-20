@@ -11,7 +11,7 @@
  *
  * 1. **Moss scans** the project folder and detects the structure (homepage, collections, etc.)
  * 2. **Plugin receives** OnBuildContext with parsed project_info
- * 3. **Plugin translates** moss's structure to Hugo-compatible layout via symlinks
+ * 3. **Plugin translates** moss's structure to Hugo-compatible layout by copying files
  * 4. **Hugo builds** from the translated structure, outputs to staging directory
  * 5. **Moss handles** the zero-flicker staging pattern (atomic swap)
  *
@@ -28,25 +28,25 @@
  * build_args = ["--minify", "--gc"]   # Optional: custom build args
  * ```
  *
- * ## Folder Structure Translation (Phase 10)
+ * ## Folder Structure Translation
  *
  * The plugin creates a `.runtime/` folder under the plugin directory:
  *
  * ```
  * .moss/plugins/hugo-generator/.runtime/
- * ├── content/       # Symlinks to user's markdown files
- * │   ├── _index.md  # Homepage (symlink to project's index.md)
- * │   ├── posts/     # Collection folder (symlink)
- * │   └── about.md   # Root page (symlink)
+ * ├── content/       # Copied markdown files
+ * │   ├── _index.md  # Homepage (copied from project's index.md)
+ * │   ├── posts/     # Collection folder (copied files)
+ * │   └── about.md   # Root page (copied)
  * ├── layouts/       # Default Hugo templates
  * └── hugo.toml      # Generated Hugo config
  * ```
  *
  * ### Translation Rules:
  * - `index.md` (homepage) → `content/_index.md` (Hugo's homepage convention)
- * - Collection folders → `content/{folder}/` (direct symlink)
+ * - Collection folders → `content/{folder}/` (copied with index.md → _index.md rename)
  * - `{folder}/index.md` → `content/{folder}/_index.md` (Hugo section index)
- * - Root markdown files → `content/{file}.md` (symlinks)
+ * - Root markdown files → `content/{file}.md` (copied)
  * - `assets/` folder → `static/assets/` (for images, CSS, JS)
  *
  * ### Project Type Detection:
@@ -56,42 +56,15 @@
  */
 
 import { executeBinary, reportProgress } from "@symbiosis-lab/moss-api";
-
-/**
- * Project information passed from moss to the plugin.
- *
- * Note: `project_type` was removed in PR #15. Plugins should derive
- * structure type from `content_folders.is_empty()` if needed.
- */
-interface ProjectInfo {
-  /** Content folder names (e.g., ["posts", "projects"]). Empty for flat sites. */
-  content_folders: string[];
-
-  /** Total number of content files detected */
-  total_files: number;
-
-  /** Homepage file path relative to project root (e.g., "index.md") */
-  homepage_file?: string;
-}
-
-/**
- * Source files categorized by type.
- */
-interface SourceFiles {
-  markdown: string[];
-  pages: string[];
-  docx: string[];
-  other: string[];
-}
-
-/**
- * Site configuration from .moss/config.toml.
- */
-interface SiteConfig {
-  site_name?: string;
-  base_url?: string;
-  [key: string]: unknown;
-}
+import {
+  createHugoStructure,
+  createHugoConfig,
+  cleanupRuntime,
+  type ProjectInfo,
+  type SourceFiles,
+  type SiteConfig,
+} from "./structure";
+import { createDefaultLayouts } from "./templates";
 
 /**
  * Plugin-specific configuration.
@@ -147,19 +120,14 @@ interface HookResult {
  * Hugo writes output to context.output_dir (typically .moss/site-stage/).
  * Moss handles the zero-flicker staging pattern after this hook completes.
  *
- * ## Current Implementation (Direct Hugo)
+ * ## Build Flow
  *
- * Currently runs Hugo directly on the project folder. This requires the
- * project to already be in Hugo-compatible structure.
- *
- * ## Phase 10 Implementation (Folder Translation)
- *
- * Will be updated to:
- * 1. Create .runtime/ folder with Hugo-compatible structure via symlinks
- * 2. Generate hugo.toml config
- * 3. Create default layouts
- * 4. Run Hugo on the translated structure
- * 5. Cleanup .runtime/ after build
+ * 1. Clean and prepare .runtime directory
+ * 2. Create Hugo structure from moss's parsed project info (copy files)
+ * 3. Generate hugo.toml config
+ * 4. Create default layouts
+ * 5. Run Hugo on the translated structure
+ * 6. Cleanup .runtime directory
  *
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
@@ -168,20 +136,46 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
   const hugoPath = context.config.hugo_path || "hugo";
   const buildArgs = context.config.build_args || ["--minify"];
 
-  reportProgress("building", 0, 1, "Running Hugo...");
+  // Runtime directory under plugin's .moss location
+  // Using string concatenation since we can't use Node.js path module
+  const runtimeDir = `${context.moss_dir}/plugins/hugo-generator/.runtime`;
 
   try {
+    // Step 1: Clean and prepare runtime directory
+    await cleanupRuntime(runtimeDir);
+
+    // Step 2: Create Hugo structure from moss's parsed project info
+    reportProgress("scaffolding", 0, 3, "Creating Hugo structure...");
+    await createHugoStructure(
+      context.project_path,
+      context.project_info,
+      runtimeDir,
+      context.moss_dir
+    );
+
+    // Step 3: Generate Hugo config
+    await createHugoConfig(
+      context.site_config,
+      runtimeDir,
+      context.project_path
+    );
+
+    // Step 4: Create default layouts
+    await createDefaultLayouts(runtimeDir, context.project_path);
+
+    // Step 5: Run Hugo
+    reportProgress("building", 1, 3, "Running Hugo...");
     const result = await executeBinary({
       binaryPath: hugoPath,
       args: [
         "--source",
-        context.project_path,
+        runtimeDir,
         "--destination",
         context.output_dir,
         "--quiet",
         ...buildArgs,
       ],
-      workingDir: context.project_path,
+      workingDir: runtimeDir,
       timeoutMs: 300000, // 5 minutes for large sites
     });
 
@@ -194,7 +188,7 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
       };
     }
 
-    reportProgress("complete", 1, 1, "Hugo build complete");
+    reportProgress("complete", 3, 3, "Hugo build complete");
     return { success: true, message: "Hugo build complete" };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -202,6 +196,9 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
       success: false,
       message: `Failed to execute Hugo: ${errorMessage}`,
     };
+  } finally {
+    // Step 6: Cleanup runtime directory
+    await cleanupRuntime(runtimeDir);
   }
 }
 
@@ -211,3 +208,6 @@ const HugoGenerator = { on_build };
   HugoGenerator;
 
 export default HugoGenerator;
+
+// Re-export types for testing
+export type { OnBuildContext, HookResult, PluginConfig };

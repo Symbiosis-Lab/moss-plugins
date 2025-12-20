@@ -2,252 +2,454 @@
  * E2E tests for Hugo Generator Plugin
  *
  * These tests require Hugo to be installed on the system.
- * They create real Hugo sites and verify the build output.
+ * They use our test fixtures to verify the complete build pipeline:
+ * - Structure translation (moss format → Hugo format)
+ * - Hugo build execution
+ * - Output verification
+ *
+ * Note: These tests use Node.js fs directly for file operations since
+ * they run in Node.js environment, not Tauri webview. The actual plugin
+ * uses moss-api for file operations in production.
  *
  * Run with: npm run test:e2e
- * Skip in CI without Hugo: tests will throw descriptive error
+ * Tests will be skipped if Hugo is not installed.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import * as fs from "fs/promises";
+import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { templates } from "../templates";
 
-describe("Hugo Generator E2E", () => {
-  let testDir: string;
-  let hugoAvailable = false;
+// Paths to test fixtures
+const FIXTURES_DIR = path.resolve(__dirname, "../../test-fixtures");
+const FLAT_SITE_FIXTURE = path.join(FIXTURES_DIR, "flat-site");
+const COLLECTIONS_SITE_FIXTURE = path.join(FIXTURES_DIR, "collections-site");
 
-  beforeAll(async () => {
-    // Check if Hugo is installed
-    try {
+// Check if Hugo is installed at module load time
+function isHugoInstalled(): boolean {
+  try {
+    execSync("hugo version", { encoding: "utf-8", stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const hugoAvailable = isHugoInstalled();
+
+/**
+ * E2E-specific structure creation using Node.js fs.
+ * Mirrors the logic in structure.ts but uses Node.js APIs for testing.
+ */
+async function createHugoStructureForTest(
+  projectPath: string,
+  projectInfo: { content_folders: string[]; homepage_file?: string },
+  runtimeDir: string
+): Promise<void> {
+  const contentDir = path.join(runtimeDir, "content");
+  const staticDir = path.join(runtimeDir, "static");
+  fs.mkdirSync(contentDir, { recursive: true });
+  fs.mkdirSync(staticDir, { recursive: true });
+
+  // 1. Handle homepage
+  if (projectInfo.homepage_file) {
+    const homepageSrc = path.join(projectPath, projectInfo.homepage_file);
+    if (fs.existsSync(homepageSrc)) {
+      const content = fs.readFileSync(homepageSrc, "utf-8");
+      fs.writeFileSync(path.join(contentDir, "_index.md"), content);
+    }
+  }
+
+  // 2. Copy content folders with index.md → _index.md renaming
+  for (const folder of projectInfo.content_folders) {
+    const folderSrc = path.join(projectPath, folder);
+    if (fs.existsSync(folderSrc)) {
+      copyContentFolder(folderSrc, path.join(contentDir, folder));
+    }
+  }
+
+  // 3. Copy root markdown files (excluding homepage)
+  const rootFiles = fs.readdirSync(projectPath);
+  for (const file of rootFiles) {
+    if (
+      file.endsWith(".md") &&
+      file !== projectInfo.homepage_file &&
+      fs.statSync(path.join(projectPath, file)).isFile()
+    ) {
+      const content = fs.readFileSync(path.join(projectPath, file), "utf-8");
+      fs.writeFileSync(path.join(contentDir, file), content);
+    }
+  }
+
+  // 4. Copy assets if exists
+  const assetsPath = path.join(projectPath, "assets");
+  if (fs.existsSync(assetsPath)) {
+    copyDirectory(assetsPath, path.join(staticDir, "assets"));
+  }
+}
+
+function copyContentFolder(src: string, dst: string): void {
+  fs.mkdirSync(dst, { recursive: true });
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const dstName =
+      entry.name.toLowerCase() === "index.md" ? "_index.md" : entry.name;
+    const dstPath = path.join(dst, dstName);
+
+    if (entry.isDirectory()) {
+      copyContentFolder(srcPath, dstPath);
+    } else {
+      const content = fs.readFileSync(srcPath, "utf-8");
+      fs.writeFileSync(dstPath, content);
+    }
+  }
+}
+
+function copyDirectory(src: string, dst: string): void {
+  fs.mkdirSync(dst, { recursive: true });
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dst, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectory(srcPath, dstPath);
+    } else {
+      fs.copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
+function createHugoConfigForTest(
+  runtimeDir: string,
+  siteName = "Site",
+  baseUrl = "/"
+): void {
+  const config = `# Auto-generated Hugo configuration
+baseURL = "${baseUrl}"
+title = "${siteName}"
+
+[permalinks]
+  [permalinks.page]
+    '*' = '/:sections/:filename/'
+  [permalinks.section]
+    '*' = '/:sections/'
+
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+`;
+  fs.writeFileSync(path.join(runtimeDir, "hugo.toml"), config);
+}
+
+function createDefaultLayoutsForTest(runtimeDir: string): void {
+  const layoutsDir = path.join(runtimeDir, "layouts");
+  const defaultDir = path.join(layoutsDir, "_default");
+  fs.mkdirSync(defaultDir, { recursive: true });
+
+  fs.writeFileSync(path.join(defaultDir, "baseof.html"), templates.baseof);
+  fs.writeFileSync(path.join(defaultDir, "single.html"), templates.single);
+  fs.writeFileSync(path.join(defaultDir, "list.html"), templates.list);
+  fs.writeFileSync(path.join(layoutsDir, "index.html"), templates.index);
+}
+
+// Use describe.skipIf to skip all tests if Hugo is not available
+describe.skipIf(!hugoAvailable)("Hugo Generator E2E", () => {
+  let tempDir: string;
+  let runtimeDir: string;
+  let outputDir: string;
+
+  beforeAll(() => {
+    if (hugoAvailable) {
       const version = execSync("hugo version", { encoding: "utf-8" });
       console.log(`Hugo available: ${version.trim()}`);
-      hugoAvailable = true;
-    } catch {
-      console.warn(
-        "Hugo not installed - E2E tests will be skipped. " +
-          "Install Hugo to run these tests: https://gohugo.io/installation/"
-      );
-    }
-
-    if (!hugoAvailable) return;
-
-    // Create test directory
-    testDir = path.join(os.tmpdir(), `hugo-generator-e2e-${Date.now()}`);
-
-    // Create a new Hugo site
-    execSync(`hugo new site "${testDir}"`, { stdio: "pipe" });
-
-    // Add minimal content
-    const contentDir = path.join(testDir, "content");
-    await fs.mkdir(contentDir, { recursive: true });
-    await fs.writeFile(
-      path.join(contentDir, "_index.md"),
-      `---
-title: "Test Site"
-date: 2024-01-01
----
-
-# Hello from Hugo
-
-This is a test site generated by the Hugo Generator plugin.
-`
-    );
-
-    // Add a posts section
-    const postsDir = path.join(contentDir, "posts");
-    await fs.mkdir(postsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(postsDir, "first-post.md"),
-      `---
-title: "First Post"
-date: 2024-01-02
-tags: ["test", "hugo"]
----
-
-# First Post
-
-This is the first post content.
-`
-    );
-  });
-
-  afterAll(async () => {
-    if (testDir) {
-      await fs.rm(testDir, { recursive: true, force: true }).catch(() => {
-        // Ignore cleanup errors
-      });
     }
   });
 
   beforeEach(() => {
-    if (!hugoAvailable) {
-      throw new Error(
-        "Hugo not installed - skipping E2E test. " +
-          "Install Hugo to run: https://gohugo.io/installation/"
-      );
+    // Create temp directory for each test
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hugo-e2e-"));
+    runtimeDir = path.join(tempDir, ".runtime");
+    outputDir = path.join(tempDir, "output");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.mkdirSync(outputDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  describe("Hugo CLI Integration", () => {
-    it("builds Hugo site to output directory", async () => {
-      const outputDir = path.join(testDir, ".moss", "site");
+  describe("Flat Site (no collections)", () => {
+    it("builds flat site with homepage and root pages", async () => {
+      const projectInfo = {
+        content_folders: [] as string[],
+        homepage_file: "index.md",
+      };
 
-      // Clean output directory if exists
-      await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+      await createHugoStructureForTest(
+        FLAT_SITE_FIXTURE,
+        projectInfo,
+        runtimeDir
+      );
+      createHugoConfigForTest(runtimeDir, "Flat Site Test");
+      createDefaultLayoutsForTest(runtimeDir);
 
-      // Run Hugo build
+      // Verify structure was created
+      expect(fs.existsSync(path.join(runtimeDir, "content", "_index.md"))).toBe(
+        true
+      );
+      expect(fs.existsSync(path.join(runtimeDir, "content", "about.md"))).toBe(
+        true
+      );
+      expect(
+        fs.existsSync(path.join(runtimeDir, "content", "contact.md"))
+      ).toBe(true);
+      expect(fs.existsSync(path.join(runtimeDir, "hugo.toml"))).toBe(true);
+
+      // Run Hugo
       execSync(
-        `hugo --source "${testDir}" --destination "${outputDir}" --quiet`,
+        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
         { stdio: "pipe" }
       );
 
-      // Verify index.html exists
-      const indexPath = path.join(outputDir, "index.html");
-      const exists = await fs
-        .access(indexPath)
-        .then(() => true)
-        .catch(() => false);
-      expect(exists).toBe(true);
+      // Verify output
+      expect(fs.existsSync(path.join(outputDir, "index.html"))).toBe(true);
+      expect(fs.existsSync(path.join(outputDir, "about", "index.html"))).toBe(
+        true
+      );
+      expect(fs.existsSync(path.join(outputDir, "contact", "index.html"))).toBe(
+        true
+      );
 
-      // Verify content is present
-      const html = await fs.readFile(indexPath, "utf-8");
-      expect(html).toContain("Test Site");
+      // Verify content is rendered
+      const homeHtml = fs.readFileSync(
+        path.join(outputDir, "index.html"),
+        "utf-8"
+      );
+      expect(homeHtml).toContain("Welcome to My Site");
     });
+  });
 
-    it("creates collection index for posts directory", async () => {
-      const outputDir = path.join(testDir, ".moss", "site-collections");
+  describe("Collections Site (with posts folder)", () => {
+    it("builds site with collections and nested content", async () => {
+      const projectInfo = {
+        content_folders: ["posts"],
+        homepage_file: "index.md",
+      };
 
-      await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+      await createHugoStructureForTest(
+        COLLECTIONS_SITE_FIXTURE,
+        projectInfo,
+        runtimeDir
+      );
+      createHugoConfigForTest(runtimeDir, "Collections Site Test");
+      createDefaultLayoutsForTest(runtimeDir);
 
+      // Verify structure - posts/index.md should become posts/_index.md
+      expect(fs.existsSync(path.join(runtimeDir, "content", "_index.md"))).toBe(
+        true
+      );
+      expect(
+        fs.existsSync(path.join(runtimeDir, "content", "posts", "_index.md"))
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(runtimeDir, "content", "posts", "post-1.md"))
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(runtimeDir, "content", "posts", "post-2.md"))
+      ).toBe(true);
+
+      // Run Hugo
       execSync(
-        `hugo --source "${testDir}" --destination "${outputDir}" --quiet`,
+        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
         { stdio: "pipe" }
       );
 
-      // Hugo creates posts/index.html for the section
-      const postsIndexPath = path.join(outputDir, "posts", "index.html");
-      const exists = await fs
-        .access(postsIndexPath)
-        .then(() => true)
-        .catch(() => false);
-      expect(exists).toBe(true);
+      // Verify output structure
+      expect(fs.existsSync(path.join(outputDir, "index.html"))).toBe(true);
+      expect(fs.existsSync(path.join(outputDir, "posts", "index.html"))).toBe(
+        true
+      );
+      expect(
+        fs.existsSync(path.join(outputDir, "posts", "post-1", "index.html"))
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(outputDir, "posts", "post-2", "index.html"))
+      ).toBe(true);
+
+      // Verify content is rendered
+      const postsHtml = fs.readFileSync(
+        path.join(outputDir, "posts", "index.html"),
+        "utf-8"
+      );
+      expect(postsHtml).toContain("Posts");
+
+      const post1Html = fs.readFileSync(
+        path.join(outputDir, "posts", "post-1", "index.html"),
+        "utf-8"
+      );
+      expect(post1Html).toContain("First Post");
     });
 
-    it("creates individual post HTML files", async () => {
-      const outputDir = path.join(testDir, ".moss", "site-posts");
+    it("copies assets folder to static/assets", async () => {
+      const projectInfo = {
+        content_folders: ["posts"],
+        homepage_file: "index.md",
+      };
 
-      await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+      await createHugoStructureForTest(
+        COLLECTIONS_SITE_FIXTURE,
+        projectInfo,
+        runtimeDir
+      );
+      createHugoConfigForTest(runtimeDir);
+      createDefaultLayoutsForTest(runtimeDir);
 
+      // Verify assets are copied
+      const assetsPath = path.join(runtimeDir, "static", "assets");
+      expect(fs.existsSync(assetsPath)).toBe(true);
+
+      // Run Hugo
       execSync(
-        `hugo --source "${testDir}" --destination "${outputDir}" --quiet`,
+        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
         { stdio: "pipe" }
       );
 
-      // Hugo creates posts/first-post/index.html
-      const postPath = path.join(outputDir, "posts", "first-post", "index.html");
-      const exists = await fs
-        .access(postPath)
-        .then(() => true)
-        .catch(() => false);
-      expect(exists).toBe(true);
-
-      const html = await fs.readFile(postPath, "utf-8");
-      expect(html).toContain("First Post");
+      // Assets should be copied to output
+      expect(
+        fs.existsSync(path.join(outputDir, "assets", "placeholder.txt"))
+      ).toBe(true);
     });
+  });
 
-    it("applies --minify flag to reduce output size", async () => {
-      const outputDirNormal = path.join(testDir, ".moss", "site-normal");
-      const outputDirMinify = path.join(testDir, ".moss", "site-minify");
+  describe("Runtime Cleanup", () => {
+    it("runtime directory can be cleaned up after build", async () => {
+      const projectInfo = {
+        content_folders: [] as string[],
+        homepage_file: "index.md",
+      };
 
-      await fs
-        .rm(outputDirNormal, { recursive: true, force: true })
-        .catch(() => {});
-      await fs
-        .rm(outputDirMinify, { recursive: true, force: true })
-        .catch(() => {});
+      await createHugoStructureForTest(
+        FLAT_SITE_FIXTURE,
+        projectInfo,
+        runtimeDir
+      );
+      createHugoConfigForTest(runtimeDir);
+      createDefaultLayoutsForTest(runtimeDir);
+
+      // Run Hugo
+      execSync(
+        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
+        { stdio: "pipe" }
+      );
+
+      // Clean up
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+
+      // Verify cleanup
+      expect(fs.existsSync(runtimeDir)).toBe(false);
+    });
+  });
+
+  describe("Hugo Build Options", () => {
+    it("applies --minify flag", async () => {
+      const projectInfo = {
+        content_folders: [] as string[],
+        homepage_file: "index.md",
+      };
+
+      await createHugoStructureForTest(
+        FLAT_SITE_FIXTURE,
+        projectInfo,
+        runtimeDir
+      );
+      createHugoConfigForTest(runtimeDir);
+      createDefaultLayoutsForTest(runtimeDir);
+
+      const outputNormal = path.join(tempDir, "output-normal");
+      const outputMinify = path.join(tempDir, "output-minify");
+      fs.mkdirSync(outputNormal);
+      fs.mkdirSync(outputMinify);
 
       // Build without minify
       execSync(
-        `hugo --source "${testDir}" --destination "${outputDirNormal}" --quiet`,
+        `hugo --source "${runtimeDir}" --destination "${outputNormal}" --quiet`,
         { stdio: "pipe" }
       );
 
       // Build with minify
       execSync(
-        `hugo --source "${testDir}" --destination "${outputDirMinify}" --quiet --minify`,
+        `hugo --source "${runtimeDir}" --destination "${outputMinify}" --quiet --minify`,
         { stdio: "pipe" }
       );
 
-      const normalHtml = await fs.readFile(
-        path.join(outputDirNormal, "index.html"),
+      const normalHtml = fs.readFileSync(
+        path.join(outputNormal, "index.html"),
         "utf-8"
       );
-      const minifyHtml = await fs.readFile(
-        path.join(outputDirMinify, "index.html"),
+      const minifyHtml = fs.readFileSync(
+        path.join(outputMinify, "index.html"),
         "utf-8"
       );
 
-      // Minified should be smaller or equal (Hugo's default themes may already be minimal)
+      // Minified should be smaller or equal
       expect(minifyHtml.length).toBeLessThanOrEqual(normalHtml.length);
-    });
-
-    it("handles missing config.toml gracefully", async () => {
-      // Create a bare directory without hugo.toml/config.toml
-      const bareDir = path.join(os.tmpdir(), `hugo-bare-${Date.now()}`);
-      await fs.mkdir(bareDir, { recursive: true });
-
-      const outputDir = path.join(bareDir, ".moss", "site");
-
-      try {
-        // Hugo should still work (uses defaults)
-        execSync(
-          `hugo --source "${bareDir}" --destination "${outputDir}" --quiet`,
-          { stdio: "pipe" }
-        );
-        // If it succeeds, that's fine - Hugo can work without config
-      } catch (error) {
-        // Hugo may fail or warn, but shouldn't crash
-        expect(error).toBeDefined();
-      } finally {
-        await fs.rm(bareDir, { recursive: true, force: true }).catch(() => {});
-      }
     });
   });
 
   describe("Error Handling", () => {
-    it("fails with clear error for invalid Hugo path", async () => {
-      let errorThrown = false;
-      let errorMessage = "";
-
-      try {
-        execSync(
-          `/nonexistent/hugo --source "${testDir}" --destination "/tmp/out" --quiet`,
-          { stdio: "pipe" }
-        );
-      } catch (error) {
-        errorThrown = true;
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage).toBeTruthy();
-    });
-
-    it("fails for invalid source directory", async () => {
+    it("fails with clear error for invalid Hugo path", () => {
       let errorThrown = false;
 
       try {
-        execSync(
-          `hugo --source "/nonexistent/path" --destination "/tmp/out" --quiet`,
-          { stdio: "pipe" }
-        );
+        execSync(`/nonexistent/hugo --version`, { stdio: "pipe" });
       } catch {
         errorThrown = true;
       }
 
       expect(errorThrown).toBe(true);
     });
+
+    it("handles empty project gracefully", async () => {
+      const emptyDir = path.join(tempDir, "empty-project");
+      fs.mkdirSync(emptyDir);
+
+      const projectInfo = {
+        content_folders: [] as string[],
+        homepage_file: undefined,
+      };
+
+      await createHugoStructureForTest(emptyDir, projectInfo, runtimeDir);
+      createHugoConfigForTest(runtimeDir);
+      createDefaultLayoutsForTest(runtimeDir);
+
+      // Hugo should still build (empty site)
+      execSync(
+        `hugo --source "${runtimeDir}" --destination "${outputDir}" --quiet`,
+        { stdio: "pipe" }
+      );
+
+      // Output directory exists (even if empty or with just hugo files)
+      expect(fs.existsSync(outputDir)).toBe(true);
+    });
   });
 });
+
+// Provide feedback when Hugo is not installed
+if (!hugoAvailable) {
+  describe("Hugo Generator E2E (Hugo not installed)", () => {
+    it.skip("Hugo binary not found - install Hugo to run E2E tests", () => {
+      // This test is always skipped, but provides user feedback
+    });
+  });
+}

@@ -5,7 +5,7 @@ import {
   DRAFTS_QUERY,
   COLLECTIONS_QUERY,
   clearTokenCache,
-} from "./api";
+} from "../api";
 
 describe("API Constants", () => {
   it("has correct GraphQL endpoint", () => {

@@ -6,7 +6,7 @@ import {
   regenerateFrontmatter,
   extractRemoteImageUrls,
   extractMarkdownLinks,
-} from "./converter";
+} from "../converter";
 
 describe("htmlToMarkdown", () => {
   it("converts headings", () => {

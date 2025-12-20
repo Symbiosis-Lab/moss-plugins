@@ -5,7 +5,7 @@ import {
   generateLocalFilename,
   getExtensionFromContentType,
   uint8ArrayToBase64,
-} from "./utils";
+} from "../utils";
 
 describe("slugify", () => {
   it("converts simple text to lowercase slug", () => {

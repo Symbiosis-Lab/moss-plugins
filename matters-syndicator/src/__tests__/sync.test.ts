@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRemoteNewer } from "./sync";
+import { isRemoteNewer } from "../sync";
 
 describe("isRemoteNewer", () => {
   it("returns true when local is undefined", () => {
@@ -35,7 +35,7 @@ describe("isRemoteNewer", () => {
 
 describe("syncToLocalFiles", () => {
   it("exports syncToLocalFiles function", async () => {
-    const module = await import("./sync");
+    const module = await import("../sync");
     expect(typeof module.syncToLocalFiles).toBe("function");
   });
 });

@@ -13,7 +13,8 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
-          include: ["src/**/*.test.ts"],
+          include: ["src/__tests__/*.test.ts"],
+          exclude: ["src/__tests__/*.integration.test.ts"],
           environment: "node",
           globals: true,
         },
@@ -21,9 +22,19 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: "integration",
+          include: ["src/__tests__/*.integration.test.ts"],
+          environment: "happy-dom",
+          globals: true,
+          testTimeout: 30000,
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "features",
           include: ["features/steps/**/*.steps.ts"],
-          environment: "node",
+          environment: "happy-dom",
           testTimeout: 60000,
           hookTimeout: 30000,
           globals: true,

@@ -216,78 +216,275 @@ describe("calculateRelativePath", () => {
 // Note: withTimeout was removed - timeout handling is now done by Rust side
 // (tokio::time::timeout with Semaphore for concurrency control)
 
-// Integration tests would look like this (commented out as they need mocking setup):
-/*
-describe("downloadAsset", () => {
-  beforeEach(() => {
-    // Mock window.__TAURI__
-    (global as any).window = {
-      __TAURI__: {
-        core: {
-          invoke: vi.fn(),
-        },
-      },
-    };
+// ============================================================================
+// Integration Tests with Mock Tauri
+// ============================================================================
 
-    // Mock fetch
-    global.fetch = vi.fn();
+import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";
+
+describe("downloadMediaAndUpdate - partial completion", () => {
+  let ctx: MockTauriContext;
+  const projectPath = "/test-project";
+
+  beforeEach(() => {
+    ctx = setupMockTauri();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    ctx.cleanup();
   });
 
-  it("downloads and saves asset successfully", async () => {
-    const mockResponse = {
+  it("updates file references for successfully downloaded images", async () => {
+    // Set up a markdown file with 2 images
+    const uuid1 = "aaaaaaaa-1111-1111-1111-111111111111";
+    const uuid2 = "bbbbbbbb-2222-2222-2222-222222222222";
+    const markdownContent = `---
+title: "Test Article"
+---
+
+# Article
+
+![](https://assets.matters.news/embed/${uuid1}.jpg)
+
+Some text
+
+![](https://assets.matters.news/embed/${uuid2}.jpg)
+`;
+    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+
+    // Configure URL responses - uuid1 succeeds, uuid2 fails with 404
+    ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid1}.jpg`, {
+      status: 200,
       ok: true,
-      headers: new Headers({ "content-type": "image/jpeg" }),
-      arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
-    };
-    (global.fetch as any).mockResolvedValue(mockResponse);
-    (window.__TAURI__.core.invoke as any).mockResolvedValue(undefined);
+      contentType: "image/jpeg",
+      bytesWritten: 1024,
+      actualPath: `assets/${uuid1}.jpg`,
+    });
+    ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid2}.jpg`, {
+      status: 404,
+      ok: false,
+      contentType: null,
+      bytesWritten: 0,
+      actualPath: "",
+    });
 
-    const { downloadAsset } = await import("./downloader");
-    const result = await downloadAsset(
-      "https://example.com/image.jpg",
-      "image.jpg",
-      "/project"
-    );
+    // Run the download and update function
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
 
-    expect(result).toBe("assets/image.jpg");
+    // Verify: 1 image downloaded, 1 error
+    expect(result.imagesDownloaded).toBe(1);
+    expect(result.errors.length).toBeGreaterThan(0);
+
+    // Verify: File was modified to update successful reference
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/article.md`)?.content;
+    expect(updatedContent).toBeDefined();
+
+    // UUID1 should be replaced with local path
+    expect(updatedContent).toContain(`assets/${uuid1}.jpg`);
+    expect(updatedContent).not.toContain(`https://assets.matters.news/embed/${uuid1}.jpg`);
+
+    // UUID2 should remain as remote URL (download failed)
+    expect(updatedContent).toContain(`https://assets.matters.news/embed/${uuid2}.jpg`);
   });
 
-  it("retries on 429 rate limit", async () => {
-    // First call returns 429, second succeeds
-    const mockResponse429 = { ok: false, status: 429, statusText: "Too Many Requests" };
-    const mockResponseOk = {
+  it("tracks downloaded UUIDs correctly in map", async () => {
+    const uuid = "cccccccc-3333-3333-3333-333333333333";
+    const markdownContent = `---
+title: "Test"
+---
+
+![](https://assets.matters.news/embed/${uuid}.png)
+`;
+    ctx.filesystem.setFile(`${projectPath}/test.md`, markdownContent);
+
+    ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid}.png`, {
+      status: 200,
       ok: true,
-      headers: new Headers({ "content-type": "image/png" }),
-      arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
-    };
+      contentType: "image/png",
+      bytesWritten: 512,
+      actualPath: `assets/${uuid}.png`,
+    });
 
-    (global.fetch as any)
-      .mockResolvedValueOnce(mockResponse429)
-      .mockResolvedValueOnce(mockResponseOk);
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
 
-    const { downloadAsset } = await import("./downloader");
-    const result = await downloadAsset(
-      "https://example.com/image.png",
-      "image.png",
-      "/project"
-    );
+    expect(result.imagesDownloaded).toBe(1);
+    expect(result.filesProcessed).toBe(1);
 
-    expect(result).toBe("assets/image.png");
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    // Verify the file was updated
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/test.md`)?.content;
+    expect(updatedContent).toContain(`assets/${uuid}.png`);
   });
 
-  it("throws on 404 without retry", async () => {
-    const mockResponse = { ok: false, status: 404, statusText: "Not Found" };
-    (global.fetch as any).mockResolvedValue(mockResponse);
+  it("handles file in subdirectory with correct relative path", async () => {
+    const uuid = "dddddddd-4444-4444-4444-444444444444";
+    const markdownContent = `---
+title: "Nested Article"
+---
 
-    const { downloadAsset } = await import("./downloader");
-    await expect(
-      downloadAsset("https://example.com/missing.jpg", "missing.jpg", "/project")
-    ).rejects.toThrow("HTTP 404");
+![](https://assets.matters.news/embed/${uuid}.jpg)
+`;
+    // File in nested directory
+    ctx.filesystem.setFile(`${projectPath}/文章/游记/article.md`, markdownContent);
+
+    ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid}.jpg`, {
+      status: 200,
+      ok: true,
+      contentType: "image/jpeg",
+      bytesWritten: 2048,
+      actualPath: `assets/${uuid}.jpg`,
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
+
+    expect(result.imagesDownloaded).toBe(1);
+
+    // Verify relative path is correct (../../assets/uuid.jpg)
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/文章/游记/article.md`)?.content;
+    expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
+  });
+
+  it("skips already existing assets", async () => {
+    const existingUuid = "eeeeeeee-5555-5555-5555-555555555555";
+    const newUuid = "ffffffff-6666-6666-6666-666666666666";
+
+    const markdownContent = `---
+title: "Test"
+---
+
+![](https://assets.matters.news/embed/${existingUuid}.jpg)
+![](https://assets.matters.news/embed/${newUuid}.jpg)
+`;
+    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+
+    // Simulate existing asset on disk
+    ctx.filesystem.setFile(`${projectPath}/assets/${existingUuid}.jpg`, "[binary image data]");
+
+    // Only configure the new UUID
+    ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${newUuid}.jpg`, {
+      status: 200,
+      ok: true,
+      contentType: "image/jpeg",
+      bytesWritten: 1024,
+      actualPath: `assets/${newUuid}.jpg`,
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
+
+    // Only 1 new download (existing was skipped)
+    expect(result.imagesDownloaded).toBe(1);
+    expect(result.imagesSkipped).toBe(1);
+  });
+
+  it("updates cover reference in frontmatter", async () => {
+    const uuid = "11111111-aaaa-bbbb-cccc-dddddddddddd";
+    const markdownContent = `---
+title: "Article with Cover"
+cover: "https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public"
+---
+
+# Content
+`;
+    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+
+    ctx.urlConfig.setResponse(`https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public`, {
+      status: 200,
+      ok: true,
+      contentType: "image/jpeg",
+      bytesWritten: 4096,
+      actualPath: `assets/${uuid}.jpg`,
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
+
+    expect(result.imagesDownloaded).toBe(1);
+    expect(result.filesProcessed).toBe(1);
+
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/article.md`)?.content;
+    expect(updatedContent).toContain(`cover: "assets/${uuid}.jpg"`);
+  });
+
+  it("updates references when asset already exists (self-correcting)", async () => {
+    // This test reproduces the production bug:
+    // 1. Asset was downloaded in a previous run (exists on disk)
+    // 2. But the file still has remote URL (previous run was interrupted)
+    // 3. Running again should update the reference even though download is skipped
+    const uuid = "2ef1d558-bca4-4792-bb63-41ee12fa95ac";
+    const markdownContent = `---
+title: "色达"
+---
+
+![](https://assets.matters.news/embed/${uuid}.jpeg)
+`;
+    ctx.filesystem.setFile(`${projectPath}/文章/游记/色达.md`, markdownContent);
+
+    // Asset already exists on disk (from previous interrupted run)
+    ctx.filesystem.setFile(`${projectPath}/assets/${uuid}.jpg`, "[binary image data]");
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
+
+    // Asset should be skipped (already exists), not downloaded
+    expect(result.imagesDownloaded).toBe(0);
+    expect(result.imagesSkipped).toBe(1);
+
+    // But file should still be updated with local path
+    expect(result.filesProcessed).toBe(1);
+
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/文章/游记/色达.md`)?.content;
+    expect(updatedContent).toBeDefined();
+    // Should use relative path from nested directory
+    expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
+    expect(updatedContent).not.toContain(`https://assets.matters.news/embed/${uuid}.jpeg`);
+  });
+
+  it("updates multiple references when multiple assets already exist", async () => {
+    // Same scenario but with multiple images
+    const uuid1 = "aaaa1111-1111-1111-1111-111111111111";
+    const uuid2 = "bbbb2222-2222-2222-2222-222222222222";
+    const uuid3 = "cccc3333-3333-3333-3333-333333333333";
+
+    const markdownContent = `---
+title: "Multi Image Article"
+cover: "https://assets.matters.news/embed/${uuid1}.jpg"
+---
+
+![](https://assets.matters.news/embed/${uuid2}.png)
+
+Some text
+
+![](https://assets.matters.news/embed/${uuid3}.jpeg)
+`;
+    ctx.filesystem.setFile(`${projectPath}/nested/dir/article.md`, markdownContent);
+
+    // All 3 assets exist on disk
+    ctx.filesystem.setFile(`${projectPath}/assets/${uuid1}.jpg`, "[image 1]");
+    ctx.filesystem.setFile(`${projectPath}/assets/${uuid2}.png`, "[image 2]");
+    ctx.filesystem.setFile(`${projectPath}/assets/${uuid3}.jpeg`, "[image 3]");
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate(projectPath);
+
+    // All 3 skipped, none downloaded
+    expect(result.imagesDownloaded).toBe(0);
+    expect(result.imagesSkipped).toBe(3);
+
+    // File should be updated
+    expect(result.filesProcessed).toBe(1);
+
+    const updatedContent = ctx.filesystem.getFile(`${projectPath}/nested/dir/article.md`)?.content;
+    expect(updatedContent).toBeDefined();
+
+    // All 3 should be updated to relative paths
+    expect(updatedContent).toContain(`cover: "../../assets/${uuid1}.jpg"`);
+    expect(updatedContent).toContain(`../../assets/${uuid2}.png`);
+    expect(updatedContent).toContain(`../../assets/${uuid3}.jpeg`);
+
+    // None should have remote URLs
+    expect(updatedContent).not.toContain("https://assets.matters.news");
   });
 });
-*/

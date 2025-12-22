@@ -5,7 +5,6 @@ import {
   buildAssetUrlPattern,
   replaceAssetUrls,
   calculateRelativePath,
-  withTimeout,
 } from "../downloader";
 
 // Note: The downloader module heavily depends on:
@@ -214,46 +213,8 @@ describe("calculateRelativePath", () => {
   });
 });
 
-describe("withTimeout", () => {
-  it("resolves when promise completes before timeout", async () => {
-    const fastPromise = Promise.resolve("success");
-    const result = await withTimeout(fastPromise, 1000, "timeout");
-    expect(result).toBe("success");
-  });
-
-  it("rejects with timeout error when promise takes too long", async () => {
-    const slowPromise = new Promise((resolve) => setTimeout(() => resolve("too slow"), 500));
-    await expect(withTimeout(slowPromise, 50, "Custom timeout message"))
-      .rejects.toThrow("Custom timeout message");
-  });
-
-  it("preserves the error from the original promise", async () => {
-    const failingPromise = Promise.reject(new Error("Original error"));
-    await expect(withTimeout(failingPromise, 1000, "timeout"))
-      .rejects.toThrow("Original error");
-  });
-
-  it("resolves with correct value type", async () => {
-    const typedPromise: Promise<{ id: number; name: string }> = Promise.resolve({ id: 1, name: "test" });
-    const result = await withTimeout(typedPromise, 1000, "timeout");
-    expect(result).toEqual({ id: 1, name: "test" });
-  });
-
-  it("works with immediate resolution", async () => {
-    const immediate = Promise.resolve(42);
-    const result = await withTimeout(immediate, 1, "timeout");
-    expect(result).toBe(42);
-  });
-
-  it("works with async function results", async () => {
-    const asyncFn = async () => {
-      await new Promise(resolve => setTimeout(resolve, 10));
-      return "async result";
-    };
-    const result = await withTimeout(asyncFn(), 1000, "timeout");
-    expect(result).toBe("async result");
-  });
-});
+// Note: withTimeout was removed - timeout handling is now done by Rust side
+// (tokio::time::timeout with Semaphore for concurrency control)
 
 // Integration tests would look like this (commented out as they need mocking setup):
 /*

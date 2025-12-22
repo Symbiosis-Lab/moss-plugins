@@ -23,7 +23,8 @@ import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 // ============================================================================
 
 const MAX_RETRIES = 3;
-const CONCURRENCY = 5;
+// Note: Concurrency is now handled by Rust-side Semaphore (DOWNLOAD_CONCURRENCY_LIMIT=5)
+// Timeout is handled by Rust-side tokio::time::timeout (default 30s)
 
 // ============================================================================
 // Pure Helper Functions (exported for testing)
@@ -123,9 +124,22 @@ class DownloadError extends Error {
 }
 
 /**
- * Download a single asset with retry logic.
+ * Download a single asset with retry logic and comprehensive logging.
  * Uses Rust to download and save directly to disk (avoids JS base64 blocking).
  * Moss handles filename derivation and extension from content-type.
+ *
+ * Timeout and concurrency are handled by Rust side:
+ * - Semaphore limits concurrent downloads to 5
+ * - tokio::time::timeout enforces 30s cumulative timeout
+ *
+ * Logging:
+ * - [↓] Attempt N/M: Starting download attempt
+ * - [✓] Downloaded: Successful download
+ * - [!] HTTP {status}: HTTP error (retryable or final)
+ * - [✗] TIMEOUT: Download timeout from Rust
+ * - [✗] ERROR: Other errors (network, etc.)
+ * - [↻] Retrying: Retry announcement with delay
+ * - [✗] FAILED: Final failure after all retries
  */
 async function downloadAssetWithRetry(
   url: string,
@@ -133,31 +147,52 @@ async function downloadAssetWithRetry(
 ): Promise<{ actualPath: string; success: boolean; error?: string }> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const result = await downloadAssetRust(url, projectPath, "assets", 30000);
+      log("log", `   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
+
+      // Rust handles timeout (30s) and concurrency (5 parallel)
+      const result = await downloadAssetRust(url, projectPath, "assets");
 
       if (!result.ok) {
         const err = new DownloadError(`HTTP ${result.status}`, result.status);
+        log("warn", `   [!] HTTP ${result.status} for ${url}`);
+
         if (!err.isRetryable() || attempt === MAX_RETRIES) {
+          log("error", `   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}`);
           return { actualPath: "", success: false, error: `HTTP ${result.status}` };
         }
+
         const delay = getFibonacciDelay(attempt);
-        log("warn", `   [!] ${url}: HTTP ${result.status}, retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`);
+        log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await sleep(delay);
         continue;
       }
 
+      log("log", `   [✓] Downloaded: ${result.actual_path}`);
       return { actualPath: result.actual_path, success: true };
+
     } catch (fetchError: unknown) {
       const message = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      const isTimeout = message.toLowerCase().includes("timeout");
+
+      // Log the error type
+      if (isTimeout) {
+        log("error", `   [✗] TIMEOUT: ${url} - ${message}`);
+      } else {
+        log("error", `   [✗] ERROR: ${url} - ${message}`);
+      }
+
       if (attempt === MAX_RETRIES) {
+        log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
         return { actualPath: "", success: false, error: message };
       }
+
       const delay = getFibonacciDelay(attempt);
-      log("warn", `   [!] ${url}: ${message}, retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`);
+      log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
       await sleep(delay);
     }
   }
 
+  log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
   return { actualPath: "", success: false, error: "Max retries exceeded" };
 }
 
@@ -188,19 +223,18 @@ interface FileState {
 /**
  * Download all media for all markdown files in a project and update references.
  *
- * DESIGN: Process file-by-file, writing each file immediately after all its
- * images are downloaded/resolved. This ensures:
+ * DESIGN: Fire all downloads in parallel, let Rust handle concurrency.
  *
- * 1. **Incremental progress**: If interrupted at file 10/50, files 1-9 are saved
- * 2. **Self-correcting**: Running again skips files with no remote URLs
- * 3. **No batch write phase**: Each file is written as soon as it's ready
+ * 1. **Parallel downloads**: All downloads start immediately via Promise.allSettled
+ * 2. **Rust-side concurrency**: Semaphore limits to 5 concurrent downloads
+ * 3. **Rust-side timeout**: tokio::time::timeout enforces 30s cumulative timeout
+ * 4. **Self-correcting**: Running again skips already-downloaded assets (by UUID)
  *
- * Flow for each file:
- * 1. Check which images need downloading (by UUID lookup in existing assets)
- * 2. Download missing images (with retry logic)
- * 3. Update all references in-memory
- * 4. Write file to disk immediately
- * 5. Move to next file
+ * Flow:
+ * 1. Scan all files to collect unique media URLs needing download
+ * 2. Fire all downloads in parallel (Rust handles concurrency/timeout)
+ * 3. After all complete, update references in each file
+ * 4. Write modified files to disk
  */
 export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   filesProcessed: number;
@@ -317,18 +351,83 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   log("log", `   Total unique media URLs: ${totalUrls}`);
 
   // ========================================================================
-  // Phase 2: Process each file - download images and write immediately
+  // Phase 2: Download all images in parallel (Rust handles concurrency)
   // ========================================================================
 
-  let processedUrls = 0;
-  const downloadedUuids = new Map<string, string>(); // uuid → localPath (for dedup across files)
+  // Collect all unique media that needs downloading (not already in existing assets)
+  const mediaToDownload: { url: string; uuid: string | null }[] = [];
+  const seenUuids = new Set<string>();
+
+  for (const file of filesToProcess) {
+    for (const media of file.mediaUrls) {
+      const key = media.uuid || media.url;
+
+      // Skip if already downloaded in this batch
+      if (media.uuid && seenUuids.has(media.uuid)) continue;
+
+      // Skip if asset already exists
+      if (media.uuid && existingAssetsByUuid.has(media.uuid)) {
+        result.imagesSkipped++;
+        continue;
+      }
+
+      mediaToDownload.push({ url: media.url, uuid: media.uuid });
+      if (media.uuid) seenUuids.add(media.uuid);
+    }
+  }
+
+  log("log", `   Downloading ${mediaToDownload.length} media files (${result.imagesSkipped} skipped)...`);
+
+  // Fire all downloads in parallel - Rust Semaphore limits to 5 concurrent
+  // Promise.allSettled ensures we get results for all, even if some fail
+  const downloadPromises = mediaToDownload.map(async (media, index) => {
+    const downloadResult = await downloadAssetWithRetry(media.url, projectPath);
+
+    // Report progress as each download completes
+    reportProgress(
+      "downloading_media",
+      index + 1,
+      mediaToDownload.length,
+      `Downloading ${index + 1}/${mediaToDownload.length}...`
+    );
+
+    return { media, downloadResult };
+  });
+
+  const downloadResults = await Promise.allSettled(downloadPromises);
+
+  // Build uuid → localPath map from successful downloads
+  const downloadedUuids = new Map<string, string>();
+
+  for (const settled of downloadResults) {
+    if (settled.status === "fulfilled") {
+      const { media, downloadResult } = settled.value;
+      if (downloadResult.success) {
+        result.imagesDownloaded++;
+        // Track by UUID for dedup and reference updates
+        if (media.uuid) {
+          downloadedUuids.set(media.uuid, downloadResult.actualPath);
+          existingAssetsByUuid.set(media.uuid, downloadResult.actualPath);
+        }
+      } else {
+        result.errors.push(`${media.url}: ${downloadResult.error}`);
+      }
+    } else {
+      // Promise rejected (shouldn't happen with our try/catch in downloadAssetWithRetry)
+      result.errors.push(`Download failed: ${settled.reason}`);
+    }
+  }
+
+  log("log", `   Downloaded ${result.imagesDownloaded}/${mediaToDownload.length} media files`);
+
+  // ========================================================================
+  // Phase 3: Update references in files
+  // ========================================================================
 
   for (let fileIndex = 0; fileIndex < filesToProcess.length; fileIndex++) {
     const file = filesToProcess[fileIndex];
     let modified = false;
     let { frontmatter, body } = file;
-
-    log("log", `   [${fileIndex + 1}/${filesToProcess.length}] Processing: ${file.path}`);
 
     // Deduplicate URLs within this file by UUID, merging inBody/inCover flags
     const mediaByKey = new Map<string, MediaUrl>();
@@ -336,90 +435,44 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
       const key = media.uuid || media.url;
       const existing = mediaByKey.get(key);
       if (existing) {
-        // Merge flags - if any reference is in body or cover, mark both
         existing.inBody = existing.inBody || media.inBody;
         existing.inCover = existing.inCover || media.inCover;
       } else {
-        // Clone to avoid mutating original
         mediaByKey.set(key, { ...media });
       }
     }
     const uniqueMedia = Array.from(mediaByKey.values());
 
-    // Process each unique media URL
+    // Update references for each media
     for (const media of uniqueMedia) {
-      let localPath: string | null = null;
+      if (!media.uuid) continue;
 
-      // Check if we already have this asset (by UUID)
-      if (media.uuid) {
-        // First check if we downloaded it earlier in this run
-        localPath = downloadedUuids.get(media.uuid) || null;
+      // Get local path from downloaded or existing assets
+      const localPath = downloadedUuids.get(media.uuid) || existingAssetsByUuid.get(media.uuid);
+      if (!localPath) continue;
 
-        // Then check if it existed before this run
-        if (!localPath) {
-          localPath = existingAssetsByUuid.get(media.uuid) || null;
-        }
+      const relativePath = calculateRelativePath(file.path, localPath);
 
-        if (localPath) {
-          log("log", `   [~] Already exists: ${localPath}`);
-          result.imagesSkipped++;
+      // Update body references
+      if (media.inBody) {
+        const { content: newBody, replaced } = replaceAssetUrls(body, media.uuid, relativePath);
+        if (replaced) {
+          body = newBody;
+          modified = true;
         }
       }
 
-      // Download if we don't have it
-      if (!localPath) {
-        log("log", `   [↓] Downloading: ${media.url}`);
-        const downloadResult = await downloadAssetWithRetry(media.url, projectPath);
-
-        if (downloadResult.success) {
-          localPath = downloadResult.actualPath;
-          log("log", `   [✓] Downloaded: ${localPath}`);
-          result.imagesDownloaded++;
-
-          // Track for dedup
-          if (media.uuid) {
-            downloadedUuids.set(media.uuid, localPath);
-            existingAssetsByUuid.set(media.uuid, localPath);
-          }
-        } else {
-          log("error", `   [✗] Failed: ${media.url} - ${downloadResult.error}`);
-          result.errors.push(`${media.url}: ${downloadResult.error}`);
-        }
-
-        processedUrls++;
-        reportProgress(
-          "downloading_media",
-          processedUrls,
-          totalUrls,
-          `Processing media ${processedUrls}/${totalUrls}...`
-        );
-      }
-
-      // Update references if we have a local path
-      if (localPath && media.uuid) {
-        const relativePath = calculateRelativePath(file.path, localPath);
-
-        // Update body references
-        if (media.inBody) {
-          const { content: newBody, replaced } = replaceAssetUrls(body, media.uuid, relativePath);
-          if (replaced) {
-            body = newBody;
-            modified = true;
-          }
-        }
-
-        // Update cover reference
-        if (media.inCover) {
-          const coverStr = String(frontmatter.cover || '');
-          if (coverStr.includes(media.uuid)) {
-            frontmatter = { ...frontmatter, cover: relativePath };
-            modified = true;
-          }
+      // Update cover reference
+      if (media.inCover) {
+        const coverStr = String(frontmatter.cover || '');
+        if (coverStr.includes(media.uuid)) {
+          frontmatter = { ...frontmatter, cover: relativePath };
+          modified = true;
         }
       }
     }
 
-    // Write file immediately if modified
+    // Write file if modified
     if (modified) {
       try {
         const newContent = regenerateFrontmatter(frontmatter) + "\n" + body;

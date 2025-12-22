@@ -31,6 +31,45 @@ describe("isRemoteNewer", () => {
     // When local is undefined, we should update regardless of remote
     expect(isRemoteNewer(undefined, undefined)).toBe(true);
   });
+
+  // Tests for real Matters.town date formats
+  describe("Matters.town date formats", () => {
+    it("handles full ISO format with milliseconds", () => {
+      // Real Matters API format: "2025-05-09T18:32:27.769Z"
+      expect(isRemoteNewer(
+        "2025-05-09T18:32:27.769Z",
+        "2025-05-09T18:32:27.769Z"
+      )).toBe(false);
+
+      expect(isRemoteNewer(
+        "2025-05-08T21:10:51.834Z",
+        "2025-05-09T18:32:27.769Z"
+      )).toBe(true);
+    });
+
+    it("handles comparison between different precision levels", () => {
+      // Local might have different precision than remote
+      expect(isRemoteNewer(
+        "2025-05-09T18:32:27Z",
+        "2025-05-09T18:32:27.769Z"
+      )).toBe(true); // Remote is technically later by 769ms
+    });
+
+    it("handles date-only vs full ISO comparison", () => {
+      // Edge case: local file has date-only, remote has full timestamp
+      expect(isRemoteNewer(
+        "2025-05-09",
+        "2025-05-09T18:32:27.769Z"
+      )).toBe(true); // Date-only is treated as 00:00:00
+    });
+
+    it("handles same day with remote later time", () => {
+      expect(isRemoteNewer(
+        "2025-05-09T00:00:00.000Z",
+        "2025-05-09T18:32:27.769Z"
+      )).toBe(true);
+    });
+  });
 });
 
 describe("syncToLocalFiles", () => {

@@ -95,8 +95,43 @@ describe("htmlToMarkdown", () => {
   it("handles empty figcaption without producing **", () => {
     const html = "<figure><img src='img.jpg' alt='test'><figcaption></figcaption></figure>";
     const result = htmlToMarkdown(html);
-    expect(result).toBe("![test](img.jpg)");
     expect(result).not.toContain("**");
+  });
+
+  // Bug #1: Figure/figcaption should produce trailing newlines
+  describe("figure/figcaption newline handling", () => {
+    it("figure with image only produces trailing newlines", () => {
+      const html = "<figure><img src='img.jpg' alt='test'></figure>";
+      const result = htmlToMarkdown(html);
+      expect(result).toBe("![test](img.jpg)\n\n");
+    });
+
+    it("figure with empty figcaption produces trailing newlines", () => {
+      const html = "<figure><img src='img.jpg' alt='test'><figcaption></figcaption></figure>";
+      const result = htmlToMarkdown(html);
+      expect(result).toBe("![test](img.jpg)\n\n");
+    });
+
+    it("figure with figcaption content produces image and caption with trailing newlines", () => {
+      const html = "<figure><img src='img.jpg' alt='test'><figcaption>Caption text</figcaption></figure>";
+      const result = htmlToMarkdown(html);
+      expect(result).toBe("![test](img.jpg)*Caption text*\n\n");
+    });
+
+    it("image followed by heading should be separated by newlines", () => {
+      // This reproduces the actual bug from 中国历史中的佛教-笔记.md
+      const html = "<figure><img src='img.jpg' alt=''><figcaption></figcaption></figure><h2>Heading</h2>";
+      const result = htmlToMarkdown(html);
+      // Should NOT be: "![](img.jpg)## Heading"
+      // Should be: "![](img.jpg)\n\n## Heading\n\n"
+      expect(result).toBe("![](img.jpg)\n\n## Heading\n\n");
+    });
+
+    it("multiple figures in sequence are properly separated", () => {
+      const html = "<figure><img src='a.jpg' alt='a'></figure><figure><img src='b.jpg' alt='b'></figure>";
+      const result = htmlToMarkdown(html);
+      expect(result).toBe("![a](a.jpg)\n\n![b](b.jpg)\n\n");
+    });
   });
 });
 

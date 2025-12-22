@@ -25,9 +25,11 @@ import {
   fetchAllDrafts,
   fetchAllCollections,
   fetchUserProfile,
+  apiConfig,
 } from "./api";
 import { syncToLocalFiles } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
+import { getConfig, saveConfig } from "./config";
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -151,28 +153,48 @@ export async function before_build(context: BeforeBuildContext): Promise<HookRes
     // Phase 1: Authentication
     await reportProgress("authentication", 0, 1, "Checking authentication...");
     let isAuthenticated = await checkAuthentication();
+    let usingUnauthenticatedMode = false;
 
     if (!isAuthenticated) {
-      await log("warn", "🔓 Not authenticated, will prompt login...");
-      await reportProgress("authentication", 0, 1, "Waiting for login...");
+      // Check if we have a saved userName in config for unauthenticated fallback
+      const config = await getConfig(context.project_path);
 
-      const loginSuccess = await promptLogin();
+      if (config.userName) {
+        // Use unauthenticated mode with saved userName
+        await log("log", `🔓 Not authenticated, using saved username: @${config.userName}`);
+        await log("log", "   Note: Drafts will not be available in unauthenticated mode");
 
-      if (!loginSuccess) {
-        await reportError("Login failed or timeout", "authentication", true);
-        return {
-          success: false,
-          message: "Login failed or timeout. Please try again.",
-        };
+        // Configure API to use public user queries
+        apiConfig.queryMode = "user";
+        apiConfig.testUserName = config.userName;
+        usingUnauthenticatedMode = true;
+
+        await reportProgress("authentication", 1, 1, `Using saved user: @${config.userName}`);
+        await log("log", `✅ Matters: Using unauthenticated mode for @${config.userName}`);
+      } else {
+        // No saved username, prompt for login
+        await log("warn", "🔓 Not authenticated, will prompt login...");
+        await reportProgress("authentication", 0, 1, "Waiting for login...");
+
+        const loginSuccess = await promptLogin();
+
+        if (!loginSuccess) {
+          await reportError("Login failed or timeout", "authentication", true);
+          return {
+            success: false,
+            message: "Login failed or timeout. Please try again.",
+          };
+        }
+
+        isAuthenticated = true;
+        await reportProgress("authentication", 1, 1, "Authenticated");
+        await log("log", "✅ Matters: Authenticated");
       }
-
-      isAuthenticated = true;
     } else {
       await log("log", "✅ Already authenticated, skipping browser");
+      await reportProgress("authentication", 1, 1, "Authenticated");
+      await log("log", "✅ Matters: Authenticated");
     }
-
-    await reportProgress("authentication", 1, 1, "Authenticated");
-    await log("log", "✅ Matters: Authenticated");
 
     // Check if sync is enabled
     const syncOnBuild = context.config?.sync_on_build ?? true;
@@ -207,6 +229,24 @@ export async function before_build(context: BeforeBuildContext): Promise<HookRes
     const profile = await fetchUserProfile();
     await reportProgress("fetching_profile", 1, 1, `Profile: ${profile.displayName}`);
     await log("log", `   Profile: ${profile.displayName} (language: ${profile.language || "default"})`);
+
+    // Save userName to config for future unauthenticated fallback (only when authenticated)
+    if (isAuthenticated && !usingUnauthenticatedMode) {
+      try {
+        const existingConfig = await getConfig(context.project_path);
+        if (existingConfig.userName !== profile.userName || existingConfig.language !== profile.language) {
+          await saveConfig(context.project_path, {
+            ...existingConfig,
+            userName: profile.userName,
+            language: profile.language,
+          });
+          await log("log", `   Saved username @${profile.userName} to config for future unauthenticated access`);
+        }
+      } catch (error) {
+        // Non-fatal: just log the error
+        await log("warn", `   Failed to save config: ${error}`);
+      }
+    }
 
     // Phase 6: Sync to local files
     await reportProgress("syncing", 0, articles.length + drafts.length + collections.length + 1, "Starting sync...");

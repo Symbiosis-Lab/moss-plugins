@@ -95,9 +95,11 @@ function processNode(node: Node): string {
       return lines.map((line) => `> ${line}`).join("\n") + "\n\n";
     }
     case "figure":
-      return children;
+      // Figures are block-level elements that need trailing newlines
+      return children.trimEnd() + "\n\n";
     case "figcaption":
-      return children.trim() ? `*${children.trim()}*\n\n` : "";
+      // Always add newlines: caption text formatted as italics, or just newlines if empty
+      return children.trim() ? `*${children.trim()}*\n\n` : "\n\n";
     case "div":
     case "span":
     case "section":

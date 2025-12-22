@@ -79,6 +79,36 @@ export function replaceAssetUrls(
 }
 
 // ============================================================================
+// Timeout Utilities
+// ============================================================================
+
+/** Timeout constants */
+const RUST_TIMEOUT = 30000;  // Rust-side timeout
+const JS_SAFETY_TIMEOUT = 35000;  // JS-side safety margin (5s extra)
+
+/**
+ * Wrap a promise with a timeout
+ * If the promise doesn't resolve within the timeout, reject with a timeout error
+ *
+ * @param promise - The promise to wrap
+ * @param ms - Timeout in milliseconds
+ * @param errorMsg - Error message for timeout
+ * @returns Promise that resolves with the original value or rejects on timeout
+ */
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  errorMsg: string
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    ),
+  ]);
+}
+
+// ============================================================================
 // Fibonacci Backoff
 // ============================================================================
 
@@ -123,9 +153,18 @@ class DownloadError extends Error {
 }
 
 /**
- * Download a single asset with retry logic.
+ * Download a single asset with retry logic and comprehensive logging.
  * Uses Rust to download and save directly to disk (avoids JS base64 blocking).
  * Moss handles filename derivation and extension from content-type.
+ *
+ * Logging:
+ * - [↓] Attempt N/M: Starting download attempt
+ * - [✓] Downloaded: Successful download
+ * - [!] HTTP {status}: HTTP error (retryable or final)
+ * - [✗] TIMEOUT: JS-level timeout (safety net)
+ * - [✗] ERROR: Other errors (network, etc.)
+ * - [↻] Retrying: Retry announcement with delay
+ * - [✗] FAILED: Final failure after all retries
  */
 async function downloadAssetWithRetry(
   url: string,
@@ -133,31 +172,56 @@ async function downloadAssetWithRetry(
 ): Promise<{ actualPath: string; success: boolean; error?: string }> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const result = await downloadAssetRust(url, projectPath, "assets", 30000);
+      log("log", `   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
+
+      // Wrap the Rust download with JS-level timeout as safety net
+      const result = await withTimeout(
+        downloadAssetRust(url, projectPath, "assets", RUST_TIMEOUT),
+        JS_SAFETY_TIMEOUT,
+        `JS timeout after ${JS_SAFETY_TIMEOUT}ms`
+      );
 
       if (!result.ok) {
         const err = new DownloadError(`HTTP ${result.status}`, result.status);
+        log("warn", `   [!] HTTP ${result.status} for ${url}`);
+
         if (!err.isRetryable() || attempt === MAX_RETRIES) {
+          log("error", `   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}`);
           return { actualPath: "", success: false, error: `HTTP ${result.status}` };
         }
+
         const delay = getFibonacciDelay(attempt);
-        log("warn", `   [!] ${url}: HTTP ${result.status}, retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`);
+        log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await sleep(delay);
         continue;
       }
 
+      log("log", `   [✓] Downloaded: ${result.actual_path}`);
       return { actualPath: result.actual_path, success: true };
+
     } catch (fetchError: unknown) {
       const message = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      const isTimeout = message.toLowerCase().includes("timeout");
+
+      // Log the error type
+      if (isTimeout) {
+        log("error", `   [✗] TIMEOUT: ${url} - ${message}`);
+      } else {
+        log("error", `   [✗] ERROR: ${url} - ${message}`);
+      }
+
       if (attempt === MAX_RETRIES) {
+        log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
         return { actualPath: "", success: false, error: message };
       }
+
       const delay = getFibonacciDelay(attempt);
-      log("warn", `   [!] ${url}: ${message}, retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`);
+      log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
       await sleep(delay);
     }
   }
 
+  log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
   return { actualPath: "", success: false, error: "Max retries exceeded" };
 }
 

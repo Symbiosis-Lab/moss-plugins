@@ -22,7 +22,8 @@ var GitHubDeployer = (() => {
   var main_exports = {};
   __export(main_exports, {
     default: () => main_default,
-    on_deploy: () => on_deploy
+    deploy: () => deploy,
+    on_deploy: () => deploy
   });
 
   // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
@@ -68,6 +69,12 @@ var GitHubDeployer = (() => {
       fatal
     });
   }
+  async function openBrowser(url) {
+    await getTauriCore().invoke("open_plugin_browser", { url });
+  }
+  async function closeBrowser() {
+    await getTauriCore().invoke("close_plugin_browser", {});
+  }
   async function readFile(projectPath, relativePath) {
     return getTauriCore().invoke("read_project_file", {
       projectPath,
@@ -108,10 +115,27 @@ var GitHubDeployer = (() => {
       stderr: result.stderr
     };
   }
+  async function getPluginCookie() {
+    const context = window.__MOSS_CURRENT_CONTEXT__;
+    if (!context) throw new Error("getPluginCookie() must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
+    return getTauriCore().invoke("get_plugin_cookie", {
+      pluginName: context.plugin_name,
+      projectPath: context.project_path
+    });
+  }
+  async function setPluginCookie(cookies) {
+    const context = window.__MOSS_CURRENT_CONTEXT__;
+    if (!context) throw new Error("setPluginCookie() must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
+    await getTauriCore().invoke("set_plugin_cookie", {
+      pluginName: context.plugin_name,
+      projectPath: context.project_path,
+      cookies
+    });
+  }
 
   // dist/utils.js
-  var PLUGIN_NAME = "github-deployer";
-  setMessageContext(PLUGIN_NAME, "on_deploy");
+  var PLUGIN_NAME = "github";
+  setMessageContext(PLUGIN_NAME, "deploy");
   function setCurrentHookName(name) {
     setMessageContext(PLUGIN_NAME, name);
   }
@@ -125,6 +149,9 @@ var GitHubDeployer = (() => {
   }
   async function reportError2(error, context, fatal = false) {
     await reportError(error, context, fatal);
+  }
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // dist/git.js
@@ -220,6 +247,9 @@ var GitHubDeployer = (() => {
   }
 
   // dist/validation.js
+  function isSSHRemote(remoteUrl) {
+    return remoteUrl.startsWith("git@") || remoteUrl.startsWith("ssh://");
+  }
   async function validateGitRepository(projectPath) {
     const isRepo = await isGitRepository(projectPath);
     if (!isRepo) {
@@ -355,14 +385,273 @@ jobs:
     return fileExists(projectPath, ".github/workflows/moss-deploy.yml");
   }
 
+  // dist/token.js
+  var GITHUB_HOST = "github.com";
+  var TOKEN_COOKIE_NAME = "__github_access_token";
+  var cachedToken = null;
+  async function storeToken(token) {
+    try {
+      await log("log", "   Storing GitHub access token...");
+      try {
+        await setPluginCookie([
+          {
+            name: TOKEN_COOKIE_NAME,
+            value: token,
+            domain: GITHUB_HOST
+          }
+        ]);
+        await log("log", "   Token stored in plugin cookies");
+      } catch (error) {
+        await log("warn", `   Could not store in cookies: ${error}`);
+      }
+      cachedToken = token;
+      await log("log", "   Token stored successfully");
+      return true;
+    } catch (error) {
+      await log("error", `   Error storing token: ${error}`);
+      return false;
+    }
+  }
+  async function getToken() {
+    if (cachedToken) {
+      return cachedToken;
+    }
+    try {
+      const cookies = await getPluginCookie();
+      const tokenCookie = cookies.find((c) => c.name === TOKEN_COOKIE_NAME);
+      if (tokenCookie) {
+        cachedToken = tokenCookie.value;
+        return cachedToken;
+      }
+    } catch {
+    }
+    return null;
+  }
+  async function clearToken() {
+    try {
+      await log("log", "   Clearing GitHub access token...");
+      try {
+        await setPluginCookie([]);
+      } catch {
+      }
+      cachedToken = null;
+      await log("log", "   Token cleared successfully");
+      return true;
+    } catch (error) {
+      await log("error", `   Error clearing token: ${error}`);
+      return false;
+    }
+  }
+
+  // dist/auth.js
+  var CLIENT_ID = "Ov23li8HTgRH8nuO16oK";
+  var REQUIRED_SCOPES = ["repo", "workflow"];
+  var GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
+  var GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
+  var GITHUB_API_USER_URL = "https://api.github.com/user";
+  var MAX_POLL_TIME_MS = 3e5;
+  async function requestDeviceCode() {
+    await log("log", "   Requesting device code from GitHub...");
+    const response = await fetch(GITHUB_DEVICE_CODE_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        scope: REQUIRED_SCOPES.join(" ")
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to request device code: ${response.status} ${errorText}`);
+    }
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(`GitHub error: ${data.error_description || data.error}`);
+    }
+    await log("log", `   Device code received. User code: ${data.user_code}`);
+    return data;
+  }
+  async function pollForToken(deviceCode, _interval) {
+    const response = await fetch(GITHUB_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        device_code: deviceCode,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to poll for token: ${response.status} ${errorText}`);
+    }
+    return await response.json();
+  }
+  async function validateToken(token) {
+    try {
+      const response = await fetch(GITHUB_API_USER_URL, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Moss-GitHub-Deployer"
+        }
+      });
+      if (!response.ok) {
+        return { valid: false };
+      }
+      const user = await response.json();
+      const scopeHeader = response.headers.get("X-OAuth-Scopes") || "";
+      const scopes = scopeHeader.split(",").map((s) => s.trim()).filter(Boolean);
+      return { valid: true, user, scopes };
+    } catch {
+      return { valid: false };
+    }
+  }
+  function hasRequiredScopes(scopes) {
+    return REQUIRED_SCOPES.every((required) => scopes.includes(required));
+  }
+  async function checkAuthentication() {
+    await log("log", "   Checking GitHub authentication...");
+    const token = await getToken();
+    if (!token) {
+      await log("log", "   No token found in credential helper");
+      return { isAuthenticated: false };
+    }
+    const validation = await validateToken(token);
+    if (!validation.valid) {
+      await log("log", "   Token is invalid or expired");
+      await clearToken();
+      return { isAuthenticated: false };
+    }
+    if (!hasRequiredScopes(validation.scopes || [])) {
+      await log("warn", `   Token missing required scopes. Has: ${validation.scopes?.join(", ")}, needs: ${REQUIRED_SCOPES.join(", ")}`);
+      return { isAuthenticated: false };
+    }
+    await log("log", `   Authenticated as ${validation.user?.login}`);
+    return {
+      isAuthenticated: true,
+      username: validation.user?.login,
+      scopes: validation.scopes
+    };
+  }
+  async function promptLogin() {
+    try {
+      await reportProgress2("authentication", 0, 4, "Requesting authorization...");
+      const deviceCodeResponse = await requestDeviceCode();
+      await reportProgress2("authentication", 1, 4, `Enter code: ${deviceCodeResponse.user_code}`);
+      await log("log", `   Opening browser for GitHub authorization...`);
+      await log("log", `   Enter code: ${deviceCodeResponse.user_code}`);
+      await openBrowser(deviceCodeResponse.verification_uri);
+      await reportProgress2("authentication", 2, 4, "Waiting for authorization...");
+      const token = await waitForToken(deviceCodeResponse.device_code, deviceCodeResponse.interval, deviceCodeResponse.expires_in * 1e3);
+      if (!token) {
+        await log("warn", "   Authorization timed out or was denied");
+        try {
+          await closeBrowser();
+        } catch {
+        }
+        return false;
+      }
+      await reportProgress2("authentication", 3, 4, "Storing credentials...");
+      const stored = await storeToken(token);
+      if (!stored) {
+        await log("warn", "   Failed to store token in credential helper");
+      }
+      try {
+        await closeBrowser();
+      } catch {
+      }
+      await reportProgress2("authentication", 4, 4, "Authenticated");
+      await log("log", "   Successfully authenticated with GitHub");
+      return true;
+    } catch (error) {
+      await log("error", `   Authentication failed: ${error}`);
+      try {
+        await closeBrowser();
+      } catch {
+      }
+      return false;
+    }
+  }
+  async function waitForToken(deviceCode, initialInterval, maxWaitMs) {
+    const startTime = Date.now();
+    let interval = initialInterval;
+    while (Date.now() - startTime < Math.min(maxWaitMs, MAX_POLL_TIME_MS)) {
+      await sleep(interval * 1e3);
+      try {
+        const response = await pollForToken(deviceCode, interval);
+        if (response.access_token) {
+          return response.access_token;
+        }
+        if (response.error === "authorization_pending") {
+          continue;
+        }
+        if (response.error === "slow_down") {
+          interval += 5;
+          await log("log", `   Slowing down, new interval: ${interval}s`);
+          continue;
+        }
+        if (response.error === "expired_token") {
+          await log("warn", "   Device code expired");
+          return null;
+        }
+        if (response.error === "access_denied") {
+          await log("warn", "   User denied authorization");
+          return null;
+        }
+        await log("error", `   Unexpected error: ${response.error}`);
+        return null;
+      } catch (error) {
+        await log("error", `   Poll error: ${error}`);
+      }
+    }
+    await log("warn", "   Authorization timeout");
+    return null;
+  }
+
   // dist/main.js
-  async function on_deploy(context) {
-    setCurrentHookName("on_deploy");
+  async function deploy(context) {
+    setCurrentHookName("deploy");
     await log("log", "GitHub Deployer: Starting deployment...");
     await log("log", `   Project: ${context.project_path}`);
     try {
-      await reportProgress2("validating", 1, 5, "Validating requirements...");
-      const remoteUrl = await validateAll(context.project_path, context.output_dir);
+      let remoteUrl;
+      try {
+        remoteUrl = await getRemoteUrl(context.project_path);
+      } catch {
+        remoteUrl = "";
+      }
+      const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
+      if (!useSSH && remoteUrl) {
+        await reportProgress2("authentication", 0, 6, "Checking GitHub authentication...");
+        const authState = await checkAuthentication();
+        if (!authState.isAuthenticated) {
+          await log("log", "   HTTPS remote detected, authentication required");
+          await reportProgress2("authentication", 0, 6, "GitHub login required...");
+          const loginSuccess = await promptLogin();
+          if (!loginSuccess) {
+            await reportError2("GitHub authentication failed or was cancelled", "authentication", true);
+            return {
+              success: false,
+              message: "GitHub authentication failed. Please try again."
+            };
+          }
+          await log("log", "   Successfully authenticated with GitHub");
+        } else {
+          await log("log", `   Already authenticated as ${authState.username}`);
+        }
+        await reportProgress2("authentication", 1, 6, "Authenticated");
+      } else if (useSSH) {
+        await log("log", "   SSH remote detected, using SSH key authentication");
+      }
+      await reportProgress2("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
+      remoteUrl = await validateAll(context.project_path, context.output_dir);
       await reportProgress2("configuring", 2, 5, "Detecting default branch...");
       const branch = await detectBranch(context.project_path);
       await log("log", `   Default branch: ${branch}`);
@@ -418,7 +707,7 @@ git add . && git commit -m "Update site" && git push`;
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await reportError2(errorMessage, "on_deploy", true);
+      await reportError2(errorMessage, "deploy", true);
       await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
       return {
         success: false,
@@ -427,7 +716,7 @@ git add . && git commit -m "Update site" && git push`;
     }
   }
   var GitHubDeployer = {
-    on_deploy
+    deploy
   };
   window.GitHubDeployer = GitHubDeployer;
   var main_default = GitHubDeployer;

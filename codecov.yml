@@ -8,12 +8,12 @@ coverage:
         target: 80%
 
 flags:
-  github-deployer:
+  github:
     paths:
-      - github-deployer/
+      - github/
     carryforward: true
-  matters-syndicator:
+  matters:
     paths:
-      - matters-syndicator/
+      - matters/
     carryforward: true
   # Add more plugins as they're added to the repo

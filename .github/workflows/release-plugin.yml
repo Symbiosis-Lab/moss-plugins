@@ -3,7 +3,7 @@ name: Release Plugin
 on:
   push:
     tags:
-      - '*-v*'  # Matches: github-deployer-v1.0.0, matters-syndicator-v2.1.0
+      - '*-v*'  # Matches: github-v1.0.0, matters-v2.1.0
 
 jobs:
   # Parse the tag to extract plugin name and version

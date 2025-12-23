@@ -1,10 +1,10 @@
 {
-  "name": "github-deployer",
+  "name": "github",
   "version": "1.0.0",
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "category": "deployer",
+  "capabilities": ["deploy"],
   "global_name": "GitHubDeployer",
   "icon": "icon.svg",
   "config": {

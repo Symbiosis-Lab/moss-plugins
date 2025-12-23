@@ -19,7 +19,7 @@ import {
 // Plugin Configuration
 // ============================================================================
 
-const PLUGIN_NAME = "matters-syndicator";
+const PLUGIN_NAME = "matters";
 
 // Initialize message context on load
 setMessageContext(PLUGIN_NAME, "");

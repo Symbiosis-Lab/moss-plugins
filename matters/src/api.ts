@@ -271,21 +271,17 @@ export function clearTokenCache(): void {
 
 /**
  * Get access token from cookies (with caching)
+ *
+ * Uses the SDK's auto-detected plugin context - no need to pass plugin name or project path.
  */
 export async function getAccessToken(): Promise<string | null> {
   if (cachedAccessToken !== null) {
     return cachedAccessToken;
   }
 
-  const projectPath = (window as unknown as { __MOSS_PROJECT_PATH__?: string }).__MOSS_PROJECT_PATH__;
-  if (!projectPath) {
-    await log("error", "Project path not available");
-    return null;
-  }
-
   try {
-    await log("log", `Getting cookies for project: ${projectPath}`);
-    const cookies = await getPluginCookie("matters-syndicator", projectPath);
+    await log("log", "Getting cookies from plugin context");
+    const cookies = await getPluginCookie();
 
     await log("log", `Received ${cookies?.length ?? 0} cookies`);
 

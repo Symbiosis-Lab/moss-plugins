@@ -22,7 +22,8 @@ var GitHubDeployer = (() => {
   var main_exports = {};
   __export(main_exports, {
     default: () => main_default,
-    on_deploy: () => on_deploy
+    deploy: () => deploy,
+    on_deploy: () => deploy
   });
 
   // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
@@ -114,23 +115,27 @@ var GitHubDeployer = (() => {
       stderr: result.stderr
     };
   }
-  async function getPluginCookie(pluginName, projectPath) {
+  async function getPluginCookie() {
+    const context = window.__MOSS_CURRENT_CONTEXT__;
+    if (!context) throw new Error("getPluginCookie() must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
     return getTauriCore().invoke("get_plugin_cookie", {
-      pluginName,
-      projectPath
+      pluginName: context.plugin_name,
+      projectPath: context.project_path
     });
   }
-  async function setPluginCookie(pluginName, projectPath, cookies) {
+  async function setPluginCookie(cookies) {
+    const context = window.__MOSS_CURRENT_CONTEXT__;
+    if (!context) throw new Error("setPluginCookie() must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
     await getTauriCore().invoke("set_plugin_cookie", {
-      pluginName,
-      projectPath,
+      pluginName: context.plugin_name,
+      projectPath: context.project_path,
       cookies
     });
   }
 
   // dist/utils.js
-  var PLUGIN_NAME = "github-deployer";
-  setMessageContext(PLUGIN_NAME, "on_deploy");
+  var PLUGIN_NAME = "github";
+  setMessageContext(PLUGIN_NAME, "deploy");
   function setCurrentHookName(name) {
     setMessageContext(PLUGIN_NAME, name);
   }
@@ -383,13 +388,12 @@ jobs:
   // dist/token.js
   var GITHUB_HOST = "github.com";
   var TOKEN_COOKIE_NAME = "__github_access_token";
-  var PLUGIN_NAME2 = "github-deployer";
   var cachedToken = null;
-  async function storeToken(token, projectPath) {
+  async function storeToken(token) {
     try {
       await log("log", "   Storing GitHub access token...");
       try {
-        await setPluginCookie(PLUGIN_NAME2, projectPath, [
+        await setPluginCookie([
           {
             name: TOKEN_COOKIE_NAME,
             value: token,
@@ -408,12 +412,12 @@ jobs:
       return false;
     }
   }
-  async function getToken(projectPath) {
+  async function getToken() {
     if (cachedToken) {
       return cachedToken;
     }
     try {
-      const cookies = await getPluginCookie(PLUGIN_NAME2, projectPath);
+      const cookies = await getPluginCookie();
       const tokenCookie = cookies.find((c) => c.name === TOKEN_COOKIE_NAME);
       if (tokenCookie) {
         cachedToken = tokenCookie.value;
@@ -423,11 +427,11 @@ jobs:
     }
     return null;
   }
-  async function clearToken(projectPath) {
+  async function clearToken() {
     try {
       await log("log", "   Clearing GitHub access token...");
       try {
-        await setPluginCookie(PLUGIN_NAME2, projectPath, []);
+        await setPluginCookie([]);
       } catch {
       }
       cachedToken = null;
@@ -512,9 +516,9 @@ jobs:
   function hasRequiredScopes(scopes) {
     return REQUIRED_SCOPES.every((required) => scopes.includes(required));
   }
-  async function checkAuthentication(projectPath) {
+  async function checkAuthentication() {
     await log("log", "   Checking GitHub authentication...");
-    const token = await getToken(projectPath);
+    const token = await getToken();
     if (!token) {
       await log("log", "   No token found in credential helper");
       return { isAuthenticated: false };
@@ -522,7 +526,7 @@ jobs:
     const validation = await validateToken(token);
     if (!validation.valid) {
       await log("log", "   Token is invalid or expired");
-      await clearToken(projectPath);
+      await clearToken();
       return { isAuthenticated: false };
     }
     if (!hasRequiredScopes(validation.scopes || [])) {
@@ -536,7 +540,7 @@ jobs:
       scopes: validation.scopes
     };
   }
-  async function promptLogin(projectPath) {
+  async function promptLogin() {
     try {
       await reportProgress2("authentication", 0, 4, "Requesting authorization...");
       const deviceCodeResponse = await requestDeviceCode();
@@ -555,7 +559,7 @@ jobs:
         return false;
       }
       await reportProgress2("authentication", 3, 4, "Storing credentials...");
-      const stored = await storeToken(token, projectPath);
+      const stored = await storeToken(token);
       if (!stored) {
         await log("warn", "   Failed to store token in credential helper");
       }
@@ -612,8 +616,8 @@ jobs:
   }
 
   // dist/main.js
-  async function on_deploy(context) {
-    setCurrentHookName("on_deploy");
+  async function deploy(context) {
+    setCurrentHookName("deploy");
     await log("log", "GitHub Deployer: Starting deployment...");
     await log("log", `   Project: ${context.project_path}`);
     try {
@@ -626,11 +630,11 @@ jobs:
       const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
       if (!useSSH && remoteUrl) {
         await reportProgress2("authentication", 0, 6, "Checking GitHub authentication...");
-        const authState = await checkAuthentication(context.project_path);
+        const authState = await checkAuthentication();
         if (!authState.isAuthenticated) {
           await log("log", "   HTTPS remote detected, authentication required");
           await reportProgress2("authentication", 0, 6, "GitHub login required...");
-          const loginSuccess = await promptLogin(context.project_path);
+          const loginSuccess = await promptLogin();
           if (!loginSuccess) {
             await reportError2("GitHub authentication failed or was cancelled", "authentication", true);
             return {
@@ -703,7 +707,7 @@ git add . && git commit -m "Update site" && git push`;
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await reportError2(errorMessage, "on_deploy", true);
+      await reportError2(errorMessage, "deploy", true);
       await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
       return {
         success: false,
@@ -712,7 +716,7 @@ git add . && git commit -m "Update site" && git push`;
     }
   }
   var GitHubDeployer = {
-    on_deploy
+    deploy
   };
   window.GitHubDeployer = GitHubDeployer;
   var main_default = GitHubDeployer;

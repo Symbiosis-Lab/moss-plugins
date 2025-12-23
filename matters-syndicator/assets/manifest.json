@@ -4,7 +4,7 @@
   "description": "Syndicate your articles to Matters.town (POSSE)",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "category": "syndicator",
+  "capabilities": ["process", "syndicate"],
   "domain": "matters.town",
   "icon": "icon.svg",
   "config": {

@@ -136,13 +136,15 @@ async function promptLogin(): Promise<boolean> {
 // ============================================================================
 
 /**
- * before_build hook - Check authentication and sync articles from Matters
+ * process hook - Check authentication and sync articles from Matters
+ *
+ * This capability pre-processes content before generation.
  */
-export async function before_build(context: BeforeBuildContext): Promise<HookResult> {
-  setCurrentHookName("before_build");
+export async function process(context: BeforeBuildContext): Promise<HookResult> {
+  setCurrentHookName("process");
   clearTokenCache();
 
-  await log("log", "🔐 Matters: before_build hook started");
+  await log("log", "🔐 Matters: process hook started");
   await log("log", `   Project: ${context.project_path}`);
 
   try {
@@ -295,7 +297,7 @@ export async function before_build(context: BeforeBuildContext): Promise<HookRes
       message: `Synced from Matters: ${summary}${mediaSummary}${linkSummary}`,
     };
   } catch (error) {
-    await reportError(`Sync failed: ${error}`, "before_build", true);
+    await reportError(`Sync failed: ${error}`, "process", true);
     await log("error", `❌ Matters: Sync failed: ${error}`);
     return {
       success: false,
@@ -305,10 +307,12 @@ export async function before_build(context: BeforeBuildContext): Promise<HookRes
 }
 
 /**
- * after_deploy hook - Syndicate articles to Matters.town
+ * syndicate hook - Syndicate articles to Matters.town
+ *
+ * This capability publishes content to external platforms after deployment.
  */
-export async function after_deploy(context: AfterDeployContext): Promise<HookResult> {
-  setCurrentHookName("after_deploy");
+export async function syndicate(context: AfterDeployContext): Promise<HookResult> {
+  setCurrentHookName("syndicate");
   clearTokenCache();
 
   console.log("📡 Matters: Starting syndication...");

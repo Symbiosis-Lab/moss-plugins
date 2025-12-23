@@ -17,9 +17,9 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
 // ============================================================================
 
 /**
- * on_deploy hook - Deploy to GitHub Pages via GitHub Actions
+ * deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
- * This hook:
+ * This capability:
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/
@@ -27,8 +27,8 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function on_deploy(context: OnDeployContext): Promise<HookResult> {
-  setCurrentHookName("on_deploy");
+async function deploy(context: OnDeployContext): Promise<HookResult> {
+  setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
   await log("log", `   Project: ${context.project_path}`);
@@ -106,7 +106,7 @@ async function on_deploy(context: OnDeployContext): Promise<HookResult> {
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    await reportError(errorMessage, "on_deploy", true);
+    await reportError(errorMessage, "deploy", true);
     await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
 
     return {
@@ -124,12 +124,12 @@ async function on_deploy(context: OnDeployContext): Promise<HookResult> {
  * Plugin object exported as global for the moss plugin runtime
  */
 const GitHubDeployer = {
-  on_deploy,
+  deploy,
 };
 
 // Register plugin globally for the plugin runtime
 (window as unknown as { GitHubDeployer: typeof GitHubDeployer }).GitHubDeployer = GitHubDeployer;
 
 // Also export for module usage
-export { on_deploy };
+export { deploy };
 export default GitHubDeployer;

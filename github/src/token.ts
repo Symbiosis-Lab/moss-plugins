@@ -16,7 +16,6 @@ import { log } from "./utils";
 
 const GITHUB_HOST = "github.com";
 const TOKEN_COOKIE_NAME = "__github_access_token";
-const PLUGIN_NAME = "github-deployer";
 
 // In-memory fallback cache
 let cachedToken: string | null = null;
@@ -65,17 +64,15 @@ export function parseCredentialOutput(output: string): {
  * Store a GitHub access token
  *
  * Uses plugin cookie storage with in-memory fallback.
+ * Note: Plugin identity and project path are auto-detected from runtime context.
  */
-export async function storeToken(
-  token: string,
-  projectPath: string
-): Promise<boolean> {
+export async function storeToken(token: string): Promise<boolean> {
   try {
     await log("log", "   Storing GitHub access token...");
 
     // Store in plugin cookies
     try {
-      await setPluginCookie(PLUGIN_NAME, projectPath, [
+      await setPluginCookie([
         {
           name: TOKEN_COOKIE_NAME,
           value: token,
@@ -102,8 +99,9 @@ export async function storeToken(
  * Retrieve GitHub access token
  *
  * Checks plugin cookies first, then falls back to memory cache.
+ * Note: Plugin identity and project path are auto-detected from runtime context.
  */
-export async function getToken(projectPath: string): Promise<string | null> {
+export async function getToken(): Promise<string | null> {
   // Check memory cache first (faster)
   if (cachedToken) {
     return cachedToken;
@@ -111,7 +109,7 @@ export async function getToken(projectPath: string): Promise<string | null> {
 
   // Try plugin cookies
   try {
-    const cookies = await getPluginCookie(PLUGIN_NAME, projectPath);
+    const cookies = await getPluginCookie();
     const tokenCookie = cookies.find((c) => c.name === TOKEN_COOKIE_NAME);
 
     if (tokenCookie) {
@@ -134,14 +132,15 @@ export function clearTokenCache(): void {
 
 /**
  * Remove GitHub access token
+ * Note: Plugin identity and project path are auto-detected from runtime context.
  */
-export async function clearToken(projectPath: string): Promise<boolean> {
+export async function clearToken(): Promise<boolean> {
   try {
     await log("log", "   Clearing GitHub access token...");
 
     // Clear from plugin cookies
     try {
-      await setPluginCookie(PLUGIN_NAME, projectPath, []);
+      await setPluginCookie([]);
     } catch {
       // Ignore cookie clear errors
     }

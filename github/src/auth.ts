@@ -159,14 +159,13 @@ export function hasRequiredScopes(scopes: string[]): boolean {
 
 /**
  * Check if user is authenticated with valid GitHub credentials
+ * Note: Plugin identity and project path are auto-detected from runtime context.
  */
-export async function checkAuthentication(
-  projectPath: string
-): Promise<AuthState> {
+export async function checkAuthentication(): Promise<AuthState> {
   await log("log", "   Checking GitHub authentication...");
 
   // Try to get token from credential helper
-  const token = await getToken(projectPath);
+  const token = await getToken();
 
   if (!token) {
     await log("log", "   No token found in credential helper");
@@ -179,7 +178,7 @@ export async function checkAuthentication(
   if (!validation.valid) {
     await log("log", "   Token is invalid or expired");
     // Clear the invalid token
-    await clearToken(projectPath);
+    await clearToken();
     return { isAuthenticated: false };
   }
 
@@ -210,8 +209,10 @@ export async function checkAuthentication(
  * 3. Display the user code
  * 4. Poll for the access token
  * 5. Store the token in git credential helper
+ *
+ * Note: Plugin identity and project path are auto-detected from runtime context.
  */
-export async function promptLogin(projectPath: string): Promise<boolean> {
+export async function promptLogin(): Promise<boolean> {
   try {
     // Step 1: Request device code
     await reportProgress("authentication", 0, 4, "Requesting authorization...");
@@ -249,7 +250,7 @@ export async function promptLogin(projectPath: string): Promise<boolean> {
 
     // Step 4: Store token
     await reportProgress("authentication", 3, 4, "Storing credentials...");
-    const stored = await storeToken(token, projectPath);
+    const stored = await storeToken(token);
 
     if (!stored) {
       await log("warn", "   Failed to store token in credential helper");

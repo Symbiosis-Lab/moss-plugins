@@ -53,13 +53,13 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     if (!useSSH && remoteUrl) {
       await reportProgress("authentication", 0, 6, "Checking GitHub authentication...");
-      const authState = await checkAuthentication(context.project_path);
+      const authState = await checkAuthentication();
 
       if (!authState.isAuthenticated) {
         await log("log", "   HTTPS remote detected, authentication required");
         await reportProgress("authentication", 0, 6, "GitHub login required...");
 
-        const loginSuccess = await promptLogin(context.project_path);
+        const loginSuccess = await promptLogin();
 
         if (!loginSuccess) {
           await reportError("GitHub authentication failed or was cancelled", "authentication", true);
@@ -176,5 +176,5 @@ const GitHubDeployer = {
 (window as unknown as { GitHubDeployer: typeof GitHubDeployer }).GitHubDeployer = GitHubDeployer;
 
 // Also export for module usage
-export { deploy };
+export { deploy, deploy as on_deploy };
 export default GitHubDeployer;

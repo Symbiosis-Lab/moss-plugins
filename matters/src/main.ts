@@ -148,10 +148,6 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
   await log("log", `   Project: ${context.project_path}`);
 
   try {
-    // Store project path in window for Tauri commands
-    (window as unknown as { __MOSS_PROJECT_PATH__: string }).__MOSS_PROJECT_PATH__ = context.project_path;
-    await log("log", "   Project path stored in window.__MOSS_PROJECT_PATH__");
-
     // Phase 1: Authentication
     await reportProgress("authentication", 0, 1, "Checking authentication...");
     let isAuthenticated = await checkAuthentication();

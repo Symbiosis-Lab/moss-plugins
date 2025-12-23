@@ -1,5 +1,5 @@
 {
-  "name": "github-deployer",
+  "name": "github",
   "version": "1.0.0",
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "main": "dist/main.js",

@@ -7,10 +7,10 @@ Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
 
 ## Plugins
 
-| Plugin | Category | Description |
-| ------ | -------- | ----------- |
-| [github-deployer](github-deployer) | Deployer | Deploy to GitHub Pages |
-| [matters-syndicator](matters-syndicator) | Syndicator | Syndicate to Matters.town |
+| Plugin | Capability | Description |
+| ------ | ---------- | ----------- |
+| [github](github) | Deploy | Deploy to GitHub Pages |
+| [matters](matters) | Syndicate | Syndicate to Matters.town |
 
 ## Development
 
@@ -18,12 +18,12 @@ Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
 
 ```
 moss-plugins/
-├── github-deployer/
+├── github/
 │   ├── package.json
 │   ├── src/
 │   ├── dist/
 │   └── manifest.json
-├── matters-syndicator/
+├── matters/
 │   ├── package.json
 │   ├── src/
 │   ├── dist/
@@ -42,7 +42,7 @@ For hot reload testing with symlinks:
 # In moss repo, bundled-plugins/ contains symlinks to plugin dist folders
 # Changes to plugin source are immediately available after rebuild
 
-cd github-deployer
+cd github
 npm run dev  # Watch mode - rebuilds on change
 ```
 
@@ -50,7 +50,7 @@ npm run dev  # Watch mode - rebuilds on change
 
 ```bash
 # Test a specific plugin
-cd github-deployer
+cd github
 npm test
 
 # Test with coverage
@@ -64,8 +64,8 @@ Each plugin is versioned independently. To release:
 ```bash
 # Update version in package.json/Cargo.toml
 # Commit changes
-git tag github-deployer-v1.0.0
-git push origin github-deployer-v1.0.0
+git tag github-v1.0.0
+git push origin github-v1.0.0
 ```
 
 The CI will automatically build and create a GitHub release.

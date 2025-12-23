@@ -1,5 +1,5 @@
 {
-  "name": "matters-syndicator",
+  "name": "matters",
   "version": "0.0.1",
   "description": "Syndicate articles between local system and Matters.town",
   "main": "dist/main.bundle.js",

@@ -16,7 +16,7 @@ import {
 // Plugin Configuration
 // ============================================================================
 
-const PLUGIN_NAME = "github-deployer";
+const PLUGIN_NAME = "github";
 
 // Initialize message context on load
 setMessageContext(PLUGIN_NAME, "deploy");

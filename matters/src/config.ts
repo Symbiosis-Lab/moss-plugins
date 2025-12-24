@@ -1,11 +1,16 @@
 /**
  * Plugin configuration management
  *
- * Handles reading and writing plugin-specific configuration stored in:
- * {projectPath}/.moss/plugins/matters-syndicator/config.json
+ * Uses the moss-api plugin storage API to automatically store config
+ * in the plugin's private directory (.moss/plugins/{plugin-name}/).
+ * No need to know the path - just call readPluginFile("config.json").
  */
 
-import { readFile, writeFile, fileExists } from "@symbiosis-lab/moss-api";
+import {
+  readPluginFile,
+  writePluginFile,
+  pluginFileExists,
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Types
@@ -22,36 +27,25 @@ export interface MattersPluginConfig {
 }
 
 // ============================================================================
-// Constants
-// ============================================================================
-
-const CONFIG_PATH = ".moss/plugins/matters-syndicator/config.json";
-
-// ============================================================================
 // Functions
 // ============================================================================
 
 /**
- * Get the config file path (relative to project root)
- */
-export function getConfigPath(): string {
-  return CONFIG_PATH;
-}
-
-/**
- * Read plugin configuration from disk
+ * Read plugin configuration from storage
  *
- * @param projectPath - Absolute path to the project directory
+ * Config is automatically stored in the plugin's private directory.
+ * Must be called from within a plugin hook.
+ *
  * @returns Plugin configuration object (empty object if not found or invalid)
  */
-export async function getConfig(projectPath: string): Promise<MattersPluginConfig> {
+export async function getConfig(): Promise<MattersPluginConfig> {
   try {
-    const exists = await fileExists(projectPath, CONFIG_PATH);
+    const exists = await pluginFileExists("config.json");
     if (!exists) {
       return {};
     }
 
-    const content = await readFile(projectPath, CONFIG_PATH);
+    const content = await readPluginFile("config.json");
     return JSON.parse(content) as MattersPluginConfig;
   } catch {
     // Return empty config on any error (file not found, parse error, etc.)
@@ -60,16 +54,15 @@ export async function getConfig(projectPath: string): Promise<MattersPluginConfi
 }
 
 /**
- * Save plugin configuration to disk
+ * Save plugin configuration to storage
  *
- * @param projectPath - Absolute path to the project directory
+ * Config is automatically stored in the plugin's private directory.
+ * Must be called from within a plugin hook.
+ *
  * @param config - Configuration object to save
  * @throws Error if write fails
  */
-export async function saveConfig(
-  projectPath: string,
-  config: MattersPluginConfig
-): Promise<void> {
+export async function saveConfig(config: MattersPluginConfig): Promise<void> {
   const content = JSON.stringify(config, null, 2);
-  await writeFile(projectPath, CONFIG_PATH, content);
+  await writePluginFile("config.json", content);
 }

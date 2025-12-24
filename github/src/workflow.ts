@@ -62,12 +62,12 @@ export function generateWorkflowContent(branch: string): string {
 /**
  * Create the GitHub Actions workflow file
  */
-export async function createWorkflowFile(projectPath: string, branch: string): Promise<void> {
+export async function createWorkflowFile(branch: string): Promise<void> {
   await log("log", "   Creating .github/workflows/moss-deploy.yml...");
 
   const content = generateWorkflowContent(branch);
 
-  await writeFile(projectPath, ".github/workflows/moss-deploy.yml", content);
+  await writeFile(".github/workflows/moss-deploy.yml", content);
 
   await log("log", "   Workflow file created");
 }
@@ -75,13 +75,13 @@ export async function createWorkflowFile(projectPath: string, branch: string): P
 /**
  * Update .gitignore to track .moss/site/ while ignoring other .moss/ contents
  */
-export async function updateGitignore(projectPath: string): Promise<void> {
+export async function updateGitignore(): Promise<void> {
   await log("log", "   Updating .gitignore...");
 
   // Read current gitignore
   let currentContent = "";
   try {
-    currentContent = await readFile(projectPath, ".gitignore");
+    currentContent = await readFile(".gitignore");
   } catch {
     // File doesn't exist, that's fine
   }
@@ -120,7 +120,7 @@ export async function updateGitignore(projectPath: string): Promise<void> {
     newContent += "!.moss/site/\n";
   }
 
-  await writeFile(projectPath, ".gitignore", newContent);
+  await writeFile(".gitignore", newContent);
 
   await log("log", "   .gitignore updated");
 }
@@ -128,6 +128,6 @@ export async function updateGitignore(projectPath: string): Promise<void> {
 /**
  * Check if the workflow file already exists
  */
-export async function workflowExists(projectPath: string): Promise<boolean> {
-  return fileExists(projectPath, ".github/workflows/moss-deploy.yml");
+export async function workflowExists(): Promise<boolean> {
+  return fileExists(".github/workflows/moss-deploy.yml");
 }

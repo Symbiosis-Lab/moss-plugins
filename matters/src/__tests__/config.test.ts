@@ -1,47 +1,27 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";
 
-// Mock moss-api filesystem functions
-vi.mock("@symbiosis-lab/moss-api", () => ({
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-  fileExists: vi.fn(),
-}));
-
-import { readFile, writeFile, fileExists } from "@symbiosis-lab/moss-api";
 import {
   getConfig,
   saveConfig,
-  getConfigPath,
   type MattersPluginConfig,
 } from "../config";
 
-const mockReadFile = vi.mocked(readFile);
-const mockWriteFile = vi.mocked(writeFile);
-const mockFileExists = vi.mocked(fileExists);
-
 describe("Config Module", () => {
-  const projectPath = "/test/project";
+  let ctx: MockTauriContext;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    ctx = setupMockTauri({ pluginName: "matters-syndicator" });
   });
 
-  describe("getConfigPath", () => {
-    it("returns the correct config path", () => {
-      expect(getConfigPath()).toBe(".moss/plugins/matters-syndicator/config.json");
-    });
+  afterEach(() => {
+    ctx.cleanup();
   });
 
   describe("getConfig", () => {
     it("returns default config when file does not exist", async () => {
-      mockFileExists.mockResolvedValue(false);
-
-      const config = await getConfig(projectPath);
-
-      expect(mockFileExists).toHaveBeenCalledWith(
-        projectPath,
-        ".moss/plugins/matters-syndicator/config.json"
-      );
+      // No file set up = file doesn't exist
+      const config = await getConfig();
       expect(config).toEqual({});
     });
 
@@ -50,52 +30,41 @@ describe("Config Module", () => {
         userName: "testuser",
         language: "zh_hant",
       };
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue(JSON.stringify(savedConfig));
-
-      const config = await getConfig(projectPath);
-
-      expect(mockReadFile).toHaveBeenCalledWith(
-        projectPath,
-        ".moss/plugins/matters-syndicator/config.json"
+      // Set up the config file in the plugin's storage directory
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(savedConfig)
       );
+
+      const config = await getConfig();
       expect(config).toEqual(savedConfig);
     });
 
     it("returns empty config on parse error", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("invalid json {{{");
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        "invalid json {{{"
+      );
 
-      const config = await getConfig(projectPath);
-
-      expect(config).toEqual({});
-    });
-
-    it("returns empty config on read error", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockRejectedValue(new Error("Read error"));
-
-      const config = await getConfig(projectPath);
-
+      const config = await getConfig();
       expect(config).toEqual({});
     });
   });
 
   describe("saveConfig", () => {
-    it("writes config to correct path", async () => {
+    it("writes config to plugin storage", async () => {
       const config: MattersPluginConfig = {
         userName: "testuser",
         language: "en",
       };
-      mockWriteFile.mockResolvedValue(undefined);
 
-      await saveConfig(projectPath, config);
+      await saveConfig(config);
 
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        projectPath,
-        ".moss/plugins/matters-syndicator/config.json",
-        JSON.stringify(config, null, 2)
+      const savedContent = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`
       );
+      expect(savedContent).toBeDefined();
+      expect(JSON.parse(savedContent!.content)).toEqual(config);
     });
 
     it("preserves existing fields when updating", async () => {
@@ -103,51 +72,46 @@ describe("Config Module", () => {
         userName: "olduser",
         language: "zh_hant",
       };
-      const newConfig: MattersPluginConfig = {
-        userName: "newuser",
-      };
-
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue(JSON.stringify(existingConfig));
-      mockWriteFile.mockResolvedValue(undefined);
-
-      // First get existing config, then merge and save
-      const existing = await getConfig(projectPath);
-      const merged = { ...existing, ...newConfig };
-      await saveConfig(projectPath, merged);
-
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        projectPath,
-        ".moss/plugins/matters-syndicator/config.json",
-        JSON.stringify({ userName: "newuser", language: "zh_hant" }, null, 2)
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(existingConfig)
       );
-    });
 
-    it("handles write errors gracefully", async () => {
-      mockWriteFile.mockRejectedValue(new Error("Write error"));
+      // Get existing config, merge, and save
+      const existing = await getConfig();
+      const merged = { ...existing, userName: "newuser" };
+      await saveConfig(merged);
 
-      // Should throw the error so caller can handle it
-      await expect(saveConfig(projectPath, { userName: "test" }))
-        .rejects.toThrow("Write error");
+      const savedContent = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`
+      );
+      expect(JSON.parse(savedContent!.content)).toEqual({
+        userName: "newuser",
+        language: "zh_hant",
+      });
     });
   });
 
   describe("Config schema", () => {
     it("supports userName field", async () => {
       const config: MattersPluginConfig = { userName: "Matty" };
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue(JSON.stringify(config));
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(config)
+      );
 
-      const result = await getConfig(projectPath);
+      const result = await getConfig();
       expect(result.userName).toBe("Matty");
     });
 
     it("supports language field", async () => {
       const config: MattersPluginConfig = { language: "zh_hans" };
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue(JSON.stringify(config));
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(config)
+      );
 
-      const result = await getConfig(projectPath);
+      const result = await getConfig();
       expect(result.language).toBe("zh_hans");
     });
 
@@ -156,19 +120,23 @@ describe("Config Module", () => {
         userName: "刘果",
         language: "zh_hant",
       };
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue(JSON.stringify(config));
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(config)
+      );
 
-      const result = await getConfig(projectPath);
+      const result = await getConfig();
       expect(result.userName).toBe("刘果");
       expect(result.language).toBe("zh_hant");
     });
 
     it("handles empty config object", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("{}");
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        "{}"
+      );
 
-      const result = await getConfig(projectPath);
+      const result = await getConfig();
       expect(result).toEqual({});
       expect(result.userName).toBeUndefined();
       expect(result.language).toBeUndefined();

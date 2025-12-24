@@ -7,9 +7,9 @@
  */
 import type { OnDeployContext, HookResult } from "./types";
 /**
- * on_deploy hook - Deploy to GitHub Pages via GitHub Actions
+ * deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
- * This hook:
+ * This capability:
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/
@@ -17,13 +17,13 @@ import type { OnDeployContext, HookResult } from "./types";
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-declare function on_deploy(context: OnDeployContext): Promise<HookResult>;
+declare function deploy(_context: OnDeployContext): Promise<HookResult>;
 /**
  * Plugin object exported as global for the moss plugin runtime
  */
 declare const GitHubDeployer: {
-    on_deploy: typeof on_deploy;
+    deploy: typeof deploy;
 };
-export { on_deploy };
+export { deploy };
 export default GitHubDeployer;
 //# sourceMappingURL=main.d.ts.map

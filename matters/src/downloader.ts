@@ -12,9 +12,9 @@
 import {
   log,
   reportProgress,
-  downloadAsset as downloadAssetRust,
   sleep,
 } from "./utils";
+import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
 import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 
@@ -142,15 +142,14 @@ class DownloadError extends Error {
  * - [✗] FAILED: Final failure after all retries
  */
 async function downloadAssetWithRetry(
-  url: string,
-  projectPath: string
+  url: string
 ): Promise<{ actualPath: string; success: boolean; error?: string }> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       log("log", `   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
 
       // Rust handles timeout (30s) and concurrency (5 parallel)
-      const result = await downloadAssetRust(url, projectPath, "assets");
+      const result = await downloadAssetRust(url, "assets");
 
       if (!result.ok) {
         const err = new DownloadError(`HTTP ${result.status}`, result.status);
@@ -167,8 +166,8 @@ async function downloadAssetWithRetry(
         continue;
       }
 
-      log("log", `   [✓] Downloaded: ${result.actual_path}`);
-      return { actualPath: result.actual_path, success: true };
+      log("log", `   [✓] Downloaded: ${result.actualPath}`);
+      return { actualPath: result.actualPath, success: true };
 
     } catch (fetchError: unknown) {
       const message = fetchError instanceof Error ? fetchError.message : String(fetchError);
@@ -236,7 +235,7 @@ interface FileState {
  * 3. After all complete, update references in each file
  * 4. Write modified files to disk
  */
-export async function downloadMediaAndUpdate(projectPath: string): Promise<{
+export async function downloadMediaAndUpdate(): Promise<{
   filesProcessed: number;
   imagesDownloaded: number;
   imagesSkipped: number;
@@ -254,7 +253,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   // Get all project files once
   let allProjectFiles: string[];
   try {
-    allProjectFiles = await listFiles(projectPath);
+    allProjectFiles = await listFiles();
   } catch (err) {
     log("error", `Failed to list project files: ${err}`);
     result.errors.push(`Failed to list files: ${err}`);
@@ -285,7 +284,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
   for (const filePath of allMdFiles) {
     try {
-      const content = await readFile(projectPath, filePath);
+      const content = await readFile(filePath);
       const parsed = parseFrontmatter(content);
       if (!parsed) continue;
 
@@ -360,8 +359,6 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
 
   for (const file of filesToProcess) {
     for (const media of file.mediaUrls) {
-      const key = media.uuid || media.url;
-
       // Skip if already downloaded in this batch
       if (media.uuid && seenUuids.has(media.uuid)) continue;
 
@@ -381,7 +378,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
   // Fire all downloads in parallel - Rust Semaphore limits to 5 concurrent
   // Promise.allSettled ensures we get results for all, even if some fail
   const downloadPromises = mediaToDownload.map(async (media, index) => {
-    const downloadResult = await downloadAssetWithRetry(media.url, projectPath);
+    const downloadResult = await downloadAssetWithRetry(media.url);
 
     // Report progress as each download completes
     reportProgress(
@@ -476,7 +473,7 @@ export async function downloadMediaAndUpdate(projectPath: string): Promise<{
     if (modified) {
       try {
         const newContent = regenerateFrontmatter(frontmatter) + "\n" + body;
-        await writeFile(projectPath, file.path, newContent);
+        await writeFile(file.path, newContent);
         result.filesProcessed++;
         log("log", `   [📝] Wrote: ${file.path}`);
       } catch (err) {
@@ -599,7 +596,6 @@ export function calculateRelativePath(fromPath: string, toPath: string): string 
  * Should be run AFTER downloadMediaAndUpdate() to avoid overwriting image refs.
  */
 export async function rewriteAllInternalLinks(
-  projectPath: string,
   articlePathMap: Map<string, string>,
   userName: string
 ): Promise<{
@@ -622,7 +618,7 @@ export async function rewriteAllInternalLinks(
 
   let allFiles: string[];
   try {
-    const allProjectFiles = await listFiles(projectPath);
+    const allProjectFiles = await listFiles();
     allFiles = allProjectFiles.filter((f: string) => f.endsWith(".md"));
   } catch (err) {
     log("error", `Failed to list project files: ${err}`);
@@ -637,7 +633,7 @@ export async function rewriteAllInternalLinks(
 
   for (const file of allFiles) {
     try {
-      const content = await readFile(projectPath, file);
+      const content = await readFile(file);
 
       const parsed = parseFrontmatter(content);
       if (!parsed) continue;
@@ -652,7 +648,7 @@ export async function rewriteAllInternalLinks(
       if (linksRewritten > 0) {
         const newContent = regenerateFrontmatter(parsed.frontmatter) + "\n" + modifiedBody;
 
-        await writeFile(projectPath, file, newContent);
+        await writeFile(file, newContent);
 
         result.filesProcessed++;
         result.linksRewritten += linksRewritten;

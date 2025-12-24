@@ -7,8 +7,8 @@ import { log } from "./utils";
 /**
  * Validate that the project is a git repository
  */
-export async function validateGitRepository(projectPath) {
-    const isRepo = await isGitRepository(projectPath);
+export async function validateGitRepository() {
+    const isRepo = await isGitRepository();
     if (!isRepo) {
         throw new Error("This folder is not a git repository.\n\n" +
             "To publish to GitHub Pages, you need to:\n" +
@@ -19,14 +19,13 @@ export async function validateGitRepository(projectPath) {
 }
 /**
  * Validate that the site has been compiled
- * @param projectPath - Absolute path to the project directory
  * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export async function validateSiteCompiled(projectPath, outputDir) {
+export async function validateSiteCompiled(outputDir) {
     try {
         // Check if the output directory exists and has files
         // listFiles returns all project files, filter to those in outputDir
-        const allFiles = await listFiles(projectPath);
+        const allFiles = await listFiles();
         const siteFiles = allFiles.filter((f) => f.startsWith(outputDir));
         if (siteFiles.length === 0) {
             throw new Error("Site directory is empty. Please compile your site first.");
@@ -42,15 +41,15 @@ export async function validateSiteCompiled(projectPath, outputDir) {
 /**
  * Validate that a GitHub remote is configured
  */
-export async function validateGitHubRemote(projectPath) {
-    const hasRemote = await hasGitRemote(projectPath);
+export async function validateGitHubRemote() {
+    const hasRemote = await hasGitRemote();
     if (!hasRemote) {
         throw new Error("No git remote configured.\n\n" +
             "To publish, you need to:\n" +
             "1. Create a GitHub repository\n" +
             "2. Add it as remote: git remote add origin <url>");
     }
-    const remoteUrl = await getRemoteUrl(projectPath);
+    const remoteUrl = await getRemoteUrl();
     if (!remoteUrl.includes("github.com")) {
         throw new Error(`Remote '${remoteUrl}' is not a GitHub URL.\n\n` +
             "GitHub Pages deployment only works with GitHub repositories.\n" +
@@ -60,18 +59,15 @@ export async function validateGitHubRemote(projectPath) {
 }
 /**
  * Run all validations and return the remote URL
+ * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export async function validateAll(projectPath, outputDir) {
+export async function validateAll(outputDir) {
     await log("log", "   Validating git repository...");
-    await validateGitRepository(projectPath);
+    await validateGitRepository();
     await log("log", "   Validating compiled site...");
-    // Extract relative path from outputDir (it may be absolute or relative)
-    const relativeOutputDir = outputDir.startsWith(projectPath)
-        ? outputDir.slice(projectPath.length).replace(/^\//, "")
-        : outputDir;
-    await validateSiteCompiled(projectPath, relativeOutputDir);
+    await validateSiteCompiled(outputDir);
     await log("log", "   Validating GitHub remote...");
-    const remoteUrl = await validateGitHubRemote(projectPath);
+    const remoteUrl = await validateGitHubRemote();
     await log("log", "   All validations passed");
     return remoteUrl;
 }

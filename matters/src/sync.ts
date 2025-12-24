@@ -111,15 +111,14 @@ export function isRemoteNewer(
  */
 async function findAvailableFilename(
   basePath: string,
-  slug: string,
-  projectPath: string
+  slug: string
 ): Promise<string> {
   let filename = `${basePath}/${slug}.md`;
   let counter = 1;
 
   while (true) {
     try {
-      await readFile(projectPath, filename);
+      await readFile(filename);
       counter++;
       filename = `${basePath}/${slug}-${counter}.md`;
     } catch {
@@ -145,7 +144,6 @@ export async function syncToLocalFiles(
   drafts: MattersDraft[],
   collections: MattersCollection[],
   userName: string,
-  projectPath: string,
   config: Record<string, unknown>,
   profile: MattersUserProfile
 ): Promise<SyncResultWithMap> {
@@ -188,7 +186,7 @@ export async function syncToLocalFiles(
     });
     const homepageContent = homepageFrontmatter + "\n\n" + (profile.description || "");
 
-    await writeFile(projectPath, "index.md", homepageContent);
+    await writeFile("index.md", homepageContent);
 
     console.log(`   ✅ Created homepage: index.md`);
     result.created++;
@@ -248,7 +246,7 @@ export async function syncToLocalFiles(
 
       let existingContent: string | null = null;
       try {
-        existingContent = await readFile(projectPath, collectionPath);
+        existingContent = await readFile(collectionPath);
       } catch {
         // File doesn't exist
       }
@@ -275,7 +273,7 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
 
-      await writeFile(projectPath, collectionPath, fullContent);
+      await writeFile(collectionPath, fullContent);
 
       if (existingContent) {
         console.log(`   ✏️  Updated collection: ${collectionPath}`);
@@ -354,7 +352,7 @@ export async function syncToLocalFiles(
       // Try to read existing file
       let existingContent: string | null = null;
       try {
-        existingContent = await readFile(projectPath, filename);
+        existingContent = await readFile(filename);
       } catch {
         // File doesn't exist
       }
@@ -389,7 +387,7 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
-      await writeFile(projectPath, filename, fullContent);
+      await writeFile(filename, fullContent);
 
       if (existingContent) {
         console.log(`   ✏️  Updated: ${filename}`);
@@ -421,11 +419,11 @@ export async function syncToLocalFiles(
 
       try {
         const slug = slugify(draft.title || "untitled");
-        const filename = await findAvailableFilename(folders.drafts, slug, projectPath);
+        const filename = await findAvailableFilename(folders.drafts, slug);
 
         let existingContent: string | null = null;
         try {
-          existingContent = await readFile(projectPath, filename);
+          existingContent = await readFile(filename);
         } catch {
           // File doesn't exist
         }
@@ -458,7 +456,7 @@ export async function syncToLocalFiles(
 
         const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
-        await writeFile(projectPath, filename, fullContent);
+        await writeFile(filename, fullContent);
 
         if (existingContent) {
           console.log(`   ✏️  Updated draft: ${filename}`);

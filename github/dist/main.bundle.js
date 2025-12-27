@@ -22,7 +22,7 @@ var GitHubDeployer = (() => {
   var main_exports = {};
   __export(main_exports, {
     default: () => main_default,
-    on_deploy: () => on_deploy
+    deploy: () => deploy
   });
 
   // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
@@ -68,36 +68,46 @@ var GitHubDeployer = (() => {
       fatal
     });
   }
-  async function readFile(projectPath, relativePath) {
+  function getInternalContext() {
+    const context = window.__MOSS_INTERNAL_CONTEXT__;
+    if (!context) throw new Error("This function must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
+    return context;
+  }
+  async function readFile(relativePath) {
+    const ctx = getInternalContext();
     return getTauriCore().invoke("read_project_file", {
-      projectPath,
+      projectPath: ctx.project_path,
       relativePath
     });
   }
-  async function writeFile(projectPath, relativePath, content) {
+  async function writeFile(relativePath, content) {
+    const ctx = getInternalContext();
     await getTauriCore().invoke("write_project_file", {
-      projectPath,
+      projectPath: ctx.project_path,
       relativePath,
       data: content
     });
   }
-  async function listFiles(projectPath) {
-    return getTauriCore().invoke("list_project_files", { projectPath });
+  async function listFiles() {
+    const ctx = getInternalContext();
+    return getTauriCore().invoke("list_project_files", { projectPath: ctx.project_path });
   }
-  async function fileExists(projectPath, relativePath) {
+  async function fileExists(relativePath) {
+    getInternalContext();
     try {
-      await readFile(projectPath, relativePath);
+      await readFile(relativePath);
       return true;
     } catch {
       return false;
     }
   }
   async function executeBinary(options) {
-    const { binaryPath, args, workingDir, timeoutMs = 6e4, env } = options;
+    const ctx = getInternalContext();
+    const { binaryPath, args, timeoutMs = 6e4, env } = options;
     const result = await getTauriCore().invoke("execute_binary", {
       binaryPath,
       args,
-      workingDir,
+      workingDir: ctx.project_path,
       timeoutMs,
       env
     });
@@ -110,8 +120,8 @@ var GitHubDeployer = (() => {
   }
 
   // dist/utils.js
-  var PLUGIN_NAME = "github-deployer";
-  setMessageContext(PLUGIN_NAME, "on_deploy");
+  var PLUGIN_NAME = "github";
+  setMessageContext(PLUGIN_NAME, "deploy");
   function setCurrentHookName(name) {
     setMessageContext(PLUGIN_NAME, name);
   }
@@ -128,12 +138,11 @@ var GitHubDeployer = (() => {
   }
 
   // dist/git.js
-  async function runGit(args, cwd) {
+  async function runGit(args) {
     await log("log", `   git ${args.join(" ")}`);
     const result = await executeBinary({
       binaryPath: "git",
       args,
-      workingDir: cwd,
       timeoutMs: 6e4
     });
     if (!result.success) {
@@ -142,62 +151,62 @@ var GitHubDeployer = (() => {
     }
     return result.stdout.trim();
   }
-  async function getRemoteUrl(projectPath) {
-    return runGit(["remote", "get-url", "origin"], projectPath);
+  async function getRemoteUrl() {
+    return runGit(["remote", "get-url", "origin"]);
   }
-  async function detectBranch(projectPath) {
+  async function detectBranch() {
     try {
-      const branch = await runGit(["branch", "--show-current"], projectPath);
+      const branch = await runGit(["branch", "--show-current"]);
       if (branch) {
         return branch;
       }
     } catch {
     }
     try {
-      await runGit(["rev-parse", "--verify", "main"], projectPath);
+      await runGit(["rev-parse", "--verify", "main"]);
       return "main";
     } catch {
     }
     try {
-      await runGit(["rev-parse", "--verify", "master"], projectPath);
+      await runGit(["rev-parse", "--verify", "master"]);
       return "master";
     } catch {
       return "main";
     }
   }
-  async function isGitRepository(projectPath) {
+  async function isGitRepository() {
     try {
-      await runGit(["rev-parse", "--git-dir"], projectPath);
+      await runGit(["rev-parse", "--git-dir"]);
       return true;
     } catch {
       return false;
     }
   }
-  async function hasGitRemote(projectPath) {
+  async function hasGitRemote() {
     try {
-      await getRemoteUrl(projectPath);
+      await getRemoteUrl();
       return true;
     } catch {
       return false;
     }
   }
-  async function stageFiles(projectPath, files) {
-    await runGit(["add", ...files], projectPath);
+  async function stageFiles(files) {
+    await runGit(["add", ...files]);
   }
-  async function commit(projectPath, message) {
-    await runGit(["commit", "-m", message], projectPath);
-    return runGit(["rev-parse", "HEAD"], projectPath);
+  async function commit(message) {
+    await runGit(["commit", "-m", message]);
+    return runGit(["rev-parse", "HEAD"]);
   }
-  async function push(projectPath) {
-    await runGit(["push"], projectPath);
+  async function push() {
+    await runGit(["push"]);
   }
-  async function commitAndPushWorkflow(projectPath) {
+  async function commitAndPushWorkflow() {
     await log("log", "   Staging workflow and gitignore...");
-    await stageFiles(projectPath, [".github/workflows/moss-deploy.yml", ".gitignore"]);
+    await stageFiles([".github/workflows/moss-deploy.yml", ".gitignore"]);
     await log("log", "   Creating commit...");
-    const sha = await commit(projectPath, "Add GitHub Pages deployment workflow\n\nGenerated by Moss");
+    const sha = await commit("Add GitHub Pages deployment workflow\n\nGenerated by Moss");
     await log("log", "   Pushing to remote...");
-    await push(projectPath);
+    await push();
     return sha;
   }
   function parseGitHubUrl(remoteUrl) {
@@ -220,15 +229,15 @@ var GitHubDeployer = (() => {
   }
 
   // dist/validation.js
-  async function validateGitRepository(projectPath) {
-    const isRepo = await isGitRepository(projectPath);
+  async function validateGitRepository() {
+    const isRepo = await isGitRepository();
     if (!isRepo) {
       throw new Error("This folder is not a git repository.\n\nTo publish to GitHub Pages, you need to:\n1. Run: git init\n2. Create a GitHub repository\n3. Add it as remote: git remote add origin <url>");
     }
   }
-  async function validateSiteCompiled(projectPath, outputDir) {
+  async function validateSiteCompiled(outputDir) {
     try {
-      const allFiles = await listFiles(projectPath);
+      const allFiles = await listFiles();
       const siteFiles = allFiles.filter((f) => f.startsWith(outputDir));
       if (siteFiles.length === 0) {
         throw new Error("Site directory is empty. Please compile your site first.");
@@ -240,12 +249,12 @@ var GitHubDeployer = (() => {
       throw new Error("Site not found at .moss/site\n\nPlease compile your site first.");
     }
   }
-  async function validateGitHubRemote(projectPath) {
-    const hasRemote = await hasGitRemote(projectPath);
+  async function validateGitHubRemote() {
+    const hasRemote = await hasGitRemote();
     if (!hasRemote) {
       throw new Error("No git remote configured.\n\nTo publish, you need to:\n1. Create a GitHub repository\n2. Add it as remote: git remote add origin <url>");
     }
-    const remoteUrl = await getRemoteUrl(projectPath);
+    const remoteUrl = await getRemoteUrl();
     if (!remoteUrl.includes("github.com")) {
       throw new Error(`Remote '${remoteUrl}' is not a GitHub URL.
 
@@ -254,14 +263,13 @@ Please add a GitHub remote or use a different deployment method.`);
     }
     return remoteUrl;
   }
-  async function validateAll(projectPath, outputDir) {
+  async function validateAll(outputDir) {
     await log("log", "   Validating git repository...");
-    await validateGitRepository(projectPath);
+    await validateGitRepository();
     await log("log", "   Validating compiled site...");
-    const relativeOutputDir = outputDir.startsWith(projectPath) ? outputDir.slice(projectPath.length).replace(/^\//, "") : outputDir;
-    await validateSiteCompiled(projectPath, relativeOutputDir);
+    await validateSiteCompiled(outputDir);
     await log("log", "   Validating GitHub remote...");
-    const remoteUrl = await validateGitHubRemote(projectPath);
+    const remoteUrl = await validateGitHubRemote();
     await log("log", "   All validations passed");
     return remoteUrl;
   }
@@ -312,17 +320,17 @@ jobs:
   function generateWorkflowContent(branch) {
     return WORKFLOW_TEMPLATE.replace("BRANCH_PLACEHOLDER", branch);
   }
-  async function createWorkflowFile(projectPath, branch) {
+  async function createWorkflowFile(branch) {
     await log("log", "   Creating .github/workflows/moss-deploy.yml...");
     const content = generateWorkflowContent(branch);
-    await writeFile(projectPath, ".github/workflows/moss-deploy.yml", content);
+    await writeFile(".github/workflows/moss-deploy.yml", content);
     await log("log", "   Workflow file created");
   }
-  async function updateGitignore(projectPath) {
+  async function updateGitignore() {
     await log("log", "   Updating .gitignore...");
     let currentContent = "";
     try {
-      currentContent = await readFile(projectPath, ".gitignore");
+      currentContent = await readFile(".gitignore");
     } catch {
     }
     const hasMossIgnore = currentContent.split("\n").some((line) => {
@@ -348,35 +356,34 @@ jobs:
     if (!hasSiteException) {
       newContent += "!.moss/site/\n";
     }
-    await writeFile(projectPath, ".gitignore", newContent);
+    await writeFile(".gitignore", newContent);
     await log("log", "   .gitignore updated");
   }
-  async function workflowExists(projectPath) {
-    return fileExists(projectPath, ".github/workflows/moss-deploy.yml");
+  async function workflowExists() {
+    return fileExists(".github/workflows/moss-deploy.yml");
   }
 
   // dist/main.js
-  async function on_deploy(context) {
-    setCurrentHookName("on_deploy");
+  async function deploy(_context) {
+    setCurrentHookName("deploy");
     await log("log", "GitHub Deployer: Starting deployment...");
-    await log("log", `   Project: ${context.project_path}`);
     try {
       await reportProgress2("validating", 1, 5, "Validating requirements...");
-      const remoteUrl = await validateAll(context.project_path, context.output_dir);
+      const remoteUrl = await validateAll(".moss/site");
       await reportProgress2("configuring", 2, 5, "Detecting default branch...");
-      const branch = await detectBranch(context.project_path);
+      const branch = await detectBranch();
       await log("log", `   Default branch: ${branch}`);
       await reportProgress2("configuring", 3, 5, "Checking workflow status...");
-      const alreadyConfigured = await workflowExists(context.project_path);
+      const alreadyConfigured = await workflowExists();
       let wasFirstSetup = false;
       let commitSha = "";
       if (!alreadyConfigured) {
         wasFirstSetup = true;
         await reportProgress2("configuring", 4, 5, "Creating GitHub Actions workflow...");
-        await createWorkflowFile(context.project_path, branch);
-        await updateGitignore(context.project_path);
+        await createWorkflowFile(branch);
+        await updateGitignore();
         await reportProgress2("deploying", 5, 5, "Pushing workflow to GitHub...");
-        commitSha = await commitAndPushWorkflow(context.project_path);
+        commitSha = await commitAndPushWorkflow();
         await log("log", `   Committed: ${commitSha.substring(0, 7)}`);
       }
       const pagesUrl = extractGitHubPagesUrl(remoteUrl);
@@ -418,7 +425,7 @@ git add . && git commit -m "Update site" && git push`;
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await reportError2(errorMessage, "on_deploy", true);
+      await reportError2(errorMessage, "deploy", true);
       await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
       return {
         success: false,
@@ -427,7 +434,7 @@ git add . && git commit -m "Update site" && git push`;
     }
   }
   var GitHubDeployer = {
-    on_deploy
+    deploy
   };
   window.GitHubDeployer = GitHubDeployer;
   var main_default = GitHubDeployer;

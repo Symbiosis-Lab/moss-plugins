@@ -13,9 +13,9 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
 // Hook Implementation
 // ============================================================================
 /**
- * on_deploy hook - Deploy to GitHub Pages via GitHub Actions
+ * deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
- * This hook:
+ * This capability:
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/
@@ -23,32 +23,33 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function on_deploy(context) {
-    setCurrentHookName("on_deploy");
+async function deploy(_context) {
+    setCurrentHookName("deploy");
     await log("log", "GitHub Deployer: Starting deployment...");
-    await log("log", `   Project: ${context.project_path}`);
     try {
         // Phase 1: Validate requirements
+        // The site_files in context already contain relative paths to output dir
+        // Default output dir is ".moss/site" - we validate files exist there
         await reportProgress("validating", 1, 5, "Validating requirements...");
-        const remoteUrl = await validateAll(context.project_path, context.output_dir);
+        const remoteUrl = await validateAll(".moss/site");
         // Phase 2: Detect default branch
         await reportProgress("configuring", 2, 5, "Detecting default branch...");
-        const branch = await detectBranch(context.project_path);
+        const branch = await detectBranch();
         await log("log", `   Default branch: ${branch}`);
         // Phase 3: Check if workflow already exists
         await reportProgress("configuring", 3, 5, "Checking workflow status...");
-        const alreadyConfigured = await workflowExists(context.project_path);
+        const alreadyConfigured = await workflowExists();
         let wasFirstSetup = false;
         let commitSha = "";
         if (!alreadyConfigured) {
             wasFirstSetup = true;
             // Phase 4: Create workflow
             await reportProgress("configuring", 4, 5, "Creating GitHub Actions workflow...");
-            await createWorkflowFile(context.project_path, branch);
-            await updateGitignore(context.project_path);
+            await createWorkflowFile(branch);
+            await updateGitignore();
             // Phase 5: Commit and push
             await reportProgress("deploying", 5, 5, "Pushing workflow to GitHub...");
-            commitSha = await commitAndPushWorkflow(context.project_path);
+            commitSha = await commitAndPushWorkflow();
             await log("log", `   Committed: ${commitSha.substring(0, 7)}`);
         }
         // Generate pages URL
@@ -92,7 +93,7 @@ async function on_deploy(context) {
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        await reportError(errorMessage, "on_deploy", true);
+        await reportError(errorMessage, "deploy", true);
         await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
         return {
             success: false,
@@ -107,11 +108,11 @@ async function on_deploy(context) {
  * Plugin object exported as global for the moss plugin runtime
  */
 const GitHubDeployer = {
-    on_deploy,
+    deploy,
 };
 // Register plugin globally for the plugin runtime
 window.GitHubDeployer = GitHubDeployer;
 // Also export for module usage
-export { on_deploy };
+export { deploy };
 export default GitHubDeployer;
 //# sourceMappingURL=main.js.map

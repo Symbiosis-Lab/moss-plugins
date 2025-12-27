@@ -7,9 +7,9 @@ import { setMessageContext, sendMessage as sdkSendMessage, reportProgress as sdk
 // ============================================================================
 // Plugin Configuration
 // ============================================================================
-const PLUGIN_NAME = "github-deployer";
+const PLUGIN_NAME = "github";
 // Initialize message context on load
-setMessageContext(PLUGIN_NAME, "on_deploy");
+setMessageContext(PLUGIN_NAME, "deploy");
 // ============================================================================
 // Re-exports from SDK (with plugin context)
 // ============================================================================

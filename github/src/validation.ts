@@ -9,8 +9,8 @@ import { log } from "./utils";
 /**
  * Validate that the project is a git repository
  */
-export async function validateGitRepository(projectPath: string): Promise<void> {
-  const isRepo = await isGitRepository(projectPath);
+export async function validateGitRepository(): Promise<void> {
+  const isRepo = await isGitRepository();
 
   if (!isRepo) {
     throw new Error(
@@ -25,14 +25,13 @@ export async function validateGitRepository(projectPath: string): Promise<void> 
 
 /**
  * Validate that the site has been compiled
- * @param projectPath - Absolute path to the project directory
  * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export async function validateSiteCompiled(projectPath: string, outputDir: string): Promise<void> {
+export async function validateSiteCompiled(outputDir: string): Promise<void> {
   try {
     // Check if the output directory exists and has files
     // listFiles returns all project files, filter to those in outputDir
-    const allFiles = await listFiles(projectPath);
+    const allFiles = await listFiles();
     const siteFiles = allFiles.filter((f) => f.startsWith(outputDir));
 
     if (siteFiles.length === 0) {
@@ -49,8 +48,8 @@ export async function validateSiteCompiled(projectPath: string, outputDir: strin
 /**
  * Validate that a GitHub remote is configured
  */
-export async function validateGitHubRemote(projectPath: string): Promise<string> {
-  const hasRemote = await hasGitRemote(projectPath);
+export async function validateGitHubRemote(): Promise<string> {
+  const hasRemote = await hasGitRemote();
 
   if (!hasRemote) {
     throw new Error(
@@ -61,7 +60,7 @@ export async function validateGitHubRemote(projectPath: string): Promise<string>
     );
   }
 
-  const remoteUrl = await getRemoteUrl(projectPath);
+  const remoteUrl = await getRemoteUrl();
 
   if (!remoteUrl.includes("github.com")) {
     throw new Error(
@@ -76,20 +75,17 @@ export async function validateGitHubRemote(projectPath: string): Promise<string>
 
 /**
  * Run all validations and return the remote URL
+ * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
  */
-export async function validateAll(projectPath: string, outputDir: string): Promise<string> {
+export async function validateAll(outputDir: string): Promise<string> {
   await log("log", "   Validating git repository...");
-  await validateGitRepository(projectPath);
+  await validateGitRepository();
 
   await log("log", "   Validating compiled site...");
-  // Extract relative path from outputDir (it may be absolute or relative)
-  const relativeOutputDir = outputDir.startsWith(projectPath)
-    ? outputDir.slice(projectPath.length).replace(/^\//, "")
-    : outputDir;
-  await validateSiteCompiled(projectPath, relativeOutputDir);
+  await validateSiteCompiled(outputDir);
 
   await log("log", "   Validating GitHub remote...");
-  const remoteUrl = await validateGitHubRemote(projectPath);
+  const remoteUrl = await validateGitHubRemote();
 
   await log("log", "   All validations passed");
   return remoteUrl;

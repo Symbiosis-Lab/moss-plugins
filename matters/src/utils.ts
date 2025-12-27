@@ -247,18 +247,16 @@ export async function fetchWithTimeout(
  * Content-Type if the URL has no extension.
  *
  * @param url - URL to download
- * @param projectPath - Absolute path to the project directory
  * @param targetDir - Target directory within project (e.g., "assets")
  * @param timeoutMs - Optional timeout in milliseconds (defaults to 30 seconds)
  * @returns Result with status, content-type, bytes written, and actual_path
  */
 export async function downloadAsset(
   url: string,
-  projectPath: string,
   targetDir: string,
   timeoutMs = 30000
 ): Promise<DownloadAssetResult> {
-  const result = await sdkDownloadAsset(url, projectPath, targetDir, { timeoutMs });
+  const result = await sdkDownloadAsset(url, targetDir, { timeoutMs });
 
   // Map moss-api result to existing interface for backward compatibility
   return {

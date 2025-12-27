@@ -145,7 +145,6 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
   clearTokenCache();
 
   await log("log", "🔐 Matters: process hook started");
-  await log("log", `   Project: ${context.project_path}`);
 
   try {
     // Phase 1: Authentication
@@ -155,7 +154,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
     if (!isAuthenticated) {
       // Check if we have a saved userName in config for unauthenticated fallback
-      const config = await getConfig(context.project_path);
+      const config = await getConfig();
 
       if (config.userName) {
         // Use unauthenticated mode with saved userName
@@ -231,9 +230,9 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     // Save userName to config for future unauthenticated fallback (only when authenticated)
     if (isAuthenticated && !usingUnauthenticatedMode) {
       try {
-        const existingConfig = await getConfig(context.project_path);
+        const existingConfig = await getConfig();
         if (existingConfig.userName !== profile.userName || existingConfig.language !== profile.language) {
-          await saveConfig(context.project_path, {
+          await saveConfig({
             ...existingConfig,
             userName: profile.userName,
             language: profile.language,
@@ -253,7 +252,6 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
       drafts,
       collections,
       userName,
-      context.project_path,
       context.config || {},
       profile
     );
@@ -272,8 +270,8 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
     // Both operations read/write the same markdown files, so they must not run in parallel.
     // Order: Media download first (updates image references), then link rewriting
-    const mediaResult = await downloadMediaAndUpdate(context.project_path);
-    const linkResult = await rewriteAllInternalLinks(context.project_path, articlePathMap, userName);
+    const mediaResult = await downloadMediaAndUpdate();
+    const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
 
     const mediaSummary =
       mediaResult.imagesDownloaded > 0 || mediaResult.imagesSkipped > 0

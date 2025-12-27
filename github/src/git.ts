@@ -10,13 +10,12 @@ import { log } from "./utils";
 /**
  * Run a git command and return the output
  */
-async function runGit(args: string[], cwd: string): Promise<string> {
+async function runGit(args: string[]): Promise<string> {
   await log("log", `   git ${args.join(" ")}`);
 
   const result = await executeBinary({
     binaryPath: "git",
     args,
-    workingDir: cwd,
     timeoutMs: 60000,
   });
 
@@ -31,17 +30,17 @@ async function runGit(args: string[], cwd: string): Promise<string> {
 /**
  * Check if a path exists using git status (works without direct filesystem access)
  */
-export async function checkPathExists(projectPath: string, relativePath: string): Promise<boolean> {
+export async function checkPathExists(relativePath: string): Promise<boolean> {
   try {
     // Try to get status of the path - if it doesn't exist, git will error
-    await runGit(["ls-files", "--error-unmatch", relativePath], projectPath);
+    await runGit(["ls-files", "--error-unmatch", relativePath]);
     return true;
   } catch {
     // Path not tracked, check if it exists on disk via a different approach
     // For .git directory, we can check by running a git command that requires it
     if (relativePath === ".git") {
       try {
-        await runGit(["rev-parse", "--git-dir"], projectPath);
+        await runGit(["rev-parse", "--git-dir"]);
         return true;
       } catch {
         return false;
@@ -54,17 +53,17 @@ export async function checkPathExists(projectPath: string, relativePath: string)
 /**
  * Get the origin remote URL
  */
-export async function getRemoteUrl(projectPath: string): Promise<string> {
-  return runGit(["remote", "get-url", "origin"], projectPath);
+export async function getRemoteUrl(): Promise<string> {
+  return runGit(["remote", "get-url", "origin"]);
 }
 
 /**
  * Detect the default branch (main or master)
  */
-export async function detectBranch(projectPath: string): Promise<string> {
+export async function detectBranch(): Promise<string> {
   try {
     // Try to get current branch first
-    const branch = await runGit(["branch", "--show-current"], projectPath);
+    const branch = await runGit(["branch", "--show-current"]);
     if (branch) {
       return branch;
     }
@@ -74,7 +73,7 @@ export async function detectBranch(projectPath: string): Promise<string> {
 
   // Fallback: check if main exists
   try {
-    await runGit(["rev-parse", "--verify", "main"], projectPath);
+    await runGit(["rev-parse", "--verify", "main"]);
     return "main";
   } catch {
     // Ignore - will try master
@@ -82,7 +81,7 @@ export async function detectBranch(projectPath: string): Promise<string> {
 
   // Fallback: check if master exists
   try {
-    await runGit(["rev-parse", "--verify", "master"], projectPath);
+    await runGit(["rev-parse", "--verify", "master"]);
     return "master";
   } catch {
     // Default to main
@@ -93,9 +92,9 @@ export async function detectBranch(projectPath: string): Promise<string> {
 /**
  * Check if directory is a git repository
  */
-export async function isGitRepository(projectPath: string): Promise<boolean> {
+export async function isGitRepository(): Promise<boolean> {
   try {
-    await runGit(["rev-parse", "--git-dir"], projectPath);
+    await runGit(["rev-parse", "--git-dir"]);
     return true;
   } catch {
     return false;
@@ -105,9 +104,9 @@ export async function isGitRepository(projectPath: string): Promise<boolean> {
 /**
  * Check if remote exists and get its URL
  */
-export async function hasGitRemote(projectPath: string): Promise<boolean> {
+export async function hasGitRemote(): Promise<boolean> {
   try {
-    await getRemoteUrl(projectPath);
+    await getRemoteUrl();
     return true;
   } catch {
     return false;
@@ -117,37 +116,37 @@ export async function hasGitRemote(projectPath: string): Promise<boolean> {
 /**
  * Stage files for commit
  */
-export async function stageFiles(projectPath: string, files: string[]): Promise<void> {
-  await runGit(["add", ...files], projectPath);
+export async function stageFiles(files: string[]): Promise<void> {
+  await runGit(["add", ...files]);
 }
 
 /**
  * Create a commit with a message
  */
-export async function commit(projectPath: string, message: string): Promise<string> {
-  await runGit(["commit", "-m", message], projectPath);
-  return runGit(["rev-parse", "HEAD"], projectPath);
+export async function commit(message: string): Promise<string> {
+  await runGit(["commit", "-m", message]);
+  return runGit(["rev-parse", "HEAD"]);
 }
 
 /**
  * Push to remote
  */
-export async function push(projectPath: string): Promise<void> {
-  await runGit(["push"], projectPath);
+export async function push(): Promise<void> {
+  await runGit(["push"]);
 }
 
 /**
  * Stage, commit, and push workflow files
  */
-export async function commitAndPushWorkflow(projectPath: string): Promise<string> {
+export async function commitAndPushWorkflow(): Promise<string> {
   await log("log", "   Staging workflow and gitignore...");
-  await stageFiles(projectPath, [".github/workflows/moss-deploy.yml", ".gitignore"]);
+  await stageFiles([".github/workflows/moss-deploy.yml", ".gitignore"]);
 
   await log("log", "   Creating commit...");
-  const sha = await commit(projectPath, "Add GitHub Pages deployment workflow\n\nGenerated by Moss");
+  const sha = await commit("Add GitHub Pages deployment workflow\n\nGenerated by Moss");
 
   await log("log", "   Pushing to remote...");
-  await push(projectPath);
+  await push();
 
   return sha;
 }

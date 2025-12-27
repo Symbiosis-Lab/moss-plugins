@@ -20,7 +20,6 @@ const workerPoolFeature = await loadFeature(
 describeFeature(workerPoolFeature, ({ Scenario }) => {
   // Shared state across scenarios
   let ctx: MockTauriContext | null = null;
-  const projectPath = "/test/project";
   let downloadResult: {
     filesProcessed: number;
     imagesDownloaded: number;
@@ -30,8 +29,8 @@ describeFeature(workerPoolFeature, ({ Scenario }) => {
 
   Scenario("Respects concurrency limit of 5", ({ Given, When, Then, And }) => {
     Given("a mock Tauri environment", () => {
-      // Initialize fresh mock
-      ctx = setupMockTauri();
+      // Initialize fresh mock with explicit projectPath
+      ctx = setupMockTauri({ projectPath: "/test/project" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -54,7 +53,7 @@ title: Test Article
 ${imageUrls.map((url) => `![](${url})`).join("\n")}
 `;
 
-      ctx!.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/article.md`, markdownContent);
 
       // Configure mock responses with delay to ensure concurrent execution overlaps
       for (const url of imageUrls) {
@@ -70,7 +69,7 @@ ${imageUrls.map((url) => `![](${url})`).join("\n")}
 
     When("I start downloading all images", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("at most 5 downloads should run concurrently", () => {
@@ -92,7 +91,7 @@ ${imageUrls.map((url) => `![](${url})`).join("\n")}
 
   Scenario("Tracks download progress", ({ Given, When, Then, And }) => {
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/project" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -115,7 +114,7 @@ title: Progress Test
 ${imageUrls.map((url) => `![](${url})`).join("\n")}
 `;
 
-      ctx!.filesystem.setFile(`${projectPath}/progress.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/progress.md`, markdownContent);
 
       for (const url of imageUrls) {
         ctx!.urlConfig.setResponse(url, {
@@ -129,7 +128,7 @@ ${imageUrls.map((url) => `![](${url})`).join("\n")}
 
     When("I start downloading all images", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("progress events should be reported", () => {
@@ -147,7 +146,7 @@ ${imageUrls.map((url) => `![](${url})`).join("\n")}
     let failUrls: string[] = [];
 
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/project" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -177,7 +176,7 @@ title: Mixed Test
 ${allUrls.map((url) => `![](${url})`).join("\n")}
 `;
 
-      ctx!.filesystem.setFile(`${projectPath}/mixed.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/mixed.md`, markdownContent);
 
       for (const url of successUrls) {
         ctx!.urlConfig.setResponse(url, {
@@ -198,7 +197,7 @@ ${allUrls.map((url) => `![](${url})`).join("\n")}
 
     When("I start downloading all images", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("3 downloads should succeed", () => {
@@ -228,7 +227,6 @@ const retryFeature = await loadFeature("features/download/retry-logic.feature");
 
 describeFeature(retryFeature, ({ Scenario }) => {
   let ctx: MockTauriContext | null = null;
-  const projectPath = "/test/retry";
   let downloadResult: {
     filesProcessed: number;
     imagesDownloaded: number;
@@ -240,7 +238,7 @@ describeFeature(retryFeature, ({ Scenario }) => {
     const testUrl = "https://assets.matters.news/embed/retry503-0000-0000-0000-000000000000/image.jpg";
 
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/retry" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -256,7 +254,7 @@ title: Retry Test
 
 ![](${testUrl})
 `;
-      ctx!.filesystem.setFile(`${projectPath}/retry.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/retry.md`, markdownContent);
 
       ctx!.urlConfig.setResponse(testUrl, [
         { status: 503, ok: false },
@@ -267,7 +265,7 @@ title: Retry Test
 
     When("I download the image with retry enabled", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("it should retry with Fibonacci delays", () => {
@@ -286,7 +284,7 @@ title: Retry Test
     const testUrl = "https://assets.matters.news/embed/maxretry-0000-0000-0000-000000000000/image.jpg";
 
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/retry" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -302,7 +300,7 @@ title: Max Retry Test
 
 ![](${testUrl})
 `;
-      ctx!.filesystem.setFile(`${projectPath}/maxretry.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/maxretry.md`, markdownContent);
 
       ctx!.urlConfig.setResponse(testUrl, [
         { status: 503, ok: false },
@@ -315,7 +313,7 @@ title: Max Retry Test
 
     When("I download the image with max 3 retries", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("it should attempt 4 times total", () => {
@@ -335,7 +333,7 @@ title: Max Retry Test
     const testUrl = "https://assets.matters.news/embed/noretry-0000-0000-0000-000000000000/image.jpg";
 
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/retry" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -351,7 +349,7 @@ title: No Retry Test
 
 ![](${testUrl})
 `;
-      ctx!.filesystem.setFile(`${projectPath}/noretry.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/noretry.md`, markdownContent);
 
       ctx!.urlConfig.setResponse(testUrl, {
         status: 404,
@@ -361,7 +359,7 @@ title: No Retry Test
 
     When("I download the image with retry enabled", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("it should not retry", () => {
@@ -382,7 +380,7 @@ title: No Retry Test
     const testUrl = "https://assets.matters.news/embed/timeout-0000-0000-0000-000000000000/image.jpg";
 
     Given("a mock Tauri environment", () => {
-      ctx = setupMockTauri();
+      ctx = setupMockTauri({ projectPath: "/test/retry" });
       downloadResult = null;
       expect(ctx).toBeDefined();
     });
@@ -398,7 +396,7 @@ title: Timeout Retry Test
 
 ![](${testUrl})
 `;
-      ctx!.filesystem.setFile(`${projectPath}/timeout.md`, markdownContent);
+      ctx!.filesystem.setFile(`${ctx!.projectPath}/timeout.md`, markdownContent);
 
       ctx!.urlConfig.setResponse(testUrl, [
         { status: 0, ok: false },
@@ -409,7 +407,7 @@ title: Timeout Retry Test
 
     When("I download the image with retry enabled", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("it should retry after timeouts", () => {

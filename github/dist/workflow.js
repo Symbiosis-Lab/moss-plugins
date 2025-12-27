@@ -58,21 +58,21 @@ export function generateWorkflowContent(branch) {
 /**
  * Create the GitHub Actions workflow file
  */
-export async function createWorkflowFile(projectPath, branch) {
+export async function createWorkflowFile(branch) {
     await log("log", "   Creating .github/workflows/moss-deploy.yml...");
     const content = generateWorkflowContent(branch);
-    await writeFile(projectPath, ".github/workflows/moss-deploy.yml", content);
+    await writeFile(".github/workflows/moss-deploy.yml", content);
     await log("log", "   Workflow file created");
 }
 /**
  * Update .gitignore to track .moss/site/ while ignoring other .moss/ contents
  */
-export async function updateGitignore(projectPath) {
+export async function updateGitignore() {
     await log("log", "   Updating .gitignore...");
     // Read current gitignore
     let currentContent = "";
     try {
-        currentContent = await readFile(projectPath, ".gitignore");
+        currentContent = await readFile(".gitignore");
     }
     catch {
         // File doesn't exist, that's fine
@@ -104,13 +104,13 @@ export async function updateGitignore(projectPath) {
     if (!hasSiteException) {
         newContent += "!.moss/site/\n";
     }
-    await writeFile(projectPath, ".gitignore", newContent);
+    await writeFile(".gitignore", newContent);
     await log("log", "   .gitignore updated");
 }
 /**
  * Check if the workflow file already exists
  */
-export async function workflowExists(projectPath) {
-    return fileExists(projectPath, ".github/workflows/moss-deploy.yml");
+export async function workflowExists() {
+    return fileExists(".github/workflows/moss-deploy.yml");
 }
 //# sourceMappingURL=workflow.js.map

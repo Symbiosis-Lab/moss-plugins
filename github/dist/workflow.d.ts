@@ -13,13 +13,13 @@ export declare function generateWorkflowContent(branch: string): string;
 /**
  * Create the GitHub Actions workflow file
  */
-export declare function createWorkflowFile(projectPath: string, branch: string): Promise<void>;
+export declare function createWorkflowFile(branch: string): Promise<void>;
 /**
  * Update .gitignore to track .moss/site/ while ignoring other .moss/ contents
  */
-export declare function updateGitignore(projectPath: string): Promise<void>;
+export declare function updateGitignore(): Promise<void>;
 /**
  * Check if the workflow file already exists
  */
-export declare function workflowExists(projectPath: string): Promise<boolean>;
+export declare function workflowExists(): Promise<boolean>;
 //# sourceMappingURL=workflow.d.ts.map

@@ -224,10 +224,9 @@ import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/t
 
 describe("downloadMediaAndUpdate - partial completion", () => {
   let ctx: MockTauriContext;
-  const projectPath = "/test-project";
 
   beforeEach(() => {
-    ctx = setupMockTauri();
+    ctx = setupMockTauri({ projectPath: "/test-project" });
   });
 
   afterEach(() => {
@@ -250,7 +249,7 @@ Some text
 
 ![](https://assets.matters.news/embed/${uuid2}.jpg)
 `;
-    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/article.md`, markdownContent);
 
     // Configure URL responses - uuid1 succeeds, uuid2 fails with 404
     ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid1}.jpg`, {
@@ -270,14 +269,14 @@ Some text
 
     // Run the download and update function
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     // Verify: 1 image downloaded, 1 error
     expect(result.imagesDownloaded).toBe(1);
     expect(result.errors.length).toBeGreaterThan(0);
 
     // Verify: File was modified to update successful reference
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/article.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/article.md`)?.content;
     expect(updatedContent).toBeDefined();
 
     // UUID1 should be replaced with local path
@@ -296,7 +295,7 @@ title: "Test"
 
 ![](https://assets.matters.news/embed/${uuid}.png)
 `;
-    ctx.filesystem.setFile(`${projectPath}/test.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/test.md`, markdownContent);
 
     ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid}.png`, {
       status: 200,
@@ -307,13 +306,13 @@ title: "Test"
     });
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     expect(result.imagesDownloaded).toBe(1);
     expect(result.filesProcessed).toBe(1);
 
     // Verify the file was updated
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/test.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/test.md`)?.content;
     expect(updatedContent).toContain(`assets/${uuid}.png`);
   });
 
@@ -326,7 +325,7 @@ title: "Nested Article"
 ![](https://assets.matters.news/embed/${uuid}.jpg)
 `;
     // File in nested directory
-    ctx.filesystem.setFile(`${projectPath}/文章/游记/article.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/文章/游记/article.md`, markdownContent);
 
     ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${uuid}.jpg`, {
       status: 200,
@@ -337,12 +336,12 @@ title: "Nested Article"
     });
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     expect(result.imagesDownloaded).toBe(1);
 
     // Verify relative path is correct (../../assets/uuid.jpg)
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/文章/游记/article.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/文章/游记/article.md`)?.content;
     expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
   });
 
@@ -357,10 +356,10 @@ title: "Test"
 ![](https://assets.matters.news/embed/${existingUuid}.jpg)
 ![](https://assets.matters.news/embed/${newUuid}.jpg)
 `;
-    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/article.md`, markdownContent);
 
     // Simulate existing asset on disk
-    ctx.filesystem.setFile(`${projectPath}/assets/${existingUuid}.jpg`, "[binary image data]");
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${existingUuid}.jpg`, "[binary image data]");
 
     // Only configure the new UUID
     ctx.urlConfig.setResponse(`https://assets.matters.news/embed/${newUuid}.jpg`, {
@@ -372,7 +371,7 @@ title: "Test"
     });
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     // Only 1 new download (existing was skipped)
     expect(result.imagesDownloaded).toBe(1);
@@ -388,7 +387,7 @@ cover: "https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public"
 
 # Content
 `;
-    ctx.filesystem.setFile(`${projectPath}/article.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/article.md`, markdownContent);
 
     ctx.urlConfig.setResponse(`https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public`, {
       status: 200,
@@ -399,12 +398,12 @@ cover: "https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public"
     });
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     expect(result.imagesDownloaded).toBe(1);
     expect(result.filesProcessed).toBe(1);
 
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/article.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/article.md`)?.content;
     expect(updatedContent).toContain(`cover: "assets/${uuid}.jpg"`);
   });
 
@@ -420,13 +419,13 @@ title: "色达"
 
 ![](https://assets.matters.news/embed/${uuid}.jpeg)
 `;
-    ctx.filesystem.setFile(`${projectPath}/文章/游记/色达.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/文章/游记/色达.md`, markdownContent);
 
     // Asset already exists on disk (from previous interrupted run)
-    ctx.filesystem.setFile(`${projectPath}/assets/${uuid}.jpg`, "[binary image data]");
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid}.jpg`, "[binary image data]");
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     // Asset should be skipped (already exists), not downloaded
     expect(result.imagesDownloaded).toBe(0);
@@ -435,7 +434,7 @@ title: "色达"
     // But file should still be updated with local path
     expect(result.filesProcessed).toBe(1);
 
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/文章/游记/色达.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/文章/游记/色达.md`)?.content;
     expect(updatedContent).toBeDefined();
     // Should use relative path from nested directory
     expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
@@ -459,15 +458,15 @@ Some text
 
 ![](https://assets.matters.news/embed/${uuid3}.jpeg)
 `;
-    ctx.filesystem.setFile(`${projectPath}/nested/dir/article.md`, markdownContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/nested/dir/article.md`, markdownContent);
 
     // All 3 assets exist on disk
-    ctx.filesystem.setFile(`${projectPath}/assets/${uuid1}.jpg`, "[image 1]");
-    ctx.filesystem.setFile(`${projectPath}/assets/${uuid2}.png`, "[image 2]");
-    ctx.filesystem.setFile(`${projectPath}/assets/${uuid3}.jpeg`, "[image 3]");
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid1}.jpg`, "[image 1]");
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid2}.png`, "[image 2]");
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid3}.jpeg`, "[image 3]");
 
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate(projectPath);
+    const result = await downloadMediaAndUpdate();
 
     // All 3 skipped, none downloaded
     expect(result.imagesDownloaded).toBe(0);
@@ -476,7 +475,7 @@ Some text
     // File should be updated
     expect(result.filesProcessed).toBe(1);
 
-    const updatedContent = ctx.filesystem.getFile(`${projectPath}/nested/dir/article.md`)?.content;
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/nested/dir/article.md`)?.content;
     expect(updatedContent).toBeDefined();
 
     // All 3 should be updated to relative paths

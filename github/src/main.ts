@@ -27,25 +27,26 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function deploy(context: OnDeployContext): Promise<HookResult> {
+async function deploy(_context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
-  await log("log", `   Project: ${context.project_path}`);
 
   try {
     // Phase 1: Validate requirements
+    // The site_files in context already contain relative paths to output dir
+    // Default output dir is ".moss/site" - we validate files exist there
     await reportProgress("validating", 1, 5, "Validating requirements...");
-    const remoteUrl = await validateAll(context.project_path, context.output_dir);
+    const remoteUrl = await validateAll(".moss/site");
 
     // Phase 2: Detect default branch
     await reportProgress("configuring", 2, 5, "Detecting default branch...");
-    const branch = await detectBranch(context.project_path);
+    const branch = await detectBranch();
     await log("log", `   Default branch: ${branch}`);
 
     // Phase 3: Check if workflow already exists
     await reportProgress("configuring", 3, 5, "Checking workflow status...");
-    const alreadyConfigured = await workflowExists(context.project_path);
+    const alreadyConfigured = await workflowExists();
 
     let wasFirstSetup = false;
     let commitSha = "";
@@ -55,12 +56,12 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
       // Phase 4: Create workflow
       await reportProgress("configuring", 4, 5, "Creating GitHub Actions workflow...");
-      await createWorkflowFile(context.project_path, branch);
-      await updateGitignore(context.project_path);
+      await createWorkflowFile(branch);
+      await updateGitignore();
 
       // Phase 5: Commit and push
       await reportProgress("deploying", 5, 5, "Pushing workflow to GitHub...");
-      commitSha = await commitAndPushWorkflow(context.project_path);
+      commitSha = await commitAndPushWorkflow();
       await log("log", `   Committed: ${commitSha.substring(0, 7)}`);
     }
 

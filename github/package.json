@@ -4,7 +4,8 @@
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm run clean && npm run compile && npm run bundle && npm run copy-assets",
+    "build": "npm run clean && npm run compile && npm run bundle && npm run copy-assets && npm run cleanup",
+    "cleanup": "cd dist && find . -name '*.js' ! -name 'main.bundle.js' -delete",
     "dev": "npm run build && concurrently \"tsc --watch\" \"npm run watch-assets\"",
     "compile": "tsc",
     "bundle": "esbuild dist/main.js --bundle --format=iife --global-name=GitHubDeployer --outfile=dist/main.bundle.js",

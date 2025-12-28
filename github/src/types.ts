@@ -12,8 +12,22 @@ export type {
   DeploymentInfo,
   ProjectInfo,
   PluginMessage,
-  DnsTarget,
 } from "@symbiosis-lab/moss-api";
+
+// ============================================================================
+// DNS Target Types
+// ============================================================================
+
+/**
+ * DNS target configuration for custom domain setup.
+ *
+ * TODO: Replace with `DnsTarget` from @symbiosis-lab/moss-api once published.
+ * See: https://github.com/Symbiosis-Lab/moss-api/pull/2
+ */
+export type DnsTarget =
+  | { type: "cname"; hostname: string }
+  | { type: "a"; ips: string[] }
+  | { type: "github-pages"; a_records: string[]; cname_target: string };
 
 // ============================================================================
 // GitHub OAuth Device Flow Types

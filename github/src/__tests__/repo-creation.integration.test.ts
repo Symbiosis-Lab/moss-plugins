@@ -8,6 +8,8 @@
  * - Git remote add after creation
  *
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
+ *
+ * NOTE: Tests requiring dialogTracker will be skipped if moss-api < 0.5.4
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -15,6 +17,11 @@ import {
   setupMockTauri,
   type MockTauriContext,
 } from "@symbiosis-lab/moss-api/testing";
+
+// Check if dialogTracker is available (requires moss-api >= 0.5.4)
+const testCtx = setupMockTauri();
+const hasDialogTracker = !!testCtx.dialogTracker;
+testCtx.cleanup();
 
 // Mock the utils module to prevent actual IPC calls for logging
 vi.mock("../utils", () => ({
@@ -34,6 +41,9 @@ const originalFetch = global.fetch;
 
 // Mock fetch for individual tests
 let mockFetch: ReturnType<typeof vi.fn>;
+
+// Use describe.skipIf for tests requiring dialogTracker
+const describeWithDialog = hasDialogTracker ? describe : describe.skip;
 
 describe("Repository Creation Flow", () => {
   let ctx: MockTauriContext;
@@ -83,10 +93,10 @@ describe("Repository Creation Flow", () => {
   });
 
   // ==========================================================================
-  // Dialog Interaction Tests
+  // Dialog Interaction Tests (requires moss-api >= 0.5.4 with dialogTracker)
   // ==========================================================================
 
-  describe("Dialog Interaction", () => {
+  describeWithDialog("Dialog Interaction", () => {
     beforeEach(() => {
       // Setup: Valid token exists
       ctx.cookieStorage.setCookies(ctx.pluginName, ctx.projectPath, [
@@ -156,10 +166,10 @@ describe("Repository Creation Flow", () => {
   });
 
   // ==========================================================================
-  // Repository Creation Tests
+  // Repository Creation Tests (requires moss-api >= 0.5.4 with dialogTracker)
   // ==========================================================================
 
-  describe("Repository Creation", () => {
+  describeWithDialog("Repository Creation", () => {
     beforeEach(() => {
       // Setup: Valid token exists
       ctx.cookieStorage.setCookies(ctx.pluginName, ctx.projectPath, [
@@ -289,10 +299,10 @@ describe("Repository Creation Flow", () => {
   });
 
   // ==========================================================================
-  // Git Remote Setup Tests
+  // Git Remote Setup Tests (requires moss-api >= 0.5.4 with dialogTracker)
   // ==========================================================================
 
-  describe("Git Remote Setup", () => {
+  describeWithDialog("Git Remote Setup", () => {
     beforeEach(() => {
       // Setup: Valid token exists
       ctx.cookieStorage.setCookies(ctx.pluginName, ctx.projectPath, [
@@ -357,10 +367,10 @@ describe("Repository Creation Flow", () => {
   });
 
   // ==========================================================================
-  // Dialog URL Tests
+  // Dialog URL Tests (requires moss-api >= 0.5.4 with dialogTracker)
   // ==========================================================================
 
-  describe("Dialog URL Generation", () => {
+  describeWithDialog("Dialog URL Generation", () => {
     beforeEach(() => {
       // Setup: Valid token exists
       ctx.cookieStorage.setCookies(ctx.pluginName, ctx.projectPath, [

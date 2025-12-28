@@ -11,6 +11,8 @@
  * Limitations:
  * - CLI/headless mode cannot run webview-based plugins
  * - Full plugin execution tests require GUI mode or integration testing
+ *
+ * NOTE: Tests are skipped if moss binary is not available (e.g., on CI)
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -27,6 +29,10 @@ const MOSS_BINARY = path.join(
 
 // Path to plugin dist
 const PLUGIN_DIST = path.join(__dirname, "../dist");
+
+// Check if moss binary is available for running tests
+const isMossBinaryAvailable = fs.existsSync(MOSS_BINARY);
+const isPluginDistAvailable = fs.existsSync(PLUGIN_DIST);
 
 // Test fixture directory
 let testDir: string;
@@ -148,24 +154,11 @@ function runMoss(
   });
 }
 
-describe("Moss CLI E2E Tests", () => {
+// Skip entire test suite if moss binary is not available
+describe.skipIf(!isMossBinaryAvailable || !isPluginDistAvailable)("Moss CLI E2E Tests", () => {
   beforeAll(() => {
     // Create temp directory for test fixtures
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "moss-e2e-"));
-
-    // Verify moss binary exists
-    if (!fs.existsSync(MOSS_BINARY)) {
-      throw new Error(
-        `Moss binary not found at ${MOSS_BINARY}. Please build moss first with 'cargo build' in src-tauri/`
-      );
-    }
-
-    // Verify plugin dist exists
-    if (!fs.existsSync(PLUGIN_DIST)) {
-      throw new Error(
-        `Plugin dist not found at ${PLUGIN_DIST}. Please build plugin first with 'npm run build'`
-      );
-    }
   });
 
   afterAll(() => {

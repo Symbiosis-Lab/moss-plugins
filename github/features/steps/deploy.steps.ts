@@ -85,7 +85,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And('the error should mention "not a git repository"', () => {
-      expect(deployResult?.message).toContain("not a git repository");
+      expect(deployResult?.message).toContain("Not a git repository");
     });
 
     And('the error should include instructions to run "git init"', () => {
@@ -127,11 +127,13 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And('the error should mention "No git remote configured"', () => {
-      expect(deployResult?.message).toContain("No git remote configured");
+      // Updated to reflect new repo creation flow messaging
+      expect(deployResult?.message).toContain("No GitHub repository configured");
     });
 
     And("the error should include instructions to add a GitHub remote", () => {
-      expect(deployResult?.message).toContain("git remote add origin");
+      // Updated to reflect new repo creation flow messaging
+      expect(deployResult?.message).toContain("create a repository or add a remote");
     });
   });
 

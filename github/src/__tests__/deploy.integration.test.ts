@@ -68,7 +68,7 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain("not a git repository");
+      expect(result.message).toContain("Not a git repository");
       expect(result.message).toContain("git init");
     });
 
@@ -84,7 +84,8 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(false);
       expect(result.message).toContain("git init");
-      expect(result.message).toContain("git remote add origin");
+      // Note: git remote add origin instruction is not shown for non-git-repo errors
+      // since the user needs to init git first
     });
   });
 
@@ -117,8 +118,8 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain("No git remote configured");
-      expect(result.message).toContain("git remote add origin");
+      // New message reflects the repo creation flow
+      expect(result.message).toContain("No GitHub repository configured");
     });
 
     it("fails when remote is not GitHub (SSH protocol path)", async () => {

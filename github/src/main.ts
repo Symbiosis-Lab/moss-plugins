@@ -12,10 +12,11 @@
 
 import type { OnDeployContext, HookResult } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
-import { validateAll, isSSHRemote } from "./validation";
+import { validateAll, isSSHRemote, isGitRepository, hasRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
 import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
 import { checkAuthentication, promptLogin } from "./auth";
+import { promptAndCreateRepo } from "./repo-create";
 
 // ============================================================================
 // Hook Implementation
@@ -33,20 +34,49 @@ import { checkAuthentication, promptLogin } from "./auth";
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function deploy(context: OnDeployContext): Promise<HookResult> {
+async function deploy(_context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
 
   try {
-    // Phase 0: Check authentication for HTTPS remotes
-    // SSH remotes use SSH keys, so we skip auth check for them
+    // Phase 0: Check if we have a git repo and remote
+    // If not, offer to create a repository
     let remoteUrl: string;
-    try {
-      remoteUrl = await getRemoteUrl(context.project_path);
-    } catch {
-      // Will be handled by validateAll
-      remoteUrl = "";
+
+    // First check if this is a git repository
+    if (!await isGitRepository()) {
+      await reportError("Not a git repository. Run 'git init' first.", "validation", true);
+      return {
+        success: false,
+        message: "Not a git repository. Please run 'git init' to initialize git.",
+      };
+    }
+
+    // Check if remote exists
+    if (!await hasRemote()) {
+      await log("log", "   No git remote configured");
+      await reportProgress("setup", 0, 6, "No GitHub repository configured...");
+
+      // Offer to create a repository
+      const created = await promptAndCreateRepo();
+
+      if (!created) {
+        await reportError("No GitHub repository configured", "validation", true);
+        return {
+          success: false,
+          message: "No GitHub repository configured. Please create a repository or add a remote.",
+        };
+      }
+
+      await log("log", `   Repository created: ${created.fullName}`);
+      remoteUrl = created.sshUrl;
+    } else {
+      try {
+        remoteUrl = await getRemoteUrl();
+      } catch {
+        remoteUrl = "";
+      }
     }
 
     const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
@@ -80,8 +110,9 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
 
     // Phase 1: Validate requirements
+    // Output dir defaults to ".moss/site" - moss-api provides context internally
     await reportProgress("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
-    remoteUrl = await validateAll(context.project_path, context.output_dir);
+    remoteUrl = await validateAll(".moss/site");
 
     // Phase 2: Detect default branch
     await reportProgress("configuring", 2, 5, "Detecting default branch...");

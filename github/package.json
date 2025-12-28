@@ -14,7 +14,10 @@
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "vitest run --project e2e"
   },
   "keywords": [
     "moss",

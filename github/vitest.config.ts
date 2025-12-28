@@ -40,6 +40,17 @@ export default defineConfig({
           globals: true,
         },
       },
+      {
+        extends: true,
+        test: {
+          name: "e2e",
+          include: ["e2e/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 60000,
+          hookTimeout: 30000,
+          globals: true,
+        },
+      },
     ],
   },
 });

@@ -12,6 +12,7 @@ export type {
   DeploymentInfo,
   ProjectInfo,
   PluginMessage,
+  DnsTarget,
 } from "@symbiosis-lab/moss-api";
 
 // ============================================================================

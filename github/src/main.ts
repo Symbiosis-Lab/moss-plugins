@@ -10,13 +10,29 @@
  * - Stores tokens in git credential helper for persistence
  */
 
-import type { OnDeployContext, HookResult } from "./types";
+import type { OnDeployContext, HookResult, DnsTarget } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
 import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
 import { checkAuthentication, promptLogin } from "./auth";
 import { promptAndCreateRepo } from "./repo-create";
+
+// ============================================================================
+// GitHub Pages DNS Configuration
+// ============================================================================
+
+/**
+ * GitHub Pages A record IP addresses
+ * These are the official GitHub Pages IPs for apex domain configuration
+ * @see https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site#configuring-an-apex-domain
+ */
+const GITHUB_PAGES_IPS = [
+  "185.199.108.153",
+  "185.199.109.153",
+  "185.199.110.153",
+  "185.199.111.153",
+];
 
 // ============================================================================
 // Hook Implementation
@@ -140,10 +156,20 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
       await log("log", `   Committed: ${commitSha.substring(0, 7)}`);
     }
 
-    // Generate pages URL
+    // Generate pages URL and DNS target
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);
     const parsed = parseGitHubUrl(remoteUrl);
     const repoPath = parsed ? `${parsed.owner}/${parsed.repo}` : "";
+
+    // Extract the GitHub Pages hostname for CNAME (e.g., "user.github.io")
+    const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
+
+    // Build DNS target for custom domain configuration
+    const dnsTarget: DnsTarget = {
+      type: "github-pages",
+      a_records: GITHUB_PAGES_IPS,
+      cname_target: pagesHostname,
+    };
 
     // Build result message
     let message: string;
@@ -178,6 +204,7 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
           was_first_setup: String(wasFirstSetup),
           commit_sha: commitSha,
         },
+        dns_target: dnsTarget,
       },
     };
   } catch (error) {

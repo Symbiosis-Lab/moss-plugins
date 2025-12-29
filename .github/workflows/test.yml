@@ -84,6 +84,11 @@ jobs:
           cd ${{ matrix.plugin }}
           npm ci
 
+      - name: Install system dependencies for moss binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
       - name: Download moss binary for e2e tests
         run: |
           # Download latest moss-linux-x64 from releases

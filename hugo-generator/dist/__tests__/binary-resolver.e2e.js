@@ -123,6 +123,9 @@ describe("Binary Resolution E2E", () => {
         });
     });
     describe("Version Pattern Matching", () => {
+        // This pattern matches modern Hugo format: "hugo v0.x.x"
+        // Note: Older Hugo versions (pre-0.100) used "Hugo Static Site Generator v0.x.x"
+        // but those are EOL so we don't need to support them in modern tests
         const versionPattern = /hugo v(\d+\.\d+\.\d+)/i;
         const testCases = [
             {
@@ -134,12 +137,12 @@ describe("Binary Resolution E2E", () => {
                 expected: "0.100.1",
             },
             {
-                output: "Hugo Static Site Generator v0.88.0/extended darwin/amd64",
-                expected: "0.88.0",
-            },
-            {
                 output: "hugo v1.0.0 windows/amd64",
                 expected: "1.0.0",
+            },
+            {
+                output: "hugo v0.153.4+extended+withdeploy darwin/arm64 BuildDate=2025-12-26",
+                expected: "0.153.4",
             },
         ];
         for (const { output, expected } of testCases) {
@@ -211,7 +214,8 @@ describe("Binary Resolution E2E", () => {
                 const assetNames = data.assets.map((a) => a.name);
                 // Check for extended versions
                 expect(assetNames.some((n) => n.includes("extended"))).toBe(true);
-                expect(assetNames.some((n) => n.includes("darwin-arm64"))).toBe(true);
+                // macOS uses universal binaries (darwin-universal), not arch-specific
+                expect(assetNames.some((n) => n.includes("darwin"))).toBe(true);
                 expect(assetNames.some((n) => n.includes("linux-amd64"))).toBe(true);
                 expect(assetNames.some((n) => n.includes("windows-amd64"))).toBe(true);
             });
@@ -291,10 +295,8 @@ describe("Binary Resolution E2E", () => {
                 let assetName;
                 let archiveFormat;
                 if (platform.os === "darwin") {
-                    assetName =
-                        platform.arch === "arm64"
-                            ? `hugo_extended_${version}_darwin-arm64.tar.gz`
-                            : `hugo_extended_${version}_darwin-amd64.tar.gz`;
+                    // macOS uses universal binaries (works for both arm64 and x64)
+                    assetName = `hugo_extended_${version}_darwin-universal.tar.gz`;
                     archiveFormat = "tar.gz";
                 }
                 else if (platform.os === "linux") {

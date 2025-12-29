@@ -46,18 +46,19 @@ export const HUGO_BINARY_CONFIG = {
      * See: https://github.com/gohugoio/hugo/releases
      */
     sources: {
+        // macOS uses universal binaries (single binary for both arm64 and x64)
         "darwin-arm64": {
             github: {
                 owner: "gohugoio",
                 repo: "hugo",
-                assetPattern: "hugo_extended_{version}_darwin-arm64.tar.gz",
+                assetPattern: "hugo_extended_{version}_darwin-universal.tar.gz",
             },
         },
         "darwin-x64": {
             github: {
                 owner: "gohugoio",
                 repo: "hugo",
-                assetPattern: "hugo_extended_{version}_darwin-amd64.tar.gz",
+                assetPattern: "hugo_extended_{version}_darwin-universal.tar.gz",
             },
         },
         "linux-x64": {

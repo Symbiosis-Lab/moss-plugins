@@ -21,7 +21,7 @@ var GitHubDeployer = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // ../../../moss-api/main/dist/index.mjs
+  // ../../../moss-api/feat-dns-target/dist/index.mjs
   var dist_exports = {};
   __export(dist_exports, {
     cancelDialog: () => cancelDialog,
@@ -332,7 +332,7 @@ var GitHubDeployer = (() => {
   }
   var currentPluginName, currentHookName;
   var init_dist = __esm({
-    "../../../moss-api/main/dist/index.mjs"() {
+    "../../../moss-api/feat-dns-target/dist/index.mjs"() {
       "use strict";
       currentPluginName = "";
       currentHookName = "";
@@ -1321,6 +1321,12 @@ jobs:
   }
 
   // dist/main.js
+  var GITHUB_PAGES_IPS = [
+    "185.199.108.153",
+    "185.199.109.153",
+    "185.199.110.153",
+    "185.199.111.153"
+  ];
   async function deploy(_context) {
     setCurrentHookName("deploy");
     await log2("log", "GitHub Deployer: Starting deployment...");
@@ -1397,6 +1403,12 @@ jobs:
       const pagesUrl = extractGitHubPagesUrl(remoteUrl);
       const parsed = parseGitHubUrl(remoteUrl);
       const repoPath = parsed ? `${parsed.owner}/${parsed.repo}` : "";
+      const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
+      const dnsTarget = {
+        type: "github-pages",
+        a_records: GITHUB_PAGES_IPS,
+        cname_target: pagesHostname
+      };
       let message;
       if (wasFirstSetup) {
         message = `GitHub Pages deployment configured!
@@ -1428,7 +1440,8 @@ git add . && git commit -m "Update site" && git push`;
             branch,
             was_first_setup: String(wasFirstSetup),
             commit_sha: commitSha
-          }
+          },
+          dns_target: dnsTarget
         }
       };
     } catch (error2) {

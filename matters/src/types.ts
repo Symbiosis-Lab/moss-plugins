@@ -206,3 +206,211 @@ export interface FrontmatterData {
   collections?: Record<string, number> | string[];
   order?: string[]; // For collections: ordered list of article filenames
 }
+
+// ============================================================================
+// Social Data Types (for .moss/social/matters.json)
+// ============================================================================
+
+/**
+ * User information for social interactions
+ */
+export interface SocialUser {
+  id: string;
+  userName: string;
+  displayName: string;
+  avatar?: string;
+}
+
+/**
+ * Comment on an article
+ */
+export interface MattersComment {
+  id: string;
+  content: string;
+  createdAt: string;
+  state: "active" | "archived" | "banned" | "collapsed";
+  upvotes: number;
+  author: SocialUser;
+  replyToId?: string;
+  replyToAuthor?: string;
+}
+
+/**
+ * Donation to an article
+ */
+export interface MattersDonation {
+  id: string;
+  sender: SocialUser;
+}
+
+/**
+ * Appreciation (claps) for an article
+ */
+export interface MattersAppreciation {
+  amount: number;
+  createdAt: string;
+  sender: SocialUser;
+}
+
+/**
+ * Social data for a single article
+ */
+export interface ArticleSocialData {
+  comments: MattersComment[];
+  donations: MattersDonation[];
+  appreciations: MattersAppreciation[];
+}
+
+/**
+ * Complete social data stored in .moss/social/matters.json
+ *
+ * Schema:
+ * - schemaVersion: Version string for future migrations (currently "1.0.0")
+ * - updatedAt: ISO timestamp of last update
+ * - articles: Map of article shortHash to social data
+ *
+ * Merge strategy: Upsert by ID (add new, update existing, never delete)
+ */
+export interface MattersSocialData {
+  /** Schema version for forward compatibility */
+  schemaVersion: string;
+  /** ISO timestamp of last update */
+  updatedAt: string;
+  /** Social data indexed by article shortHash */
+  articles: Record<string, ArticleSocialData>;
+}
+
+// ============================================================================
+// Social Data GraphQL Response Types
+// ============================================================================
+
+export interface ArticleCommentsResponse {
+  article: {
+    id: string;
+    shortHash: string;
+    comments: {
+      totalCount: number;
+      pageInfo: PageInfo;
+      edges: Array<{
+        node: {
+          id: string;
+          content: string;
+          createdAt: string;
+          state: string;
+          upvotes: number;
+          author: {
+            id: string;
+            userName: string;
+            displayName: string;
+            avatar?: string;
+          };
+          replyTo?: {
+            id: string;
+            author: {
+              userName: string;
+            };
+          };
+        };
+      }>;
+    };
+  };
+}
+
+export interface ArticleDonationsResponse {
+  article: {
+    id: string;
+    shortHash: string;
+    donations: {
+      totalCount: number;
+      pageInfo: PageInfo;
+      edges: Array<{
+        node: {
+          id: string;
+          sender: {
+            id: string;
+            userName: string;
+            displayName: string;
+            avatar?: string;
+          };
+        };
+      }>;
+    };
+  };
+}
+
+export interface ArticleAppreciationsResponse {
+  article: {
+    id: string;
+    shortHash: string;
+    appreciationsReceived: {
+      totalCount: number;
+      pageInfo: PageInfo;
+      edges: Array<{
+        node: {
+          amount: number;
+          createdAt: string;
+          sender: {
+            id: string;
+            userName: string;
+            displayName: string;
+            avatar?: string;
+          };
+        };
+      }>;
+    };
+  };
+}
+
+// ============================================================================
+// Draft/Syndication Types
+// ============================================================================
+
+export interface MattersDraftWithArticle extends MattersDraft {
+  /** Present when draft has been published */
+  article?: {
+    id: string;
+    shortHash: string;
+    slug: string;
+  };
+  publishState: "unpublished" | "pending" | "published";
+}
+
+export interface PutDraftInput {
+  id?: string;
+  title?: string;
+  content?: string;
+  summary?: string;
+  tags?: string[];
+  cover?: string;
+  collections?: string[];
+}
+
+export interface PutDraftResponse {
+  putDraft: MattersDraftWithArticle;
+}
+
+export interface PublishArticleResponse {
+  publishArticle: {
+    id: string;
+    article: {
+      id: string;
+      shortHash: string;
+      slug: string;
+    };
+  };
+}
+
+export interface PutCollectionInput {
+  id?: string;
+  title?: string;
+  cover?: string;
+  description?: string;
+  pinned?: boolean;
+}
+
+export interface PutCollectionResponse {
+  putCollection: {
+    id: string;
+    title: string;
+  };
+}

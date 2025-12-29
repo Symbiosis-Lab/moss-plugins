@@ -16,10 +16,21 @@ import type {
   MattersDraft,
   MattersCollection,
   MattersUserProfile,
+  MattersComment,
+  MattersDonation,
+  MattersAppreciation,
+  MattersDraftWithArticle,
   ViewerArticlesResponse,
   ViewerDraftsResponse,
   ViewerCollectionsResponse,
   ViewerProfileResponse,
+  ArticleCommentsResponse,
+  ArticleDonationsResponse,
+  ArticleAppreciationsResponse,
+  PutDraftInput,
+  PutDraftResponse,
+  PutCollectionInput,
+  PutCollectionResponse,
 } from "./types";
 import type {
   UserArticlesQuery,
@@ -252,6 +263,153 @@ query UserProfile($userName: String!) {
     settings {
       language
     }
+  }
+}
+`;
+
+// ============================================================================
+// Social Data Queries (Comments, Donations, Appreciations)
+// ============================================================================
+
+export const ARTICLE_COMMENTS_QUERY = `
+query ArticleComments($shortHash: String!, $after: String) {
+  article(input: { shortHash: $shortHash }) {
+    id
+    shortHash
+    comments(input: { first: 50, after: $after, sort: newest }) {
+      totalCount
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      edges {
+        node {
+          id
+          content
+          createdAt
+          state
+          upvotes
+          author {
+            id
+            userName
+            displayName
+            avatar
+          }
+          replyTo {
+            id
+            author {
+              userName
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+export const ARTICLE_DONATIONS_QUERY = `
+query ArticleDonations($shortHash: String!, $after: String) {
+  article(input: { shortHash: $shortHash }) {
+    id
+    shortHash
+    donations(input: { first: 50, after: $after }) {
+      totalCount
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      edges {
+        node {
+          id
+          sender {
+            id
+            userName
+            displayName
+            avatar
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+export const ARTICLE_APPRECIATIONS_QUERY = `
+query ArticleAppreciations($shortHash: String!, $after: String) {
+  article(input: { shortHash: $shortHash }) {
+    id
+    shortHash
+    appreciationsReceived(input: { first: 50, after: $after }) {
+      totalCount
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      edges {
+        node {
+          amount
+          createdAt
+          sender {
+            id
+            userName
+            displayName
+            avatar
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+// ============================================================================
+// Syndication Mutations (Draft/Collection Creation)
+// ============================================================================
+
+export const PUT_DRAFT_MUTATION = `
+mutation PutDraft($input: PutDraftInput!) {
+  putDraft(input: $input) {
+    id
+    title
+    content
+    summary
+    createdAt
+    updatedAt
+    tags
+    cover
+    publishState
+    article {
+      id
+      shortHash
+      slug
+    }
+  }
+}
+`;
+
+export const GET_DRAFT_QUERY = `
+query GetDraft($id: ID!) {
+  node(input: { id: $id }) {
+    ... on Draft {
+      id
+      title
+      publishState
+      article {
+        id
+        shortHash
+        slug
+      }
+    }
+  }
+}
+`;
+
+export const PUT_COLLECTION_MUTATION = `
+mutation PutCollection($input: PutCollectionInput!) {
+  putCollection(input: $input) {
+    id
+    title
   }
 }
 `;
@@ -673,4 +831,226 @@ async function fetchUserProfilePublic(userName: string): Promise<MattersUserProf
   console.log(`   Language: ${profile.language || "not set"}`);
 
   return profile;
+}
+
+// ============================================================================
+// Social Data Fetching Functions
+// ============================================================================
+
+/**
+ * Fetch all comments for an article with pagination
+ * Works in both authenticated and public modes
+ */
+export async function fetchArticleComments(shortHash: string): Promise<MattersComment[]> {
+  const allComments: MattersComment[] = [];
+  let cursor: string | undefined;
+
+  console.log(`   📝 Fetching comments for article ${shortHash}...`);
+
+  do {
+    // Comments can be fetched publicly via article query
+    const data = await graphqlQueryPublic<ArticleCommentsResponse>(
+      ARTICLE_COMMENTS_QUERY,
+      { shortHash, after: cursor }
+    );
+
+    if (!data.article) {
+      console.warn(`   ⚠️ Article ${shortHash} not found`);
+      return [];
+    }
+
+    const { edges, pageInfo } = data.article.comments;
+
+    for (const edge of edges) {
+      const node = edge.node;
+      allComments.push({
+        id: node.id,
+        content: node.content,
+        createdAt: node.createdAt,
+        state: node.state as "active" | "archived" | "banned" | "collapsed",
+        upvotes: node.upvotes,
+        author: {
+          id: node.author.id,
+          userName: node.author.userName,
+          displayName: node.author.displayName,
+          avatar: node.author.avatar,
+        },
+        replyToId: node.replyTo?.id,
+        replyToAuthor: node.replyTo?.author?.userName,
+      });
+    }
+
+    cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;
+  } while (cursor);
+
+  console.log(`   📝 Found ${allComments.length} comments`);
+  return allComments;
+}
+
+/**
+ * Fetch all donations for an article with pagination
+ * Works in both authenticated and public modes
+ */
+export async function fetchArticleDonations(shortHash: string): Promise<MattersDonation[]> {
+  const allDonations: MattersDonation[] = [];
+  let cursor: string | undefined;
+
+  console.log(`   💰 Fetching donations for article ${shortHash}...`);
+
+  do {
+    const data = await graphqlQueryPublic<ArticleDonationsResponse>(
+      ARTICLE_DONATIONS_QUERY,
+      { shortHash, after: cursor }
+    );
+
+    if (!data.article) {
+      console.warn(`   ⚠️ Article ${shortHash} not found`);
+      return [];
+    }
+
+    const { edges, pageInfo } = data.article.donations;
+
+    for (const edge of edges) {
+      const node = edge.node;
+      allDonations.push({
+        id: node.id,
+        sender: {
+          id: node.sender.id,
+          userName: node.sender.userName,
+          displayName: node.sender.displayName,
+          avatar: node.sender.avatar,
+        },
+      });
+    }
+
+    cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;
+  } while (cursor);
+
+  console.log(`   💰 Found ${allDonations.length} donations`);
+  return allDonations;
+}
+
+/**
+ * Fetch all appreciations for an article with pagination
+ * Works in both authenticated and public modes
+ */
+export async function fetchArticleAppreciations(shortHash: string): Promise<MattersAppreciation[]> {
+  const allAppreciations: MattersAppreciation[] = [];
+  let cursor: string | undefined;
+
+  console.log(`   👏 Fetching appreciations for article ${shortHash}...`);
+
+  do {
+    const data = await graphqlQueryPublic<ArticleAppreciationsResponse>(
+      ARTICLE_APPRECIATIONS_QUERY,
+      { shortHash, after: cursor }
+    );
+
+    if (!data.article) {
+      console.warn(`   ⚠️ Article ${shortHash} not found`);
+      return [];
+    }
+
+    const { edges, pageInfo } = data.article.appreciationsReceived;
+
+    for (const edge of edges) {
+      const node = edge.node;
+      allAppreciations.push({
+        amount: node.amount,
+        createdAt: node.createdAt,
+        sender: {
+          id: node.sender.id,
+          userName: node.sender.userName,
+          displayName: node.sender.displayName,
+          avatar: node.sender.avatar,
+        },
+      });
+    }
+
+    cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;
+  } while (cursor);
+
+  const totalClaps = allAppreciations.reduce((sum, a) => sum + a.amount, 0);
+  console.log(`   👏 Found ${allAppreciations.length} appreciators (${totalClaps} total claps)`);
+  return allAppreciations;
+}
+
+// ============================================================================
+// Incremental Sync Functions
+// ============================================================================
+
+/**
+ * Fetch articles modified since a given timestamp
+ *
+ * Note: The Matters API doesn't support direct datetime filtering on viewer.articles,
+ * so we fetch all articles and filter client-side by revisedAt/createdAt.
+ *
+ * @param since - ISO timestamp to filter articles (optional, fetches all if not provided)
+ */
+export async function fetchAllArticlesSince(since?: string): Promise<{
+  articles: MattersArticle[];
+  userName: string;
+}> {
+  const { articles, userName } = await fetchAllArticles();
+
+  if (!since) {
+    console.log(`   📅 No lastSyncedAt, returning all ${articles.length} articles`);
+    return { articles, userName };
+  }
+
+  const sinceDate = new Date(since);
+  const filteredArticles = articles.filter((article) => {
+    const articleDate = new Date(article.revisedAt || article.createdAt);
+    return articleDate > sinceDate;
+  });
+
+  console.log(`   📅 Filtered to ${filteredArticles.length} articles modified since ${since}`);
+  return { articles: filteredArticles, userName };
+}
+
+// ============================================================================
+// Syndication Functions (Draft/Collection Creation)
+// ============================================================================
+
+/**
+ * Create or update a draft on Matters
+ */
+export async function createDraft(input: PutDraftInput): Promise<MattersDraftWithArticle> {
+  console.log(`   📝 Creating draft: ${input.title}`);
+
+  const data = await graphqlQuery<PutDraftResponse>(PUT_DRAFT_MUTATION, {
+    input,
+  });
+
+  console.log(`   ✅ Draft created with ID: ${data.putDraft.id}`);
+  return data.putDraft;
+}
+
+/**
+ * Fetch a draft by ID to check its publish state
+ */
+export async function fetchDraft(draftId: string): Promise<MattersDraftWithArticle | null> {
+  interface GetDraftResponse {
+    node: MattersDraftWithArticle | null;
+  }
+
+  const data = await graphqlQuery<GetDraftResponse>(GET_DRAFT_QUERY, {
+    id: draftId,
+  });
+
+  return data.node;
+}
+
+/**
+ * Create a new collection on Matters
+ */
+export async function createCollection(input: PutCollectionInput): Promise<{ id: string; title: string }> {
+  console.log(`   📁 Creating collection: ${input.title}`);
+
+  const data = await graphqlQuery<PutCollectionResponse>(PUT_COLLECTION_MUTATION, {
+    input,
+  });
+
+  console.log(`   ✅ Collection created with ID: ${data.putCollection.id}`);
+  return data.putCollection;
 }

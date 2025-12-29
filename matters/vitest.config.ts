@@ -23,9 +23,10 @@ export default defineConfig({
           name: "features",
           include: ["features/steps/**/*.steps.ts"],
           environment: "node",
-          testTimeout: 60000,
-          hookTimeout: 30000,
+          testTimeout: 120000, // 2 minutes for real API calls
+          hookTimeout: 60000,
           globals: true,
+          setupFiles: ["./test-setup/e2e.ts"],
         },
       },
     ],

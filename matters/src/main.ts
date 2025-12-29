@@ -21,15 +21,23 @@ import {
 import {
   clearTokenCache,
   getAccessToken,
-  fetchAllArticles,
+  fetchAllArticlesSince,
   fetchAllDrafts,
   fetchAllCollections,
   fetchUserProfile,
+  fetchArticleComments,
+  fetchArticleDonations,
+  fetchArticleAppreciations,
+  createDraft,
+  fetchDraft,
   apiConfig,
 } from "./api";
 import { syncToLocalFiles } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
+import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
+import { readFile, writeFile } from "@symbiosis-lab/moss-api";
+import { parseFrontmatter, generateFrontmatter } from "./converter";
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -203,11 +211,20 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
       };
     }
 
-    // Phase 2: Fetch articles
+    // Get config for incremental sync
+    const pluginConfig = await getConfig();
+    const lastSyncedAt = pluginConfig.lastSyncedAt;
+    if (lastSyncedAt) {
+      await log("log", `📅 Last synced at: ${lastSyncedAt}`);
+    } else {
+      await log("log", "📅 No previous sync - will fetch all articles");
+    }
+
+    // Phase 2: Fetch articles (with incremental sync)
     await reportProgress("fetching_articles", 0, 1, "Fetching articles from Matters.town...");
-    const { articles, userName } = await fetchAllArticles();
-    await reportProgress("fetching_articles", 1, 1, `Found ${articles.length} published article(s)`);
-    await log("log", `   Found ${articles.length} published article(s)`);
+    const { articles, userName } = await fetchAllArticlesSince(lastSyncedAt);
+    await reportProgress("fetching_articles", 1, 1, `Found ${articles.length} article(s) to sync`);
+    await log("log", `   Found ${articles.length} article(s) to sync`);
 
     // Phase 3: Fetch drafts
     await reportProgress("fetching_drafts", 0, 1, "Fetching drafts from Matters.town...");
@@ -283,12 +300,67 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         ? `, ${linkResult.linksRewritten} internal links rewritten`
         : "";
 
-    await reportProgress("complete", 1, 1, `Complete: ${summary}${mediaSummary}${linkSummary}`);
+    // Phase 8: Fetch social data (comments, donations, appreciations) for synced articles
+    let socialSummary = "";
+    if (articles.length > 0) {
+      await reportProgress("fetching_social", 0, articles.length, "Fetching social data...");
+      await log("log", "📊 Fetching social data (comments, donations, appreciations)...");
+
+      const socialData = await loadSocialData();
+      let totalComments = 0;
+      let totalDonations = 0;
+      let totalAppreciations = 0;
+
+      for (let i = 0; i < articles.length; i++) {
+        const article = articles[i];
+        await reportProgress(
+          "fetching_social",
+          i + 1,
+          articles.length,
+          `Social data: ${article.title}`
+        );
+
+        try {
+          const [comments, donations, appreciations] = await Promise.all([
+            fetchArticleComments(article.shortHash),
+            fetchArticleDonations(article.shortHash),
+            fetchArticleAppreciations(article.shortHash),
+          ]);
+
+          mergeSocialData(socialData, article.shortHash, comments, donations, appreciations);
+
+          totalComments += comments.length;
+          totalDonations += donations.length;
+          totalAppreciations += appreciations.length;
+        } catch (error) {
+          await log("warn", `   Failed to fetch social data for ${article.title}: ${error}`);
+        }
+      }
+
+      await saveSocialData(socialData);
+      socialSummary = `, ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`;
+      await log("log", `✅ Social data saved: ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`);
+    }
+
+    // Phase 9: Update lastSyncedAt timestamp
+    const syncEndTime = new Date().toISOString();
+    try {
+      const currentConfig = await getConfig();
+      await saveConfig({
+        ...currentConfig,
+        lastSyncedAt: syncEndTime,
+      });
+      await log("log", `📅 Updated lastSyncedAt to ${syncEndTime}`);
+    } catch (error) {
+      await log("warn", `Failed to save lastSyncedAt: ${error}`);
+    }
+
+    await reportProgress("complete", 1, 1, `Complete: ${summary}${mediaSummary}${linkSummary}${socialSummary}`);
 
     const allErrors = [...syncResult.errors, ...mediaResult.errors, ...linkResult.errors];
     return {
       success: allErrors.length === 0,
-      message: `Synced from Matters: ${summary}${mediaSummary}${linkSummary}`,
+      message: `Synced from Matters: ${summary}${mediaSummary}${linkSummary}${socialSummary}`,
     };
   } catch (error) {
     await reportError(`Sync failed: ${error}`, "process", true);
@@ -304,6 +376,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
  * syndicate hook - Syndicate articles to Matters.town
  *
  * This capability publishes content to external platforms after deployment.
+ * Articles are syndicated one at a time (sequentially) to allow user review.
  */
 export async function syndicate(context: AfterDeployContext): Promise<HookResult> {
   setCurrentHookName("syndicate");
@@ -322,44 +395,90 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
     const { url: siteUrl, deployed_at } = context.deployment;
     const { articles } = context;
 
-    if (articles.length === 0) {
-      console.log("ℹ️  No articles to syndicate");
+    // Filter to only articles that don't already have a Matters syndication URL
+    const articlesToSyndicate = articles.filter((article) => {
+      const syndicated = article.syndicated || [];
+      return !syndicated.some((url: string) => url.includes("matters.town"));
+    });
+
+    if (articlesToSyndicate.length === 0) {
+      console.log("ℹ️  No new articles to syndicate (all already syndicated to Matters)");
       return {
         success: true,
-        message: "No articles to syndicate",
+        message: "No new articles to syndicate",
       };
     }
 
-    console.log(`📡 Syndicating ${articles.length} article(s) to Matters.town`);
+    console.log(`📡 Syndicating ${articlesToSyndicate.length} article(s) to Matters.town`);
     console.log(`🌐 Deployed site: ${siteUrl}`);
     console.log(`📅 Deployed at: ${deployed_at}`);
 
+    // Check authentication
+    const isAuthenticated = await checkAuthentication();
+    if (!isAuthenticated) {
+      console.log("🔐 Not authenticated, prompting login...");
+      const loginSuccess = await promptLogin();
+      if (!loginSuccess) {
+        return {
+          success: false,
+          message: "Login required for syndication",
+        };
+      }
+    }
+
+    // Get userName from config or profile
+    const pluginConfig = await getConfig();
+    let userName = pluginConfig.userName;
+    if (!userName) {
+      const profile = await fetchUserProfile();
+      userName = profile.userName;
+    }
+
     const config = context.config || {};
-    const autoPublish = config.auto_publish ?? false;
     const addCanonicalLink = config.add_canonical_link ?? true;
 
-    const results = await Promise.allSettled(
-      articles.map((article) =>
-        syndicateArticle(article, siteUrl, { autoPublish: autoPublish as boolean, addCanonicalLink: addCanonicalLink as boolean })
-      )
-    );
+    // Syndicate articles sequentially (one at a time for user review)
+    let published = 0;
+    let draftsCreated = 0;
+    const errors: string[] = [];
 
-    const successes = results.filter((r) => r.status === "fulfilled").length;
-    const failures = results.filter((r) => r.status === "rejected").length;
+    for (const article of articlesToSyndicate) {
+      try {
+        const result = await syndicateArticle(article, siteUrl, userName, {
+          addCanonicalLink: addCanonicalLink as boolean,
+        });
 
-    if (failures > 0) {
-      console.warn(`⚠️  Syndicated ${successes}/${articles.length} articles (${failures} failed)`);
+        if (result.publishedUrl) {
+          published++;
+        } else {
+          draftsCreated++;
+        }
+      } catch (error) {
+        console.error(`    ✗ Failed to syndicate ${article.title}:`, error);
+        errors.push(`${article.title}: ${error}`);
+      }
+    }
+
+    const parts: string[] = [];
+    if (published > 0) parts.push(`${published} published`);
+    if (draftsCreated > 0) parts.push(`${draftsCreated} drafts created`);
+    if (errors.length > 0) parts.push(`${errors.length} failed`);
+
+    const summary = parts.join(", ");
+
+    if (errors.length > 0) {
+      console.warn(`⚠️  Syndication complete: ${summary}`);
       return {
         success: true,
-        message: `Partially syndicated: ${successes}/${articles.length} articles`,
+        message: `Syndication: ${summary}`,
       };
     }
 
-    console.log(`✅ Successfully syndicated ${successes} article(s) to Matters.town`);
+    console.log(`✅ Syndication complete: ${summary}`);
 
     return {
       success: true,
-      message: `Syndicated ${successes} articles to Matters.town`,
+      message: `Syndication: ${summary}`,
     };
   } catch (error) {
     console.error("❌ Matters: Syndication failed:", error);
@@ -376,35 +495,144 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 
 /**
  * Syndicate a single article to Matters.town
+ *
+ * Workflow:
+ * 1. Create draft via API
+ * 2. Open draft in browser for user to review
+ * 3. Poll for publish state change
+ * 4. On publish: close browser, update local frontmatter
+ * 5. On timeout: close browser, leave draft for later
  */
 async function syndicateArticle(
   article: ArticleInfo,
   siteUrl: string,
-  options: { autoPublish: boolean; addCanonicalLink: boolean }
-): Promise<void> {
+  userName: string,
+  options: { addCanonicalLink: boolean }
+): Promise<{ draftId: string; publishedUrl?: string }> {
   console.log(`  → Syndicating: ${article.title}`);
 
-  try {
-    const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
+  const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
-    let content = article.content;
+  let content = article.content;
 
-    if (options.addCanonicalLink) {
-      content = addCanonicalLinkToContent(content, canonicalUrl);
+  if (options.addCanonicalLink) {
+    content = addCanonicalLinkToContent(content, canonicalUrl);
+  }
+
+  // Step 1: Create draft via API
+  const draft = await createDraft({
+    title: article.title,
+    content,
+    tags: article.tags,
+  });
+
+  console.log(`    📝 Draft created with ID: ${draft.id}`);
+
+  // Step 2: Open draft in browser for user review
+  const draftUrl = `https://matters.town/me/drafts/${draft.id}`;
+  console.log(`    🌐 Opening draft for review: ${draftUrl}`);
+  await openBrowser(draftUrl);
+
+  // Step 3: Poll for publish state change (10 min timeout)
+  const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
+
+  if (publishedArticle) {
+    // Step 4: Article was published - update local frontmatter
+    const publishedUrl = `https://matters.town/@${userName}/${publishedArticle.slug}-${publishedArticle.shortHash}`;
+    console.log(`    ✅ Published: ${publishedUrl}`);
+
+    // Update the local markdown file's frontmatter
+    if (article.source_path) {
+      await updateFrontmatterSyndicated(article.source_path, publishedUrl);
+      console.log(`    📝 Updated frontmatter with syndicated URL`);
     }
 
-    await createMattersDraft({
-      title: article.title,
-      content,
-      tags: article.tags,
-      canonicalUrl,
-      publish: options.autoPublish,
-    });
+    return { draftId: draft.id, publishedUrl };
+  }
 
-    console.log(`    ✓ Syndicated: ${article.title}`);
+  // Step 5: Timeout - draft left for later
+  console.log(`    ⏱️ Publish timeout - draft saved for later`);
+  return { draftId: draft.id };
+}
+
+/**
+ * Wait for draft to be published or timeout
+ *
+ * Polls the draft every 5 seconds to check if it has been published.
+ * Returns the published article info if published, null on timeout.
+ */
+async function waitForPublishOrClose(
+  draftId: string,
+  timeoutMs: number
+): Promise<{ shortHash: string; slug: string } | null> {
+  const startTime = Date.now();
+  const pollInterval = 5000; // 5 seconds
+
+  console.log(`    ⏳ Waiting for publish (timeout: ${timeoutMs / 1000}s)...`);
+
+  while (Date.now() - startTime < timeoutMs) {
+    await sleep(pollInterval);
+
+    try {
+      const draft = await fetchDraft(draftId);
+
+      if (draft?.article) {
+        // Draft was published
+        console.log(`    🎉 Publish detected!`);
+        try {
+          await closeBrowser();
+        } catch {
+          // Browser might already be closed
+        }
+        return {
+          shortHash: draft.article.shortHash,
+          slug: draft.article.slug,
+        };
+      }
+    } catch (error) {
+      console.warn(`    ⚠️ Error checking draft status: ${error}`);
+    }
+  }
+
+  // Timeout - close browser
+  console.log(`    ⏱️ Timeout reached, closing browser...`);
+  try {
+    await closeBrowser();
+  } catch {
+    // Browser might already be closed
+  }
+
+  return null;
+}
+
+/**
+ * Update the syndicated field in article frontmatter
+ */
+async function updateFrontmatterSyndicated(
+  filePath: string,
+  publishedUrl: string
+): Promise<void> {
+  try {
+    const content = await readFile(filePath);
+    const parsed = parseFrontmatter(content);
+
+    if (!parsed) {
+      console.warn(`    ⚠️ Could not parse frontmatter for ${filePath}`);
+      return;
+    }
+
+    // Add to syndicated array if not already present
+    const syndicated = (parsed.frontmatter.syndicated as string[]) || [];
+    if (!syndicated.includes(publishedUrl)) {
+      syndicated.push(publishedUrl);
+      parsed.frontmatter.syndicated = syndicated;
+    }
+
+    // Regenerate file with updated frontmatter
+    const newContent = generateFrontmatter(parsed.frontmatter as Record<string, unknown>) + "\n\n" + parsed.body;
+    await writeFile(filePath, newContent);
   } catch (error) {
-    console.error(`    ✗ Failed to syndicate ${article.title}:`, error);
-    throw error;
+    console.warn(`    ⚠️ Failed to update frontmatter: ${error}`);
   }
 }
 
@@ -414,24 +642,4 @@ async function syndicateArticle(
 function addCanonicalLinkToContent(content: string, canonicalUrl: string): string {
   const canonicalNotice = `\n\n---\n\n*Originally published at [${canonicalUrl}](${canonicalUrl})*\n`;
   return content + canonicalNotice;
-}
-
-/**
- * Create a draft on Matters.town (placeholder)
- */
-async function createMattersDraft(params: {
-  title: string;
-  content: string;
-  tags: string[];
-  canonicalUrl: string;
-  publish: boolean;
-}): Promise<void> {
-  console.log(`    📝 Creating draft on Matters: ${params.title}`);
-  console.log(`       Tags: ${params.tags.join(", ")}`);
-  console.log(`       Canonical: ${params.canonicalUrl}`);
-  console.log(`       Auto-publish: ${params.publish}`);
-
-  await sleep(200);
-
-  console.log(`    ✓ Draft created (placeholder)`);
 }

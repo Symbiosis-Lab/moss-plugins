@@ -358,16 +358,23 @@ describe("Binary Resolution E2E", () => {
         const binDir = path.join(tempDir, "bin");
         fs.mkdirSync(binDir);
 
-        // Get latest release
-        const releaseResponse = await fetch(
-          "https://api.github.com/repos/gohugoio/hugo/releases/latest",
-          {
-            headers: {
-              Accept: "application/vnd.github.v3+json",
-              "User-Agent": "moss-hugo-generator-test",
-            },
-          }
-        );
+        // Note: Hugo v0.153+ removed tar.gz archives for macOS (only .pkg files now)
+        // For testing, we use a pinned version on macOS to ensure we have tar.gz
+        // In production, the binary resolver handles this appropriately
+        const usePinnedVersion = platform.os === "darwin";
+        const pinnedVersion = "0.152.2"; // Last version with macOS tar.gz
+
+        // Get release info
+        const releaseUrl = usePinnedVersion
+          ? `https://api.github.com/repos/gohugoio/hugo/releases/tags/v${pinnedVersion}`
+          : "https://api.github.com/repos/gohugoio/hugo/releases/latest";
+
+        const releaseResponse = await fetch(releaseUrl, {
+          headers: {
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "moss-hugo-generator-test",
+          },
+        });
         const release = await releaseResponse.json();
         const version = release.tag_name.replace(/^v/, "");
 

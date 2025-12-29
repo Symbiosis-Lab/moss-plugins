@@ -421,8 +421,12 @@ Installation options:
       version = (await getLatestRelease(source.github.owner, source.github.repo)).version;
       const assetName = resolveAssetPattern(source.github.assetPattern, version, platform);
       downloadUrl = `https://github.com/${source.github.owner}/${source.github.repo}/releases/download/v${version}/${assetName}`;
-    } else if (source.directUrl) throw new BinaryResolutionError("Direct URL downloads not yet implemented. Please use GitHub source.", "download");
-    else throw new BinaryResolutionError(`No download source configured for ${config.name}`, "download");
+    } else if (source.directUrl) {
+      downloadUrl = source.directUrl;
+      const versionMatch = downloadUrl.match(/[/v_](\d+\.\d+\.\d+)[/_]/);
+      version = versionMatch ? versionMatch[1] : "unknown";
+      progress("download", `Using direct download URL (v${version})...`);
+    } else throw new BinaryResolutionError(`No download source configured for ${config.name}`, "download");
     progress("download", `Downloading ${config.name} v${version}...`);
     const ctx = getInternalContext();
     const archiveFilename = downloadUrl.split("/").pop() ?? "archive";
@@ -732,6 +736,7 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
   }
 
   // dist/hugo-config.js
+  var MACOS_PINNED_VERSION = "0.152.2";
   var HUGO_BINARY_CONFIG = {
     name: "hugo",
     /**
@@ -755,23 +760,18 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
      * Hugo release assets follow this naming pattern:
      * hugo_extended_{version}_{os}-{arch}.{ext}
      *
+     * Note: macOS uses direct URLs to a pinned version since Hugo v0.153+
+     * removed tar.gz archives for macOS.
+     *
      * See: https://github.com/gohugoio/hugo/releases
      */
     sources: {
-      // macOS uses universal binaries (single binary for both arm64 and x64)
+      // macOS uses pinned version with direct URL (Hugo v0.153+ only has .pkg)
       "darwin-arm64": {
-        github: {
-          owner: "gohugoio",
-          repo: "hugo",
-          assetPattern: "hugo_extended_{version}_darwin-universal.tar.gz"
-        }
+        directUrl: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`
       },
       "darwin-x64": {
-        github: {
-          owner: "gohugoio",
-          repo: "hugo",
-          assetPattern: "hugo_extended_{version}_darwin-universal.tar.gz"
-        }
+        directUrl: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`
       },
       "linux-x64": {
         github: {

@@ -141,5 +141,72 @@ describe("Config Module", () => {
       expect(result.userName).toBeUndefined();
       expect(result.language).toBeUndefined();
     });
+
+    it("supports lastSyncedAt field for incremental sync", async () => {
+      const timestamp = "2024-01-15T12:00:00.000Z";
+      const config: MattersPluginConfig = {
+        userName: "testuser",
+        lastSyncedAt: timestamp,
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(config)
+      );
+
+      const result = await getConfig();
+      expect(result.lastSyncedAt).toBe(timestamp);
+    });
+
+    it("stores and retrieves all config fields together", async () => {
+      const config: MattersPluginConfig = {
+        userName: "testuser",
+        language: "zh_hant",
+        lastSyncedAt: "2024-01-15T12:00:00.000Z",
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(config)
+      );
+
+      const result = await getConfig();
+      expect(result).toEqual(config);
+    });
+  });
+
+  describe("Incremental Sync", () => {
+    it("can update lastSyncedAt while preserving other fields", async () => {
+      const initialConfig: MattersPluginConfig = {
+        userName: "testuser",
+        language: "en",
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify(initialConfig)
+      );
+
+      // Read, update, and save
+      const config = await getConfig();
+      const newTimestamp = new Date().toISOString();
+      await saveConfig({ ...config, lastSyncedAt: newTimestamp });
+
+      const savedContent = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`
+      );
+      const parsed = JSON.parse(savedContent!.content);
+
+      expect(parsed.userName).toBe("testuser");
+      expect(parsed.language).toBe("en");
+      expect(parsed.lastSyncedAt).toBe(newTimestamp);
+    });
+
+    it("lastSyncedAt is undefined on first sync", async () => {
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/matters-syndicator/config.json`,
+        JSON.stringify({ userName: "testuser" })
+      );
+
+      const config = await getConfig();
+      expect(config.lastSyncedAt).toBeUndefined();
+    });
   });
 });

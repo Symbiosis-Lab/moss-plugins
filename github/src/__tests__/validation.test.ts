@@ -33,6 +33,7 @@ import {
   validateSiteCompiled,
   validateGitHubRemote,
   validateAll,
+  isSSHRemote,
 } from "../validation";
 
 // Helper to setup internal context
@@ -230,5 +231,27 @@ describe("validateAll", () => {
     // Should not have continued to other validations (only 1 executeBinary call, no listFiles call)
     expect(mockExecuteBinary).toHaveBeenCalledTimes(1);
     expect(mockListFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("isSSHRemote", () => {
+  it("returns true for SSH URLs with git@ prefix", () => {
+    expect(isSSHRemote("git@github.com:user/repo.git")).toBe(true);
+  });
+
+  it("returns true for SSH URLs with ssh:// prefix", () => {
+    expect(isSSHRemote("ssh://git@github.com/user/repo.git")).toBe(true);
+  });
+
+  it("returns false for HTTPS URLs", () => {
+    expect(isSSHRemote("https://github.com/user/repo.git")).toBe(false);
+  });
+
+  it("returns false for HTTP URLs", () => {
+    expect(isSSHRemote("http://github.com/user/repo.git")).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    expect(isSSHRemote("")).toBe(false);
   });
 });

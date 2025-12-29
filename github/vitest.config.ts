@@ -2,13 +2,55 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: "node",
-    include: ["src/**/*.test.ts"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json", "html"],
-      exclude: ["node_modules", "dist", "**/*.test.ts"],
+      reporter: ["text", "lcov", "html"],
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/__tests__/**"],
     },
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: ["src/__tests__/*.test.ts"],
+          exclude: ["src/__tests__/*.integration.test.ts"],
+          environment: "node",
+          globals: true,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "integration",
+          include: ["src/__tests__/*.integration.test.ts"],
+          environment: "happy-dom",
+          globals: true,
+          testTimeout: 30000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "features",
+          include: ["features/steps/**/*.steps.ts"],
+          environment: "happy-dom",
+          testTimeout: 60000,
+          hookTimeout: 30000,
+          globals: true,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "e2e",
+          include: ["e2e/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 60000,
+          hookTimeout: 30000,
+          globals: true,
+        },
+      },
+    ],
   },
 });

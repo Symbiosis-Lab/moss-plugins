@@ -4,17 +4,20 @@
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm run clean && npm run compile && npm run bundle && npm run copy-assets && npm run cleanup",
-    "cleanup": "cd dist && find . -name '*.js' ! -name 'main.bundle.js' -delete",
+    "build": "npm run clean && npm run compile && npm run bundle && npm run copy-assets && npm run clean:intermediate",
     "dev": "npm run build && concurrently \"tsc --watch\" \"npm run watch-assets\"",
     "compile": "tsc",
     "bundle": "esbuild dist/main.js --bundle --format=iife --global-name=GitHubDeployer --outfile=dist/main.bundle.js",
     "clean": "rm -rf dist && mkdir -p dist",
+    "clean:intermediate": "cd dist && find . -name '*.js' ! -name 'main.bundle.js' -delete && find . -name '*.js.map' -delete && find . -name '*.d.ts' -delete && find . -name '*.d.ts.map' -delete",
     "copy-assets": "cp assets/* dist/",
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "vitest run --project e2e"
   },
   "keywords": [
     "moss",
@@ -26,14 +29,15 @@
   "author": "Symbiosis Lab",
   "license": "MIT",
   "devDependencies": {
+    "@amiceli/vitest-cucumber": "^5.2.1",
+    "@symbiosis-lab/moss-api": "^0.5.3",
     "@types/node": "^20.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "chokidar-cli": "^3.0.0",
     "concurrently": "^8.2.0",
     "esbuild": "^0.27.0",
-    "@symbiosis-lab/moss-api": "^0.5.0",
+    "happy-dom": "^20.0.11",
     "typescript": "^5.3.0",
     "vitest": "^3.2.4"
   }
 }
-

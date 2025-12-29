@@ -6,6 +6,18 @@ import { listFiles } from "@symbiosis-lab/moss-api";
 import { isGitRepository, hasGitRemote, getRemoteUrl } from "./git";
 import { log } from "./utils";
 
+// Re-export git utilities for convenience
+export { isGitRepository, hasGitRemote as hasRemote } from "./git";
+
+/**
+ * Check if a remote URL is using SSH protocol
+ * SSH URLs look like: git@github.com:user/repo.git
+ * HTTPS URLs look like: https://github.com/user/repo.git
+ */
+export function isSSHRemote(remoteUrl: string): boolean {
+  return remoteUrl.startsWith("git@") || remoteUrl.startsWith("ssh://");
+}
+
 /**
  * Validate that the project is a git repository
  */

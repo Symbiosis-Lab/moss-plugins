@@ -4,13 +4,19 @@
  * Deploys sites to GitHub Pages via GitHub Actions.
  * This plugin extracts the deployment logic from the original Rust implementation
  * (src-tauri/src/preview/deploy.rs) into a TypeScript plugin.
+ *
+ * Authentication:
+ * - Uses OAuth Device Flow for browser-based GitHub login
+ * - Stores tokens in git credential helper for persistence
  */
 
 import type { OnDeployContext, HookResult } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
-import { validateAll } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl } from "./git";
+import { validateAll, isSSHRemote, isGitRepository, hasRemote } from "./validation";
+import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
 import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
+import { checkAuthentication, promptLogin } from "./auth";
+import { promptAndCreateRepo } from "./repo-create";
 
 // ============================================================================
 // Hook Implementation
@@ -20,6 +26,7 @@ import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow"
  * deploy hook - Deploy to GitHub Pages via GitHub Actions
  *
  * This capability:
+ * 0. Checks authentication (prompts login if needed for HTTPS remotes)
  * 1. Validates requirements (git repo, GitHub remote, compiled site)
  * 2. Creates GitHub Actions workflow if it doesn't exist
  * 3. Updates .gitignore to track .moss/site/
@@ -33,11 +40,79 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
   await log("log", "GitHub Deployer: Starting deployment...");
 
   try {
+    // Phase 0: Check if we have a git repo and remote
+    // If not, offer to create a repository
+    let remoteUrl: string;
+
+    // First check if this is a git repository
+    if (!await isGitRepository()) {
+      await reportError("Not a git repository. Run 'git init' first.", "validation", true);
+      return {
+        success: false,
+        message: "Not a git repository. Please run 'git init' to initialize git.",
+      };
+    }
+
+    // Check if remote exists
+    if (!await hasRemote()) {
+      await log("log", "   No git remote configured");
+      await reportProgress("setup", 0, 6, "No GitHub repository configured...");
+
+      // Offer to create a repository
+      const created = await promptAndCreateRepo();
+
+      if (!created) {
+        await reportError("No GitHub repository configured", "validation", true);
+        return {
+          success: false,
+          message: "No GitHub repository configured. Please create a repository or add a remote.",
+        };
+      }
+
+      await log("log", `   Repository created: ${created.fullName}`);
+      remoteUrl = created.sshUrl;
+    } else {
+      try {
+        remoteUrl = await getRemoteUrl();
+      } catch {
+        remoteUrl = "";
+      }
+    }
+
+    const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
+
+    if (!useSSH && remoteUrl) {
+      await reportProgress("authentication", 0, 6, "Checking GitHub authentication...");
+      const authState = await checkAuthentication();
+
+      if (!authState.isAuthenticated) {
+        await log("log", "   HTTPS remote detected, authentication required");
+        await reportProgress("authentication", 0, 6, "GitHub login required...");
+
+        const loginSuccess = await promptLogin();
+
+        if (!loginSuccess) {
+          await reportError("GitHub authentication failed or was cancelled", "authentication", true);
+          return {
+            success: false,
+            message: "GitHub authentication failed. Please try again.",
+          };
+        }
+
+        await log("log", "   Successfully authenticated with GitHub");
+      } else {
+        await log("log", `   Already authenticated as ${authState.username}`);
+      }
+
+      await reportProgress("authentication", 1, 6, "Authenticated");
+    } else if (useSSH) {
+      await log("log", "   SSH remote detected, using SSH key authentication");
+    }
+
     // Phase 1: Validate requirements
-    // The site_files in context already contain relative paths to output dir
-    // Default output dir is ".moss/site" - we validate files exist there
-    await reportProgress("validating", 1, 5, "Validating requirements...");
-    const remoteUrl = await validateAll(".moss/site");
+    // Output dir defaults to ".moss/site" - moss-api provides context internally
+    await reportProgress("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
+    remoteUrl = await validateAll(".moss/site");
 
     // Phase 2: Detect default branch
     await reportProgress("configuring", 2, 5, "Detecting default branch...");
@@ -132,5 +207,5 @@ const GitHubDeployer = {
 (window as unknown as { GitHubDeployer: typeof GitHubDeployer }).GitHubDeployer = GitHubDeployer;
 
 // Also export for module usage
-export { deploy };
+export { deploy, deploy as on_deploy };
 export default GitHubDeployer;

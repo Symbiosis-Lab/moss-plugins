@@ -128,16 +128,93 @@ jobs:
           name: ${{ matrix.plugin }}-rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # E2E tests for hugo-generator (with Hugo installed)
+  test-hugo-e2e:
+    needs: detect-changes
+    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Hugo (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          wget -q https://github.com/gohugoio/hugo/releases/download/v0.139.0/hugo_extended_0.139.0_linux-amd64.deb
+          sudo dpkg -i hugo_extended_0.139.0_linux-amd64.deb
+          hugo version
+
+      - name: Install Hugo (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install hugo
+          hugo version
+
+      - name: Install Hugo (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install hugo-extended -y
+          hugo version
+
+      - name: Install dependencies
+        run: |
+          cd hugo-generator
+          npm ci
+
+      - name: Run E2E tests
+        run: |
+          cd hugo-generator
+          npm run test:e2e
+
+  # E2E tests for binary resolver auto-download (without Hugo pre-installed)
+  test-binary-resolver-download:
+    needs: detect-changes
+    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd hugo-generator
+          npm ci
+
+      - name: Run binary resolver download tests
+        run: |
+          cd hugo-generator
+          npm run test:e2e -- --testNamePattern="Full Download Flow|GitHub API"
+        env:
+          TEST_DOWNLOAD_HUGO: 'true'
+
   # Summary job for branch protection
   test-summary:
-    needs: [test-javascript, test-rust]
+    needs: [test-javascript, test-rust, test-hugo-e2e, test-binary-resolver-download]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check test results
         run: |
           if [ "${{ needs.test-javascript.result }}" == "failure" ] || \
-             [ "${{ needs.test-rust.result }}" == "failure" ]; then
+             [ "${{ needs.test-rust.result }}" == "failure" ] || \
+             [ "${{ needs.test-hugo-e2e.result }}" == "failure" ] || \
+             [ "${{ needs.test-binary-resolver-download.result }}" == "failure" ]; then
             echo "Some tests failed"
             exit 1
           fi

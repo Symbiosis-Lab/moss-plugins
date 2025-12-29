@@ -55,7 +55,12 @@
  * - Non-empty = site with collections
  */
 
-import { executeBinary, reportProgress } from "@symbiosis-lab/moss-api";
+import {
+  executeBinary,
+  reportProgress,
+  resolveBinary,
+  BinaryResolutionError,
+} from "@symbiosis-lab/moss-api";
 import {
   createHugoStructure,
   createHugoConfig,
@@ -65,6 +70,7 @@ import {
   type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
+import { HUGO_BINARY_CONFIG } from "./hugo-config";
 
 /**
  * Plugin-specific configuration.
@@ -122,18 +128,18 @@ interface HookResult {
  *
  * ## Build Flow
  *
- * 1. Clean and prepare .runtime directory
- * 2. Create Hugo structure from moss's parsed project info (copy files)
- * 3. Generate hugo.toml config
- * 4. Create default layouts
- * 5. Run Hugo on the translated structure
- * 6. Cleanup .runtime directory
+ * 1. Resolve Hugo binary (auto-download if needed)
+ * 2. Clean and prepare .runtime directory
+ * 3. Create Hugo structure from moss's parsed project info (copy files)
+ * 4. Generate hugo.toml config
+ * 5. Create default layouts
+ * 6. Run Hugo on the translated structure
+ * 7. Cleanup .runtime directory
  *
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
  */
 export async function on_build(context: OnBuildContext): Promise<HookResult> {
-  const hugoPath = context.config.hugo_path || "hugo";
   const buildArgs = context.config.build_args || ["--minify"];
 
   // Runtime directory under plugin's .moss location
@@ -141,11 +147,51 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
   const runtimeDir = `${context.moss_dir}/plugins/hugo-generator/.runtime`;
 
   try {
-    // Step 1: Clean and prepare runtime directory
+    // Step 1: Resolve Hugo binary (uses configured path, system PATH, or downloads)
+    reportProgress("setup", 0, 4, "Resolving Hugo binary...");
+    let hugoPath: string;
+
+    try {
+      const hugoResolution = await resolveBinary(HUGO_BINARY_CONFIG, {
+        configuredPath: context.config.hugo_path,
+        autoDownload: true,
+        onProgress: (phase, message) => {
+          reportProgress(phase, 0, 4, message);
+        },
+      });
+
+      hugoPath = hugoResolution.path;
+
+      if (hugoResolution.source === "downloaded") {
+        reportProgress(
+          "setup",
+          0,
+          4,
+          `Hugo ${hugoResolution.version ?? ""} downloaded and ready`
+        );
+      } else if (hugoResolution.version) {
+        reportProgress(
+          "setup",
+          0,
+          4,
+          `Using Hugo ${hugoResolution.version} from ${hugoResolution.source}`
+        );
+      }
+    } catch (error) {
+      if (error instanceof BinaryResolutionError) {
+        return {
+          success: false,
+          message: `Hugo setup failed: ${error.message}`,
+        };
+      }
+      throw error;
+    }
+
+    // Step 2: Clean and prepare runtime directory
     await cleanupRuntime(runtimeDir);
 
-    // Step 2: Create Hugo structure from moss's parsed project info
-    reportProgress("scaffolding", 0, 3, "Creating Hugo structure...");
+    // Step 3: Create Hugo structure from moss's parsed project info
+    reportProgress("scaffolding", 1, 4, "Creating Hugo structure...");
     await createHugoStructure(
       context.project_path,
       context.project_info,
@@ -153,18 +199,18 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
       context.moss_dir
     );
 
-    // Step 3: Generate Hugo config
+    // Step 4: Generate Hugo config
     await createHugoConfig(
       context.site_config,
       runtimeDir,
       context.project_path
     );
 
-    // Step 4: Create default layouts
+    // Step 5: Create default layouts
     await createDefaultLayouts(runtimeDir, context.project_path);
 
-    // Step 5: Run Hugo
-    reportProgress("building", 1, 3, "Running Hugo...");
+    // Step 6: Run Hugo
+    reportProgress("building", 2, 4, "Running Hugo...");
     const result = await executeBinary({
       binaryPath: hugoPath,
       args: [
@@ -175,7 +221,6 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
         "--quiet",
         ...buildArgs,
       ],
-      workingDir: runtimeDir,
       timeoutMs: 300000, // 5 minutes for large sites
     });
 
@@ -188,7 +233,7 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
       };
     }
 
-    reportProgress("complete", 3, 3, "Hugo build complete");
+    reportProgress("complete", 4, 4, "Hugo build complete");
     return { success: true, message: "Hugo build complete" };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -197,7 +242,7 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
       message: `Failed to execute Hugo: ${errorMessage}`,
     };
   } finally {
-    // Step 6: Cleanup runtime directory
+    // Step 7: Cleanup runtime directory
     await cleanupRuntime(runtimeDir);
   }
 }

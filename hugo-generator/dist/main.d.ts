@@ -101,12 +101,13 @@ interface HookResult {
  *
  * ## Build Flow
  *
- * 1. Clean and prepare .runtime directory
- * 2. Create Hugo structure from moss's parsed project info (copy files)
- * 3. Generate hugo.toml config
- * 4. Create default layouts
- * 5. Run Hugo on the translated structure
- * 6. Cleanup .runtime directory
+ * 1. Resolve Hugo binary (auto-download if needed)
+ * 2. Clean and prepare .runtime directory
+ * 3. Create Hugo structure from moss's parsed project info (copy files)
+ * 4. Generate hugo.toml config
+ * 5. Create default layouts
+ * 6. Run Hugo on the translated structure
+ * 7. Cleanup .runtime directory
  *
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure

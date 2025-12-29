@@ -37,7 +37,7 @@ describe("createHugoStructure", () => {
   });
 
   it("copies homepage as _index.md", async () => {
-    // Setup mocks
+    // Setup mocks - new API only takes relativePath
     mockFileExists.mockResolvedValue(true);
     mockReadFile.mockResolvedValue("# Home");
     mockListFiles.mockResolvedValue(["index.md"]);
@@ -55,9 +55,8 @@ describe("createHugoStructure", () => {
       "/test/project/.moss/plugins/hugo-generator/.runtime"
     );
 
-    // Verify homepage was written as _index.md
+    // Verify homepage was written as _index.md (new API: relativePath, content)
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/_index.md"),
       "# Home"
     );
@@ -65,7 +64,7 @@ describe("createHugoStructure", () => {
 
   it("copies root markdown files (excluding homepage)", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "about.md") return "# About";
       return "";
@@ -85,9 +84,8 @@ describe("createHugoStructure", () => {
       "/test/project/.moss/plugins/hugo-generator/.runtime"
     );
 
-    // Verify about.md was copied
+    // Verify about.md was copied (new API: relativePath, content)
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/about.md"),
       "# About"
     );
@@ -111,18 +109,18 @@ describe("createHugoStructure", () => {
       "/test/project/.moss/plugins/hugo-generator/.runtime"
     );
 
-    // Verify only _index.md was written, not index.md
+    // Verify only _index.md was written, not index.md (new API: args[0] is path)
     const writeFileCalls = mockWriteFile.mock.calls;
     const contentWrites = writeFileCalls.filter((call: string[]) =>
-      call[1].includes("content/")
+      call[0].includes("content/")
     );
     expect(contentWrites).toHaveLength(1);
-    expect(contentWrites[0][1]).toContain("_index.md");
+    expect(contentWrites[0][0]).toContain("_index.md");
   });
 
   it("copies content folder files with index.md → _index.md renaming", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "posts/index.md") return "# Posts";
       if (file === "posts/article.md") return "# Article";
@@ -149,14 +147,12 @@ describe("createHugoStructure", () => {
 
     // Verify posts/index.md was renamed to _index.md
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/posts/_index.md"),
       "# Posts"
     );
 
     // Verify posts/article.md was copied as-is
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/posts/article.md"),
       "# Article"
     );
@@ -186,7 +182,7 @@ describe("createHugoStructure", () => {
 
   it("copies text assets to static folder", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "assets/style.css") return "body { color: black; }";
       return "";
@@ -208,7 +204,6 @@ describe("createHugoStructure", () => {
 
     // Verify CSS file was copied to static
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("static/assets/style.css"),
       "body { color: black; }"
     );
@@ -216,7 +211,7 @@ describe("createHugoStructure", () => {
 
   it("handles multiple content folders", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "posts/post.md") return "# Post";
       if (file === "projects/project.md") return "# Project";
@@ -242,12 +237,10 @@ describe("createHugoStructure", () => {
     );
 
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/posts/post.md"),
       "# Post"
     );
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/projects/project.md"),
       "# Project"
     );
@@ -255,7 +248,7 @@ describe("createHugoStructure", () => {
 
   it("handles nested folder structure", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "docs/guide/intro.md") return "# Intro";
       if (file === "docs/guide/index.md") return "# Guide";
@@ -282,14 +275,12 @@ describe("createHugoStructure", () => {
 
     // Verify nested index.md is renamed to _index.md
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/docs/guide/_index.md"),
       "# Guide"
     );
 
     // Verify other files are copied as-is
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/docs/guide/intro.md"),
       "# Intro"
     );
@@ -297,7 +288,7 @@ describe("createHugoStructure", () => {
 
   it("handles Chinese folder names", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (_: string, file: string) => {
+    mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "文章/文章1.md") return "# 文章1";
       return "";
@@ -318,7 +309,6 @@ describe("createHugoStructure", () => {
     );
 
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("content/文章/文章1.md"),
       "# 文章1"
     );
@@ -341,13 +331,12 @@ describe("createHugoConfig", () => {
       "/test/project"
     );
 
+    // New API: writeFile(relativePath, content)
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("hugo.toml"),
       expect.stringContaining('baseURL = "/"')
     );
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.stringContaining("hugo.toml"),
       expect.stringContaining('title = "Site"')
     );
@@ -365,7 +354,6 @@ describe("createHugoConfig", () => {
     );
 
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.any(String),
       expect.stringContaining('title = "My Blog"')
     );
@@ -383,7 +371,6 @@ describe("createHugoConfig", () => {
     );
 
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/test/project",
       expect.any(String),
       expect.stringContaining('baseURL = "https://example.com/"')
     );
@@ -400,7 +387,8 @@ describe("createHugoConfig", () => {
       "/test/project"
     );
 
-    const configContent = mockWriteFile.mock.calls[0][2];
+    // New API: args[1] is content (not args[2])
+    const configContent = mockWriteFile.mock.calls[0][1];
 
     // Check for permalink configuration
     expect(configContent).toContain("[permalinks]");

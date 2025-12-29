@@ -19,6 +19,24 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
   return {
     ...actual,
     reportProgress: vi.fn(),
+    // Mock resolveBinary to return the configured path or "hugo"
+    resolveBinary: vi.fn().mockImplementation(async (_config, options) => {
+      const path = options?.configuredPath ?? "hugo";
+      return {
+        path,
+        version: "0.139.0",
+        source: "path" as const,
+      };
+    }),
+    // Include BinaryResolutionError class for error handling
+    BinaryResolutionError: class BinaryResolutionError extends Error {
+      phase: string;
+      constructor(message: string, phase: string) {
+        super(message);
+        this.name = "BinaryResolutionError";
+        this.phase = phase;
+      }
+    },
   };
 });
 
@@ -208,25 +226,32 @@ describe("Hugo Generator Plugin", () => {
       const { on_build } = await import("../main");
       await on_build(createContext());
 
+      // Check setup phase (resolving Hugo binary)
+      expect(reportProgress).toHaveBeenCalledWith(
+        "setup",
+        0,
+        4,
+        "Resolving Hugo binary..."
+      );
       // Check scaffolding phase
       expect(reportProgress).toHaveBeenCalledWith(
         "scaffolding",
-        0,
-        3,
+        1,
+        4,
         "Creating Hugo structure..."
       );
       // Check building phase
       expect(reportProgress).toHaveBeenCalledWith(
         "building",
-        1,
-        3,
+        2,
+        4,
         "Running Hugo..."
       );
       // Check completion phase
       expect(reportProgress).toHaveBeenCalledWith(
         "complete",
-        3,
-        3,
+        4,
+        4,
         "Hugo build complete"
       );
     });
@@ -243,16 +268,23 @@ describe("Hugo Generator Plugin", () => {
       const { on_build } = await import("../main");
       await on_build(createContext());
 
+      // Check setup phase (resolving Hugo binary)
+      expect(reportProgress).toHaveBeenCalledWith(
+        "setup",
+        0,
+        4,
+        "Resolving Hugo binary..."
+      );
       expect(reportProgress).toHaveBeenCalledWith(
         "scaffolding",
-        0,
-        3,
+        1,
+        4,
         "Creating Hugo structure..."
       );
       expect(reportProgress).toHaveBeenCalledWith(
         "building",
-        1,
-        3,
+        2,
+        4,
         "Running Hugo..."
       );
       expect(reportProgress).not.toHaveBeenCalledWith(

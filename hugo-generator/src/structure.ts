@@ -83,26 +83,23 @@ export async function createHugoStructure(
 
   // 1. Handle homepage - Hugo expects _index.md at content root
   if (projectInfo.homepage_file) {
-    const homepageExists = await fileExists(
-      projectPath,
-      projectInfo.homepage_file
-    );
+    const homepageExists = await fileExists(projectInfo.homepage_file);
     if (homepageExists) {
-      const content = await readFile(projectPath, projectInfo.homepage_file);
-      await writeFile(projectPath, `${contentDir}/_index.md`, content);
+      const content = await readFile(projectInfo.homepage_file);
+      await writeFile(`${contentDir}/_index.md`, content);
     }
   }
 
   // 2. Get all files in the project to copy content
-  const allFiles = await listFiles(projectPath);
-  const markdownFiles = allFiles.filter((f) => f.endsWith(".md"));
+  const allFiles = await listFiles();
+  const markdownFiles = allFiles.filter((f: string) => f.endsWith(".md"));
 
   // 3. Copy content folder files with index.md → _index.md renaming
   for (const folder of projectInfo.content_folders) {
-    const folderFiles = markdownFiles.filter((f) => f.startsWith(`${folder}/`));
+    const folderFiles = markdownFiles.filter((f: string) => f.startsWith(`${folder}/`));
 
     for (const file of folderFiles) {
-      const content = await readFile(projectPath, file);
+      const content = await readFile(file);
 
       // Get the relative path within the folder
       const relativePath = file.substring(folder.length + 1);
@@ -119,31 +116,31 @@ export async function createHugoStructure(
         destPath = `${contentDir}/${folder}/${relativePath}`;
       }
 
-      await writeFile(projectPath, destPath, content);
+      await writeFile(destPath, content);
     }
   }
 
   // 4. Copy root-level markdown files (excluding homepage)
   const rootMarkdownFiles = markdownFiles.filter(
-    (f) =>
+    (f: string) =>
       !f.includes("/") && // No subdirectory
       f !== projectInfo.homepage_file
   );
 
   for (const file of rootMarkdownFiles) {
-    const content = await readFile(projectPath, file);
-    await writeFile(projectPath, `${contentDir}/${file}`, content);
+    const content = await readFile(file);
+    await writeFile(`${contentDir}/${file}`, content);
   }
 
   // 5. Copy assets folder if it exists
-  const assetFiles = allFiles.filter((f) => f.startsWith("assets/"));
+  const assetFiles = allFiles.filter((f: string) => f.startsWith("assets/"));
   for (const file of assetFiles) {
     // For binary files, we need a different approach since readFile returns string
     // For now, we'll skip binary assets and only copy text-based assets
     if (isTextFile(file)) {
       try {
-        const content = await readFile(projectPath, file);
-        await writeFile(projectPath, `${staticDir}/${file}`, content);
+        const content = await readFile(file);
+        await writeFile(`${staticDir}/${file}`, content);
       } catch {
         // Skip files that can't be read as text
       }
@@ -195,7 +192,7 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
       unsafe = true
 `;
 
-  await writeFile(projectPath, `${runtimeRelative}/hugo.toml`, config);
+  await writeFile(`${runtimeRelative}/hugo.toml`, config);
 }
 
 /**

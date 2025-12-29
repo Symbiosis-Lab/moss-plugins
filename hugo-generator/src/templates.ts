@@ -117,10 +117,10 @@ export async function createDefaultLayouts(
 
   // Write template files using moss-api
   await Promise.all([
-    writeFile(projectPath, `${defaultDir}/baseof.html`, BASEOF_HTML),
-    writeFile(projectPath, `${defaultDir}/single.html`, SINGLE_HTML),
-    writeFile(projectPath, `${defaultDir}/list.html`, LIST_HTML),
-    writeFile(projectPath, `${layoutsDir}/index.html`, INDEX_HTML),
+    writeFile(`${defaultDir}/baseof.html`, BASEOF_HTML),
+    writeFile(`${defaultDir}/single.html`, SINGLE_HTML),
+    writeFile(`${defaultDir}/list.html`, LIST_HTML),
+    writeFile(`${layoutsDir}/index.html`, INDEX_HTML),
   ]);
 }
 

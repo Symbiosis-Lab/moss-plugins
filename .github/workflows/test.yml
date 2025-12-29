@@ -84,6 +84,18 @@ jobs:
           cd ${{ matrix.plugin }}
           npm ci
 
+      - name: Download moss binary for e2e tests
+        run: |
+          # Download latest moss-linux-x64 from releases
+          gh release download --repo Symbiosis-Lab/moss -p 'moss-linux-x64' -O moss-linux-x64 || {
+            echo "Warning: Could not download moss binary. E2E tests will fail."
+            exit 0
+          }
+          chmod +x moss-linux-x64
+          echo "MOSS_BINARY=$(pwd)/moss-linux-x64" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Run tests with coverage
         run: |
           cd ${{ matrix.plugin }}

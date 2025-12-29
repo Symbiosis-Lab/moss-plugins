@@ -5,14 +5,17 @@
  * the moss CLI, testing real-world scenarios.
  *
  * Requirements:
- * - moss binary built and available
+ * - moss binary built and available (set MOSS_BINARY env var or build locally)
+ * - Plugin built (npm run build)
  * - Tests create temporary directories for fixtures
  *
  * Limitations:
  * - CLI/headless mode cannot run webview-based plugins
  * - Full plugin execution tests require GUI mode or integration testing
  *
- * NOTE: Tests are skipped if moss binary is not available (e.g., on CI)
+ * CI Setup:
+ * - The workflow downloads moss-linux-x64 from releases before running tests
+ * - Set MOSS_BINARY environment variable to the binary path
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -21,18 +24,14 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-// Path to moss binary (debug build)
-const MOSS_BINARY = path.join(
+// Path to moss binary - check env var first, then fallback to local dev path
+const MOSS_BINARY = process.env.MOSS_BINARY || path.join(
   __dirname,
   "../../../../moss/develop/src-tauri/target/debug/moss"
 );
 
 // Path to plugin dist
 const PLUGIN_DIST = path.join(__dirname, "../dist");
-
-// Check if moss binary is available for running tests
-const isMossBinaryAvailable = fs.existsSync(MOSS_BINARY);
-const isPluginDistAvailable = fs.existsSync(PLUGIN_DIST);
 
 // Test fixture directory
 let testDir: string;
@@ -154,9 +153,24 @@ function runMoss(
   });
 }
 
-// Skip entire test suite if moss binary is not available
-describe.skipIf(!isMossBinaryAvailable || !isPluginDistAvailable)("Moss CLI E2E Tests", () => {
+describe("Moss CLI E2E Tests", () => {
   beforeAll(() => {
+    // Verify moss binary exists - fail if not available
+    if (!fs.existsSync(MOSS_BINARY)) {
+      throw new Error(
+        `Moss binary not found at ${MOSS_BINARY}. ` +
+        `Either build moss locally, or set MOSS_BINARY environment variable. ` +
+        `In CI, the binary should be downloaded from releases.`
+      );
+    }
+
+    // Verify plugin dist exists - fail if not built
+    if (!fs.existsSync(PLUGIN_DIST)) {
+      throw new Error(
+        `Plugin dist not found at ${PLUGIN_DIST}. Please build the plugin first with 'npm run build'.`
+      );
+    }
+
     // Create temp directory for test fixtures
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "moss-e2e-"));
   });

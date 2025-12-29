@@ -24,6 +24,8 @@ export interface MattersPluginConfig {
   userName?: string;
   /** User's language preference (e.g., "zh_hans", "zh_hant", "en") */
   language?: string;
+  /** ISO timestamp of last successful sync completion (for incremental sync) */
+  lastSyncedAt?: string;
 }
 
 // ============================================================================

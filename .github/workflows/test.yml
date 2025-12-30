@@ -89,6 +89,11 @@ jobs:
           cd ${{ matrix.plugin }}
           npx tsc --noEmit
 
+      - name: Build plugin
+        run: |
+          cd ${{ matrix.plugin }}
+          npm run build
+
       - name: Install system dependencies for moss binary
         run: |
           sudo apt-get update

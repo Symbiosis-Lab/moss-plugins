@@ -4,10 +4,9 @@
   "description": "Hugo static site generator plugin for Moss",
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm run clean && npm run compile && npm run bundle && npm run copy-assets",
-    "dev": "npm run build && concurrently \"tsc --watch\" \"npm run watch-assets\"",
-    "compile": "tsc",
-    "bundle": "esbuild dist/main.js --bundle --format=iife --global-name=HugoGenerator --outfile=dist/main.bundle.js",
+    "build": "npm run clean && npm run bundle && npm run copy-assets",
+    "dev": "npm run clean && npm run copy-assets && concurrently \"npm run bundle -- --watch\" \"npm run watch-assets\"",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=HugoGenerator --outfile=dist/main.bundle.js",
     "clean": "rm -rf dist && mkdir -p dist",
     "copy-assets": "cp assets/* dist/",
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",

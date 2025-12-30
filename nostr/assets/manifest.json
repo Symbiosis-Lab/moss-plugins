@@ -1,0 +1,19 @@
+{
+  "name": "nostr",
+  "version": "0.1.0",
+  "description": "Social interactions via Nostr protocol - comments, zaps, and more",
+  "author": "moss team",
+  "entry": "main.bundle.js",
+  "capabilities": ["process", "enhance", "syndicate"],
+  "icon": "icon.svg",
+  "config": {
+    "relays": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.nostr.band"],
+    "pubkey": "",
+    "fetch_interactions": true
+  },
+  "config_schema": {
+    "relays": "string[]",
+    "pubkey": "string",
+    "fetch_interactions": "boolean"
+  }
+}

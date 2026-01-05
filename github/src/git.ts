@@ -90,6 +90,36 @@ export async function detectBranch(): Promise<string> {
 }
 
 /**
+ * Check if git CLI is available on the system
+ */
+export async function isGitAvailable(): Promise<boolean> {
+  try {
+    const result = await executeBinary({
+      binaryPath: "git",
+      args: ["--version"],
+      timeoutMs: 5000,
+    });
+    return result.success;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Initialize a new git repository
+ */
+export async function initGitRepository(): Promise<void> {
+  await runGit(["init"]);
+}
+
+/**
+ * Add a git remote
+ */
+export async function addRemote(name: string, url: string): Promise<void> {
+  await runGit(["remote", "add", name, url]);
+}
+
+/**
  * Check if directory is a git repository
  */
 export async function isGitRepository(): Promise<boolean> {

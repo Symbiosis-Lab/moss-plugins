@@ -63,7 +63,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
   });
 
   // ============================================================================
-  // Scenario: Deploy from non-git directory
+  // Scenario: Deploy from non-git directory shows repo setup UI
+  // The new behavior shows a browser UI for repo setup instead of an error
   // ============================================================================
 
   Scenario("Deploy from non-git directory", ({ Given, When, Then, And }) => {
@@ -74,9 +75,18 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
         stdout: "",
         stderr: "fatal: not a git repository",
       });
+      // Git --version check passes (git is available)
+      ctx.binaryConfig.setResult("git --version", {
+        success: true,
+        exitCode: 0,
+        stdout: "git version 2.39.0",
+        stderr: "",
+      });
     });
 
     When("I attempt to deploy", async () => {
+      // The deploy hook will try to show repo-setup browser, which times out or cancels
+      // in test environment since there's no UI interaction
       deployResult = await on_deploy(createMockContext());
     });
 
@@ -84,12 +94,9 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       expect(deployResult?.success).toBe(false);
     });
 
-    And('the error should mention "not a git repository"', () => {
-      expect(deployResult?.message).toContain("Not a git repository");
-    });
-
-    And('the error should include instructions to run "git init"', () => {
-      expect(deployResult?.message).toContain("git init");
+    And('the error should indicate setup was cancelled', () => {
+      // New behavior: shows repo setup UI, returns cancelled when no interaction
+      expect(deployResult?.message).toContain("cancelled");
     });
   });
 

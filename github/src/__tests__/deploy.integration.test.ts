@@ -56,7 +56,7 @@ describe("on_deploy integration", () => {
   });
 
   describe("Git Repository Validation", () => {
-    it("fails with descriptive error when not a git repository", async () => {
+    it("shows repo setup UI when not a git repository", async () => {
       // Mock git rev-parse to fail (not a git repo)
       ctx.binaryConfig.setResult("git rev-parse --git-dir", {
         success: false,
@@ -64,28 +64,41 @@ describe("on_deploy integration", () => {
         stdout: "",
         stderr: "fatal: not a git repository (or any of the parent directories): .git",
       });
+      // Git is available
+      ctx.binaryConfig.setResult("git --version", {
+        success: true,
+        exitCode: 0,
+        stdout: "git version 2.39.0",
+        stderr: "",
+      });
 
       const result = await on_deploy(createMockContext());
 
+      // New behavior: shows repo setup browser UI, returns cancelled when no interaction
       expect(result.success).toBe(false);
-      expect(result.message).toContain("Not a git repository");
-      expect(result.message).toContain("git init");
+      expect(result.message).toContain("cancelled");
     });
 
-    it("includes setup instructions in git repo error", async () => {
+    it("returns cancelled when repo setup browser is dismissed", async () => {
       ctx.binaryConfig.setResult("git rev-parse --git-dir", {
         success: false,
         exitCode: 128,
         stdout: "",
         stderr: "fatal: not a git repository",
       });
+      // Git is available
+      ctx.binaryConfig.setResult("git --version", {
+        success: true,
+        exitCode: 0,
+        stdout: "git version 2.39.0",
+        stderr: "",
+      });
 
       const result = await on_deploy(createMockContext());
 
+      // New behavior: repo setup UI is shown, returns cancelled when dismissed
       expect(result.success).toBe(false);
-      expect(result.message).toContain("git init");
-      // Note: git remote add origin instruction is not shown for non-git-repo errors
-      // since the user needs to init git first
+      expect(result.message).toContain("cancelled");
     });
   });
 

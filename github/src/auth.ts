@@ -12,7 +12,7 @@
  * 4. Store token in git credential helper
  */
 
-import { openBrowser, closeBrowser } from "@symbiosis-lab/moss-api";
+import { openBrowser, closeBrowser, httpPost, fetchUrl } from "@symbiosis-lab/moss-api";
 import { log, sleep, reportProgress } from "./utils";
 import { storeToken, getToken, clearToken } from "./token";
 import type {
@@ -46,28 +46,30 @@ const MAX_POLL_TIME_MS = 300000;
 
 /**
  * Request a device code from GitHub
+ *
+ * Uses httpPost to bypass CORS restrictions in Tauri WebView.
  */
 export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
   await log("log", "   Requesting device code from GitHub...");
 
-  const response = await fetch(GITHUB_DEVICE_CODE_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const response = await httpPost(
+    GITHUB_DEVICE_CODE_URL,
+    {
       client_id: CLIENT_ID,
       scope: REQUIRED_SCOPES.join(" "),
-    }),
-  });
+    },
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to request device code: ${response.status} ${errorText}`);
+    throw new Error(`Failed to request device code: ${response.status} ${response.text()}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(response.text());
 
   if (data.error) {
     throw new Error(`GitHub error: ${data.error_description || data.error}`);
@@ -81,6 +83,8 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
 /**
  * Poll GitHub for access token
  *
+ * Uses httpPost to bypass CORS restrictions in Tauri WebView.
+ *
  * Returns the token response, which may contain:
  * - access_token: Success!
  * - error: "authorization_pending" - Keep polling
@@ -92,25 +96,25 @@ export async function pollForToken(
   deviceCode: string,
   _interval: number
 ): Promise<TokenResponse> {
-  const response = await fetch(GITHUB_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const response = await httpPost(
+    GITHUB_TOKEN_URL,
+    {
       client_id: CLIENT_ID,
       device_code: deviceCode,
       grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    }),
-  });
+    },
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to poll for token: ${response.status} ${errorText}`);
+    throw new Error(`Failed to poll for token: ${response.status} ${response.text()}`);
   }
 
-  return (await response.json()) as TokenResponse;
+  return JSON.parse(response.text()) as TokenResponse;
 }
 
 /**

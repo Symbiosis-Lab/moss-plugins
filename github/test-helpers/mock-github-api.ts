@@ -168,3 +168,49 @@ export function createMockCredentialHelper() {
     reset: () => store.clear(),
   };
 }
+
+/**
+ * Setup GitHub API mocks using MockTauriContext.urlConfig
+ *
+ * This sets up URL responses for the GitHub OAuth Device Flow endpoints
+ * to work with moss-api's httpPost function which uses Tauri IPC.
+ *
+ * @param ctx - MockTauriContext from setupMockTauri()
+ * @param config - Mock response configuration
+ */
+export function setupGitHubApiMocks(
+  ctx: { urlConfig: { setResponse: (url: string, response: Record<string, unknown>) => void } },
+  config: MockGitHubConfig = {}
+): void {
+  // Device code endpoint
+  const deviceCodeResponse = config.deviceCodeResponse || defaultDeviceCodeResponse;
+  ctx.urlConfig.setResponse("https://github.com/login/device/code", {
+    status: 200,
+    ok: true,
+    contentType: "application/json",
+    bodyBase64: btoa(JSON.stringify(deviceCodeResponse)),
+  });
+
+  // Token endpoint - handle single response or first in sequence
+  const tokenResponse = Array.isArray(config.tokenResponse)
+    ? config.tokenResponse[0]
+    : config.tokenResponse || defaultTokenResponse;
+  ctx.urlConfig.setResponse("https://github.com/login/oauth/access_token", {
+    status: 200,
+    ok: true,
+    contentType: "application/json",
+    bodyBase64: btoa(JSON.stringify(tokenResponse)),
+  });
+
+  // User endpoint (for token validation - GET request, uses fetch_url)
+  const userResponse = config.userResponse !== null
+    ? config.userResponse || defaultUserResponse
+    : { message: "Bad credentials" };
+  const userStatus = config.userResponse === null ? 401 : 200;
+  ctx.urlConfig.setResponse("https://api.github.com/user", {
+    status: userStatus,
+    ok: userStatus === 200,
+    contentType: "application/json",
+    bodyBase64: btoa(JSON.stringify(userResponse)),
+  });
+}

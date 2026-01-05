@@ -12,11 +12,12 @@
 
 import type { OnDeployContext, HookResult, DnsTarget } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
-import { validateAll, isSSHRemote, isGitRepository, hasRemote } from "./validation";
+import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, addRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
 import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
 import { checkAuthentication, promptLogin } from "./auth";
 import { promptAndCreateRepo } from "./repo-create";
+import { showRepoSetupBrowser } from "./repo-setup-browser";
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -60,17 +61,47 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
     // If not, offer to create a repository
     let remoteUrl: string;
 
+    let wasFirstSetup = false;
+
     // First check if this is a git repository
     if (!await isGitRepository()) {
-      await reportError("Not a git repository. Run 'git init' first.", "validation", true);
-      return {
-        success: false,
-        message: "Not a git repository. Please run 'git init' to initialize git.",
-      };
-    }
+      await log("log", "   Not a git repository");
 
-    // Check if remote exists
-    if (!await hasRemote()) {
+      // Check if git CLI is available
+      if (!await isGitAvailable()) {
+        await reportError("Git is not installed. Please install git to continue.", "validation", true);
+        return {
+          success: false,
+          message: "Git is not installed. Please install git first.",
+        };
+      }
+
+      // Show plugin browser UI for repo setup
+      await reportProgress("setup", 0, 6, "No GitHub repository configured...");
+      const repoInfo = await showRepoSetupBrowser();
+
+      if (!repoInfo) {
+        // User cancelled
+        return {
+          success: false,
+          message: "Repository setup cancelled.",
+        };
+      }
+
+      // Initialize git and add remote
+      await log("log", "   Initializing git repository...");
+      await reportProgress("setup", 1, 6, "Initializing git...");
+      await initGitRepository();
+
+      await log("log", `   Adding remote: ${repoInfo.sshUrl}`);
+      await reportProgress("setup", 2, 6, "Configuring remote...");
+      await addRemote("origin", repoInfo.sshUrl);
+
+      await log("log", `   Repository configured: ${repoInfo.fullName}`);
+      remoteUrl = repoInfo.sshUrl;
+      wasFirstSetup = true;
+    } else if (!await hasRemote()) {
+      // Git repo exists but no remote - use existing dialog flow
       await log("log", "   No git remote configured");
       await reportProgress("setup", 0, 6, "No GitHub repository configured...");
 
@@ -87,6 +118,7 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
 
       await log("log", `   Repository created: ${created.fullName}`);
       remoteUrl = created.sshUrl;
+      wasFirstSetup = true;
     } else {
       try {
         remoteUrl = await getRemoteUrl();
@@ -139,11 +171,10 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
     await reportProgress("configuring", 3, 5, "Checking workflow status...");
     const alreadyConfigured = await workflowExists();
 
-    let wasFirstSetup = false;
     let commitSha = "";
 
     if (!alreadyConfigured) {
-      wasFirstSetup = true;
+      wasFirstSetup = true; // Mark as first setup if workflow doesn't exist
 
       // Phase 4: Create workflow
       await reportProgress("configuring", 4, 5, "Creating GitHub Actions workflow...");

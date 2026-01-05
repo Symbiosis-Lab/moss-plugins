@@ -7,7 +7,13 @@ import { isGitRepository, hasGitRemote, getRemoteUrl } from "./git";
 import { log } from "./utils";
 
 // Re-export git utilities for convenience
-export { isGitRepository, hasGitRemote as hasRemote } from "./git";
+export {
+  isGitRepository,
+  hasGitRemote as hasRemote,
+  isGitAvailable,
+  initGitRepository,
+  addRemote,
+} from "./git";
 
 /**
  * Check if a remote URL is using SSH protocol

@@ -12,9 +12,9 @@
  * 4. Store token in git credential helper
  */
 
-import { openBrowser, closeBrowser, httpPost, fetchUrl } from "@symbiosis-lab/moss-api";
+import { openSystemBrowser, httpPost } from "@symbiosis-lab/moss-api";
 import { log, sleep, reportProgress } from "./utils";
-import { storeToken, getToken, clearToken } from "./token";
+import { storeToken, getToken, clearToken, getTokenFromGit } from "./token";
 import type {
   DeviceCodeResponse,
   TokenResponse,
@@ -163,45 +163,60 @@ export function hasRequiredScopes(scopes: string[]): boolean {
 
 /**
  * Check if user is authenticated with valid GitHub credentials
+ *
+ * Checks in order:
+ * 1. Plugin cookies (fastest - cached from previous auth)
+ * 2. Git credential helper (system-stored tokens)
+ *
  * Note: Plugin identity and project path are auto-detected from runtime context.
  */
 export async function checkAuthentication(): Promise<AuthState> {
   await log("log", "   Checking GitHub authentication...");
 
-  // Try to get token from credential helper
-  const token = await getToken();
+  // 1. Try to get token from plugin cookies (fastest)
+  let token = await getToken();
 
-  if (!token) {
-    await log("log", "   No token found in credential helper");
-    return { isAuthenticated: false };
-  }
+  if (token) {
+    // Validate the cached token
+    const validation = await validateToken(token);
 
-  // Validate the token
-  const validation = await validateToken(token);
+    if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+      await log("log", `   Authenticated as ${validation.user?.login} (from plugin cookies)`);
+      return {
+        isAuthenticated: true,
+        username: validation.user?.login,
+        scopes: validation.scopes,
+      };
+    }
 
-  if (!validation.valid) {
-    await log("log", "   Token is invalid or expired");
-    // Clear the invalid token
+    // Token is invalid - clear it and try git credentials
+    await log("log", "   Cached token invalid, clearing...");
     await clearToken();
-    return { isAuthenticated: false };
   }
 
-  // Check for required scopes
-  if (!hasRequiredScopes(validation.scopes || [])) {
-    await log(
-      "warn",
-      `   Token missing required scopes. Has: ${validation.scopes?.join(", ")}, needs: ${REQUIRED_SCOPES.join(", ")}`
-    );
-    return { isAuthenticated: false };
+  // 2. Try git credential helper (Bug 8 fix)
+  await log("log", "   Checking git credential helper...");
+  token = await getTokenFromGit();
+
+  if (token) {
+    const validation = await validateToken(token);
+
+    if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+      // Store in plugin cookies for faster future access
+      await storeToken(token);
+      await log("log", `   Authenticated as ${validation.user?.login} (from git credentials)`);
+      return {
+        isAuthenticated: true,
+        username: validation.user?.login,
+        scopes: validation.scopes,
+      };
+    }
+
+    await log("log", "   Git credential token lacks required scopes or is invalid");
   }
 
-  await log("log", `   Authenticated as ${validation.user?.login}`);
-
-  return {
-    isAuthenticated: true,
-    username: validation.user?.login,
-    scopes: validation.scopes,
-  };
+  await log("log", "   No valid credentials found");
+  return { isAuthenticated: false };
 }
 
 /**
@@ -209,10 +224,10 @@ export async function checkAuthentication(): Promise<AuthState> {
  *
  * This will:
  * 1. Request a device code
- * 2. Open the browser for user authorization
+ * 2. Open the SYSTEM browser for user authorization (Bug 9 fix)
  * 3. Display the user code
  * 4. Poll for the access token
- * 5. Store the token in git credential helper
+ * 5. Store the token in plugin cookies
  *
  * Note: Plugin identity and project path are auto-detected from runtime context.
  */
@@ -222,17 +237,18 @@ export async function promptLogin(): Promise<boolean> {
     await reportProgress("authentication", 0, 4, "Requesting authorization...");
     const deviceCodeResponse = await requestDeviceCode();
 
-    // Step 2: Open browser
+    // Step 2: Open SYSTEM browser (Bug 9 fix - user may already be logged in)
     await reportProgress(
       "authentication",
       1,
       4,
       `Enter code: ${deviceCodeResponse.user_code}`
     );
-    await log("log", `   Opening browser for GitHub authorization...`);
+    await log("log", `   Opening system browser for GitHub authorization...`);
     await log("log", `   Enter code: ${deviceCodeResponse.user_code}`);
 
-    await openBrowser(deviceCodeResponse.verification_uri);
+    // Use system browser instead of plugin browser (Bug 9 fix)
+    await openSystemBrowser(deviceCodeResponse.verification_uri);
 
     // Step 3: Poll for token
     await reportProgress("authentication", 2, 4, "Waiting for authorization...");
@@ -244,11 +260,7 @@ export async function promptLogin(): Promise<boolean> {
 
     if (!token) {
       await log("warn", "   Authorization timed out or was denied");
-      try {
-        await closeBrowser();
-      } catch {
-        // Browser might already be closed
-      }
+      // System browser manages itself - no need to close
       return false;
     }
 
@@ -257,16 +269,11 @@ export async function promptLogin(): Promise<boolean> {
     const stored = await storeToken(token);
 
     if (!stored) {
-      await log("warn", "   Failed to store token in credential helper");
+      await log("warn", "   Failed to store token");
       // Continue anyway - the token is valid, just won't persist
     }
 
-    // Close browser
-    try {
-      await closeBrowser();
-    } catch {
-      // Browser might already be closed
-    }
+    // System browser manages itself - no need to close
 
     await reportProgress("authentication", 4, 4, "Authenticated");
     await log("log", "   Successfully authenticated with GitHub");
@@ -274,11 +281,7 @@ export async function promptLogin(): Promise<boolean> {
     return true;
   } catch (error) {
     await log("error", `   Authentication failed: ${error}`);
-    try {
-      await closeBrowser();
-    } catch {
-      // Ignore close errors
-    }
+    // System browser manages itself - no need to close
     return false;
   }
 }

@@ -12,9 +12,8 @@
 
 import type { OnDeployContext, HookResult, DnsTarget } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
-import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, addRemote } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, commitAndPushWorkflow, parseGitHubUrl, getRemoteUrl } from "./git";
-import { createWorkflowFile, updateGitignore, workflowExists } from "./workflow";
+import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
+import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists } from "./git";
 import { checkAuthentication, promptLogin } from "./auth";
 import { promptAndCreateRepo } from "./repo-create";
 import { showRepoSetupBrowser } from "./repo-setup-browser";
@@ -51,12 +50,24 @@ const GITHUB_PAGES_IPS = [
  *
  * The actual deployment happens on GitHub when changes are pushed.
  */
-async function deploy(_context: OnDeployContext): Promise<HookResult> {
+async function deploy(context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
 
   try {
+    // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
+    // The plugin trusts moss to provide site_files - no need to call listFiles()
+    if (!context.site_files || context.site_files.length === 0) {
+      const msg = "Site directory is empty. Please compile your site first.";
+      await reportError(msg, "validation", true);
+      return {
+        success: false,
+        message: msg,
+      };
+    }
+    await log("log", `   Site files: ${context.site_files.length} files ready`);
+
     // Phase 0: Check if we have a git repo and remote
     // If not, offer to create a repository
     let remoteUrl: string;
@@ -93,9 +104,9 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
       await reportProgress("setup", 1, 6, "Initializing git...");
       await initGitRepository();
 
-      await log("log", `   Adding remote: ${repoInfo.sshUrl}`);
+      await log("log", `   Configuring remote: ${repoInfo.sshUrl}`);
       await reportProgress("setup", 2, 6, "Configuring remote...");
-      await addRemote("origin", repoInfo.sshUrl);
+      await ensureRemote("origin", repoInfo.sshUrl);
 
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
       remoteUrl = repoInfo.sshUrl;
@@ -157,40 +168,34 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
       await log("log", "   SSH remote detected, using SSH key authentication");
     }
 
-    // Phase 1: Validate requirements
-    // Output dir defaults to ".moss/site" - moss-api provides context internally
+    // Phase 1: Validate requirements (git repo and GitHub remote)
+    // Note: Site validation already done early using context.site_files (Bug 13 fix)
     await reportProgress("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
-    remoteUrl = await validateAll(".moss/site");
+    // Bug 17 fix: Pass existing remoteUrl to avoid duplicate git calls
+    remoteUrl = await validateAll(remoteUrl);
 
-    // Phase 2: Detect default branch
+    // Phase 2: Detect default branch (for logging)
     await reportProgress("configuring", 2, 5, "Detecting default branch...");
     const branch = await detectBranch();
     await log("log", `   Default branch: ${branch}`);
 
-    // Phase 3: Check if workflow already exists
-    await reportProgress("configuring", 3, 5, "Checking workflow status...");
-    const alreadyConfigured = await workflowExists();
+    // Phase 3: Check if gh-pages branch exists (first deploy or returning user)
+    await reportProgress("configuring", 3, 5, "Checking deployment status...");
+    const ghPagesExisted = await branchExists("gh-pages");
+    wasFirstSetup = !ghPagesExisted;
 
-    let commitSha = "";
+    // Phase 4 & 5: Deploy to gh-pages branch using worktree (zero-config approach)
+    // Bug 16 fix: Use git worktree to deploy without switching current branch
+    await reportProgress("deploying", 4, 5, "Deploying to gh-pages...");
+    let commitSha = await deployToGhPages();
 
-    if (!alreadyConfigured) {
-      wasFirstSetup = true; // Mark as first setup if workflow doesn't exist
-
-      // Phase 4: Create workflow
-      await reportProgress("configuring", 4, 5, "Creating GitHub Actions workflow...");
-      await createWorkflowFile(branch);
-      await updateGitignore();
-
-      // Phase 5: Commit and push
-      await reportProgress("deploying", 5, 5, "Pushing workflow to GitHub...");
-      commitSha = await commitAndPushWorkflow();
-      await log("log", `   Committed: ${commitSha.substring(0, 7)}`);
+    if (commitSha) {
+      await log("log", `   Deployed: ${commitSha.substring(0, 7)}`);
     }
 
     // Generate pages URL and DNS target
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);
     const parsed = parseGitHubUrl(remoteUrl);
-    const repoPath = parsed ? `${parsed.owner}/${parsed.repo}` : "";
 
     // Extract the GitHub Pages hostname for CNAME (e.g., "user.github.io")
     const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
@@ -202,26 +207,44 @@ async function deploy(_context: OnDeployContext): Promise<HookResult> {
       cname_target: pagesHostname,
     };
 
-    // Build result message
+    // Build result message based on scenario
+    // Bug 16: Zero-config deployment - no manual steps needed
     let message: string;
-    if (wasFirstSetup) {
+    if (wasFirstSetup && commitSha) {
+      // Scenario 1: First-time deployment (gh-pages branch created)
       message =
-        `GitHub Pages deployment configured!\n\n` +
+        `Your site is being deployed to GitHub Pages!\n\n` +
         `Your site will be available at: ${pagesUrl}\n\n` +
-        `Next steps:\n` +
-        `1. Go to https://github.com/${repoPath}/settings/pages\n` +
-        `2. Under 'Build and deployment', select 'GitHub Actions'\n` +
-        `3. Push any changes to trigger deployment`;
-    } else {
+        `GitHub Pages is automatically enabled for the gh-pages branch.\n` +
+        `It may take a few minutes for your site to appear.`;
+    } else if (commitSha) {
+      // Scenario 2: Subsequent deploy with changes pushed
       message =
-        `GitHub Actions workflow already configured!\n\n` +
+        `Site deployed to GitHub Pages!\n\n` +
         `Your site: ${pagesUrl}\n\n` +
-        `To deploy, just push your changes:\n` +
-        `git add . && git commit -m "Update site" && git push`;
+        `Changes have been pushed to gh-pages branch.`;
+    } else {
+      // Scenario 3: No changes to push
+      message =
+        `No changes to deploy.\n\n` +
+        `Your site: ${pagesUrl}\n\n` +
+        `Your local site is already up to date.`;
     }
 
-    await reportProgress("complete", 5, 5, wasFirstSetup ? "GitHub Pages configured!" : "Ready to deploy");
-    await log("log", `GitHub Deployer: ${wasFirstSetup ? "Setup complete" : "Already configured"}`);
+    // Final progress message based on scenario
+    const progressMsg = wasFirstSetup
+      ? "GitHub Pages configured!"
+      : commitSha
+        ? "Deployed!"
+        : "No changes to deploy";
+    await reportProgress("complete", 5, 5, progressMsg);
+
+    const logMsg = wasFirstSetup
+      ? "Setup complete"
+      : commitSha
+        ? "Changes pushed"
+        : "No changes";
+    await log("log", `GitHub Deployer: ${logMsg}`);
 
     return {
       success: true,

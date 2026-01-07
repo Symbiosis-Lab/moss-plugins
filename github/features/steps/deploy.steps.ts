@@ -31,16 +31,18 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
   let ctx: MockTauriContext;
   let projectPath: string;
   let deployResult: HookResult | null = null;
+  let scenarioSiteFiles: string[] = ["index.html"]; // Default site files (Bug 13: context-based validation)
 
   /**
    * Create a mock OnDeployContext for testing
+   * Bug 13 fix: Uses scenarioSiteFiles which can be overridden per scenario
    */
   function createMockContext(): OnDeployContext {
     return {
       project_path: projectPath,
       moss_dir: `${projectPath}/.moss`,
       output_dir: `${projectPath}/.moss/site`,
-      site_files: ["index.html"],
+      site_files: scenarioSiteFiles, // Bug 13: use context.site_files for validation
       project_info: {
         project_type: "markdown",
         content_folders: ["posts"],
@@ -55,6 +57,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     ctx = setupMockTauri();
     projectPath = "/test/project";
     deployResult = null;
+    scenarioSiteFiles = ["index.html"]; // Reset to default (Bug 13)
     vi.clearAllMocks();
   });
 
@@ -212,8 +215,9 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the site directory is empty", () => {
-      // Don't set any files in .moss/site/
-      // The mock filesystem is empty by default
+      // Bug 13 fix: Use context.site_files for validation instead of listFiles()
+      // Set empty site_files array to simulate no compiled site
+      scenarioSiteFiles = [];
     });
 
     When("I attempt to deploy", async () => {
@@ -257,10 +261,12 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow already exists", () => {
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
+      // With Bug 16 fix, we use gh-pages branch instead of workflow.
+      // "Workflow exists" now means "gh-pages branch exists" (returning user).
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
         success: true,
         exitCode: 0,
-        stdout: ".github/workflows/moss-deploy.yml",
+        stdout: "abc123",
         stderr: "",
       });
       ctx.binaryConfig.setResult("git branch --show-current", {
@@ -271,6 +277,25 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
       // Default success for other git commands
       ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      // Default success for shell commands (rm, cp, find)
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("cp", {
         success: true,
         exitCode: 0,
         stdout: "",
@@ -320,11 +345,19 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow does not exist", () => {
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
+      // With Bug 16 fix, we now use gh-pages branch instead of workflow.
+      // First-time setup is detected when gh-pages branch doesn't exist.
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
         success: false,
-        exitCode: 1,
+        exitCode: 128,
         stdout: "",
-        stderr: "error: pathspec did not match",
+        stderr: "fatal: Needed a single revision",
+      });
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
+        success: false,
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: Needed a single revision",
       });
       ctx.binaryConfig.setResult("git branch --show-current", {
         success: true,
@@ -340,6 +373,25 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
       // Default success for other git commands
       ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      // Default success for shell commands (rm, cp, find)
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("cp", {
         success: true,
         exitCode: 0,
         stdout: "",

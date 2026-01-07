@@ -8,11 +8,11 @@
  * compared to the modal dialog approach.
  */
 
-import { openBrowser, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
+import { openBrowserWithHtml, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
-import { getToken } from "./token";
+import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, createRepository } from "./github-api";
-import { promptLogin } from "./auth";
+import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 
 /**
  * Result from the repo setup flow
@@ -51,8 +51,29 @@ export async function showRepoSetupBrowser(): Promise<RepoSetupResult | null> {
 
   // Step 1: Ensure authentication
   let token = await getToken();
+
+  // Bug 10 fix: Try git credentials if no plugin cookie
   if (!token) {
-    await log("log", "   No authentication token, prompting login...");
+    await log("log", "   No cached token, checking git credentials...");
+    token = await getTokenFromGit();
+
+    if (token) {
+      // Validate the git credential token
+      const validation = await validateToken(token);
+      if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+        await log("log", `   Using token from git credentials (${validation.user?.login})`);
+        // Store in plugin cookies for faster future access
+        await storeToken(token);
+      } else {
+        await log("log", "   Git credential token invalid or missing scopes");
+        token = null;
+      }
+    }
+  }
+
+  // If still no token, prompt OAuth login
+  if (!token) {
+    await log("log", "   No valid credentials found, prompting login...");
     const loginSuccess = await promptLogin();
     if (!loginSuccess) {
       await log("warn", "   GitHub login cancelled or failed");
@@ -77,9 +98,9 @@ export async function showRepoSetupBrowser(): Promise<RepoSetupResult | null> {
   }
 
   // Step 3: Open plugin browser with repo setup UI
-  const htmlUrl = createRepoSetupHtmlUrl(username, token);
+  const html = createRepoSetupHtml(username, token);
   await log("log", "   Opening repository setup browser...");
-  await openBrowser(htmlUrl);
+  await openBrowserWithHtml(html);
 
   // Step 4: Wait for user input (5 minutes timeout)
   let eventResult: RepoSetupEvent;
@@ -489,11 +510,3 @@ function createRepoSetupHtml(username: string, token: string): string {
 </html>`;
 }
 
-/**
- * Create a data URL from the setup HTML
- */
-function createRepoSetupHtmlUrl(username: string, token: string): string {
-  const html = createRepoSetupHtml(username, token);
-  const base64 = btoa(unescape(encodeURIComponent(html)));
-  return `data:text/html;base64,${base64}`;
-}

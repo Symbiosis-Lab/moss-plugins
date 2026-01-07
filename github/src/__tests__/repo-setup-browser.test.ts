@@ -7,7 +7,11 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  setupMockTauri,
+  type MockTauriContext,
+} from "@symbiosis-lab/moss-api/testing";
 
 // We need to extract the HTML generation function for testing
 // Since it's private, we'll test it via its output characteristics
@@ -226,5 +230,156 @@ describe("Repository Setup Browser HTML", () => {
       expect(label).toBeDefined();
       expect(label?.textContent).toBe("Repository name");
     });
+  });
+});
+
+// =============================================================================
+// Bug 10: Test that showRepoSetupBrowser checks git credentials before OAuth
+// =============================================================================
+
+// Shared mock state accessible from test and mock factory
+const mockState = {
+  getTokenResult: null as string | null,
+  getTokenFromGitResult: null as string | null,
+  promptLoginCalled: false,
+  storeTokenCalledWith: null as string | null,
+};
+
+// Mock modules before importing showRepoSetupBrowser
+vi.mock("../utils", () => ({
+  log: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock moss-api to prevent unhandled rejections from waitForEvent
+vi.mock("@symbiosis-lab/moss-api", () => ({
+  openBrowserWithHtml: vi.fn().mockResolvedValue(undefined),
+  closeBrowser: vi.fn().mockResolvedValue(undefined),
+  waitForEvent: vi.fn().mockRejectedValue(new Error("Mocked: test ended")),
+}));
+
+// Mock auth module
+vi.mock("../auth", () => ({
+  promptLogin: vi.fn(async () => {
+    mockState.promptLoginCalled = true;
+    return true;
+  }),
+  validateToken: vi.fn().mockResolvedValue({
+    valid: true,
+    user: { login: "testuser" },
+    scopes: ["repo", "workflow"],
+  }),
+  hasRequiredScopes: (scopes: string[]) =>
+    scopes.includes("repo") && scopes.includes("workflow"),
+}));
+
+// Mock token module
+vi.mock("../token", () => ({
+  getToken: vi.fn(async () => mockState.getTokenResult),
+  getTokenFromGit: vi.fn(async () => mockState.getTokenFromGitResult),
+  storeToken: vi.fn(async (token: string) => {
+    mockState.storeTokenCalledWith = token;
+    return true;
+  }),
+}));
+
+// Mock github-api
+vi.mock("../github-api", () => ({
+  getAuthenticatedUser: vi.fn().mockResolvedValue({ login: "testuser" }),
+  createRepository: vi.fn().mockResolvedValue({
+    name: "test-repo",
+    sshUrl: "git@github.com:testuser/test-repo.git",
+    fullName: "testuser/test-repo",
+    htmlUrl: "https://github.com/testuser/test-repo",
+  }),
+}));
+
+// Import after mocking
+import { showRepoSetupBrowser } from "../repo-setup-browser";
+import * as tokenModule from "../token";
+import * as authModule from "../auth";
+
+describe("showRepoSetupBrowser authentication (Bug 10)", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri();
+    vi.clearAllMocks();
+
+    // Reset mock state
+    mockState.getTokenResult = null;
+    mockState.getTokenFromGitResult = null;
+    mockState.promptLoginCalled = false;
+    mockState.storeTokenCalledWith = null;
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should NOT trigger OAuth when git credentials exist and are valid", async () => {
+    // Setup: No plugin cookie
+    mockState.getTokenResult = null;
+
+    // Git credential helper has valid token
+    mockState.getTokenFromGitResult = "ghp_validtoken_from_git";
+
+    // Call showRepoSetupBrowser - it will timeout waiting for event, but we can check if OAuth was triggered
+    const resultPromise = showRepoSetupBrowser();
+
+    // Give it a moment to check credentials
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Should NOT have called promptLogin (OAuth)
+    // This is the key assertion for Bug 10
+    expect(mockState.promptLoginCalled).toBe(false);
+
+    // Should have stored the git token in plugin cookies for faster future access
+    expect(mockState.storeTokenCalledWith).toBe("ghp_validtoken_from_git");
+
+    // Note: resultPromise continues running and will error due to missing Tauri event API.
+    // This is expected in tests and doesn't affect test validity.
+  });
+
+  it("should trigger OAuth when neither plugin cookie nor git credentials exist", async () => {
+    // Setup: No plugin cookie
+    mockState.getTokenResult = null;
+
+    // No git credentials either
+    mockState.getTokenFromGitResult = null;
+
+    // Call showRepoSetupBrowser
+    const resultPromise = showRepoSetupBrowser();
+
+    // Give it time to check credentials and trigger OAuth
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // SHOULD have called promptLogin (OAuth) because no credentials exist
+    expect(mockState.promptLoginCalled).toBe(true);
+
+    // Note: resultPromise continues running and will error due to missing Tauri event API.
+    // This is expected in tests and doesn't affect test validity.
+  });
+
+  it("should skip git credential check when plugin cookie exists", async () => {
+    // Setup: Plugin cookie has valid token
+    mockState.getTokenResult = "ghp_cached_token";
+
+    // Git credential helper also has token (but should not be checked)
+    mockState.getTokenFromGitResult = "ghp_git_token";
+
+    // Call showRepoSetupBrowser
+    const resultPromise = showRepoSetupBrowser();
+
+    // Give it time to check credentials
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Should NOT have called promptLogin (OAuth)
+    expect(mockState.promptLoginCalled).toBe(false);
+
+    // Should NOT have called getTokenFromGit since plugin cookie exists
+    expect(tokenModule.getTokenFromGit).not.toHaveBeenCalled();
+
+    // Note: resultPromise continues running and will error due to missing Tauri event API.
+    // This is expected in tests and doesn't affect test validity.
   });
 });

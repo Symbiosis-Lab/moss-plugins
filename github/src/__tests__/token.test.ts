@@ -2,13 +2,23 @@
  * Unit tests for token storage module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  setupMockTauri,
+  type MockTauriContext,
+} from "@symbiosis-lab/moss-api/testing";
 import {
   formatCredentialInput,
   parseCredentialOutput,
   injectTokenIntoUrl,
   sanitizeUrl,
+  getTokenFromGit,
 } from "../token";
+
+// Mock the utils module
+vi.mock("../utils", () => ({
+  log: vi.fn().mockResolvedValue(undefined),
+}));
 
 describe("token", () => {
   describe("formatCredentialInput", () => {
@@ -120,6 +130,74 @@ describe("token", () => {
       const url = "https://user:pass@github.com/owner/repo.git";
       const result = sanitizeUrl(url);
       expect(result).toBe("https://github.com/owner/repo.git");
+    });
+  });
+
+  // =========================================================================
+  // getTokenFromGit tests (Bug 8: Git credential helper integration)
+  // =========================================================================
+  describe("getTokenFromGit", () => {
+    let ctx: MockTauriContext;
+
+    beforeEach(() => {
+      ctx = setupMockTauri();
+      vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+      ctx.cleanup();
+    });
+
+    it("returns token from git credential helper when available", async () => {
+      // Mock git credential fill returning a valid token
+      ctx.binaryConfig.setResult("git credential fill", {
+        success: true,
+        exitCode: 0,
+        stdout: "protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghp_xxxxx\n",
+        stderr: "",
+      });
+
+      const token = await getTokenFromGit();
+      expect(token).toBe("ghp_xxxxx");
+    });
+
+    it("returns null when no credentials in git", async () => {
+      // Mock git credential fill failing (no credentials stored)
+      ctx.binaryConfig.setResult("git credential fill", {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "credential helper quit",
+      });
+
+      const token = await getTokenFromGit();
+      expect(token).toBeNull();
+    });
+
+    it("returns null when git credential helper returns empty password", async () => {
+      // Mock git credential fill returning no password
+      ctx.binaryConfig.setResult("git credential fill", {
+        success: true,
+        exitCode: 0,
+        stdout: "protocol=https\nhost=github.com\n",
+        stderr: "",
+      });
+
+      const token = await getTokenFromGit();
+      expect(token).toBeNull();
+    });
+
+    it("handles git command not found gracefully", async () => {
+      // Mock git not being available
+      ctx.binaryConfig.setResult("git credential fill", {
+        success: false,
+        exitCode: 127,
+        stdout: "",
+        stderr: "git: command not found",
+      });
+
+      const token = await getTokenFromGit();
+      expect(token).toBeNull();
     });
   });
 });

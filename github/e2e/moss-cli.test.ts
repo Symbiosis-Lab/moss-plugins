@@ -221,9 +221,12 @@ describe("Moss CLI E2E Tests", () => {
   });
 
   describe("Deploy command", () => {
-    // SKIP: This test requires moss binary to be built with fix/github-plugin-bugs changes
-    // The test expects exit code 1 when no deploy plugin is installed.
-    // CI will build the binary fresh so this test will pass there.
+    // SKIP: Requires moss binary with fix/github-plugin-bugs changes
+    // This test verifies exit code 1 when no deploy plugin is installed.
+    // The behavior was fixed in moss fix/github-plugin-bugs branch (Bug 5).
+    // Enable this test once that release is available in GitHub releases.
+    // CI downloads pre-built binary from releases, so we can't test this until
+    // the fix is released. See: .github/workflows/test.yml lines 102-112
     it.skip("shows 'no plugin' message when no deploy plugin installed", async () => {
       const fixture = createFixture({
         withGit: true,

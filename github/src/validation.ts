@@ -13,6 +13,12 @@ export {
   isGitAvailable,
   initGitRepository,
   addRemote,
+  ensureRemote,
+  hasUpstream,
+  hasLocalCommits,
+  remoteHasCommits,
+  pushWithUpstream,
+  pushWithRetry,
 } from "./git";
 
 /**
@@ -65,20 +71,26 @@ export async function validateSiteCompiled(outputDir: string): Promise<void> {
 
 /**
  * Validate that a GitHub remote is configured
+ * @param existingUrl - Optional URL already retrieved to avoid duplicate git calls
  */
-export async function validateGitHubRemote(): Promise<string> {
-  const hasRemote = await hasGitRemote();
+export async function validateGitHubRemote(existingUrl?: string): Promise<string> {
+  // Bug 17 fix: Use existing URL if provided to avoid duplicate git calls
+  let remoteUrl = existingUrl;
 
-  if (!hasRemote) {
-    throw new Error(
-      "No git remote configured.\n\n" +
-        "To publish, you need to:\n" +
-        "1. Create a GitHub repository\n" +
-        "2. Add it as remote: git remote add origin <url>"
-    );
+  if (!remoteUrl) {
+    const hasRemote = await hasGitRemote();
+
+    if (!hasRemote) {
+      throw new Error(
+        "No git remote configured.\n\n" +
+          "To publish, you need to:\n" +
+          "1. Create a GitHub repository\n" +
+          "2. Add it as remote: git remote add origin <url>"
+      );
+    }
+
+    remoteUrl = await getRemoteUrl();
   }
-
-  const remoteUrl = await getRemoteUrl();
 
   if (!remoteUrl.includes("github.com")) {
     throw new Error(
@@ -93,17 +105,23 @@ export async function validateGitHubRemote(): Promise<string> {
 
 /**
  * Run all validations and return the remote URL
- * @param outputDir - Relative path to the output directory (e.g., ".moss/site")
+ *
+ * Note: Site validation is now done early in main.ts using context.site_files
+ * (Bug 13 fix). The plugin trusts moss to provide site_files instead of
+ * calling listFiles() which doesn't include .moss/ directories.
+ *
+ * @param existingRemoteUrl - Optional URL already retrieved to avoid duplicate git calls (Bug 17 fix)
  */
-export async function validateAll(outputDir: string): Promise<string> {
+export async function validateAll(existingRemoteUrl?: string): Promise<string> {
   await log("log", "   Validating git repository...");
   await validateGitRepository();
 
-  await log("log", "   Validating compiled site...");
-  await validateSiteCompiled(outputDir);
+  // Site validation is done early in main.ts using context.site_files (Bug 13 fix)
+  // Removed: await validateSiteCompiled(outputDir);
 
   await log("log", "   Validating GitHub remote...");
-  const remoteUrl = await validateGitHubRemote();
+  // Bug 17 fix: Pass existing URL to avoid duplicate git calls
+  const remoteUrl = await validateGitHubRemote(existingRemoteUrl);
 
   await log("log", "   All validations passed");
   return remoteUrl;

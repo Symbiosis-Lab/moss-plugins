@@ -492,8 +492,22 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     const ghPagesExists = await branchExists("gh-pages");
 
     if (!ghPagesExists) {
-      // Create orphan branch in worktree
-      await runGit(["worktree", "add", "--orphan", "-B", "gh-pages", worktreePath]);
+      // Create orphan branch using git plumbing (Git 1.5.0+ compatible)
+      // Bug 18 fix: --orphan flag requires Git 2.42+, use plumbing instead
+
+      // Step 1: Use known empty tree hash (deterministic, same in all git repos)
+      // This is the SHA-1 of an empty tree object: "tree 0\0"
+      const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+      // Step 2: Create orphan commit with empty tree
+      await log("log", "   Creating orphan commit for gh-pages...");
+      const commitHash = await runGit(["commit-tree", emptyTreeHash, "-m", "Initialize gh-pages branch"]);
+
+      // Step 3: Create branch reference (without switching current branch)
+      await runGit(["update-ref", "refs/heads/gh-pages", commitHash.trim()]);
+
+      // Step 4: Add worktree for the new branch
+      await runGit(["worktree", "add", worktreePath, "gh-pages"]);
     } else {
       // Use existing gh-pages branch
       await runGit(["worktree", "add", worktreePath, "gh-pages"]);

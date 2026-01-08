@@ -189,12 +189,17 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await reportProgress("deploying", 4, 5, "Deploying to gh-pages...");
     let commitSha = await deployToGhPages();
 
+    // Generate pages URL for logging and response
+    const pagesUrl = extractGitHubPagesUrl(remoteUrl);
+
+    // Bug 19 fix: Log the deployment result with URL immediately
     if (commitSha) {
       await log("log", `   Deployed: ${commitSha.substring(0, 7)}`);
+      await log("log", `   🌐 Site URL: ${pagesUrl}`);
+    } else {
+      await log("log", `   No changes to deploy`);
+      await log("log", `   🌐 Site URL: ${pagesUrl}`);
     }
-
-    // Generate pages URL and DNS target
-    const pagesUrl = extractGitHubPagesUrl(remoteUrl);
     const parsed = parseGitHubUrl(remoteUrl);
 
     // Extract the GitHub Pages hostname for CNAME (e.g., "user.github.io")

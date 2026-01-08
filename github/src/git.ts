@@ -545,20 +545,52 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     await log("log", "   Pushing gh-pages to GitHub...");
     await runGit(["-C", worktreePath, "push", "--force", "origin", "gh-pages"]);
 
-    return sha.trim();
-  } finally {
-    // Step 6: Cleanup worktree
-    await log("log", "   Cleaning up worktree...");
+    // Bug 19 fix: Capture SHA before cleanup to ensure we return immediately
+    const commitSha = sha.trim();
+
+    // Step 6: Cleanup worktree in background (don't block return)
+    // This prevents hanging if cleanup takes too long due to file locks
+    cleanupWorktree(worktreePath).catch(() => {
+      // Silent cleanup failure is OK - temp directory will be cleaned up eventually
+    });
+
+    return commitSha;
+  } catch (error) {
+    // On error, still try to cleanup but don't block
+    cleanupWorktree(worktreePath).catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Non-blocking worktree cleanup with short timeout
+ * Bug 19 fix: Prevents hanging after successful deployment
+ */
+async function cleanupWorktree(worktreePath: string): Promise<void> {
+  await log("log", "   Cleaning up worktree...");
+
+  // Use shorter timeout for cleanup (5 seconds instead of 60)
+  const cleanupTimeout = 5000;
+
+  try {
+    // Try git worktree remove with timeout
+    await Promise.race([
+      runGit(["worktree", "remove", worktreePath, "--force"]),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Cleanup timeout")), cleanupTimeout)
+      ),
+    ]);
+  } catch {
+    // Fallback: force remove directory directly
     try {
-      await runGit(["worktree", "remove", worktreePath, "--force"]);
+      await Promise.race([
+        runShell(["rm", "-rf", worktreePath]),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("rm timeout")), cleanupTimeout)
+        ),
+      ]);
     } catch {
-      // Best effort cleanup
-    }
-    // Also try to remove the temp directory directly
-    try {
-      await runShell(["rm", "-rf", worktreePath]);
-    } catch {
-      // Best effort cleanup
+      // Best effort - don't block, temp directory will be cleaned up eventually
     }
   }
 }

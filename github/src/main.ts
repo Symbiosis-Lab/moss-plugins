@@ -14,9 +14,11 @@ import type { OnDeployContext, HookResult, DnsTarget } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists } from "./git";
-import { checkAuthentication, promptLogin } from "./auth";
-import { promptAndCreateRepo } from "./repo-create";
-import { showRepoSetupBrowser } from "./repo-setup-browser";
+// Note: checkAuthentication and promptLogin removed - Bug 23 fix
+// For existing HTTPS remotes, git handles push auth via credential helper
+import { ensureGitHubRepo } from "./repo-setup";
+import { checkPagesStatus } from "./github-api";
+import { getToken } from "./token";
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -33,6 +35,63 @@ const GITHUB_PAGES_IPS = [
   "185.199.110.153",
   "185.199.111.153",
 ];
+
+// ============================================================================
+// Pages Status Polling
+// ============================================================================
+
+/**
+ * Poll GitHub Pages API until site is live (max 60s)
+ *
+ * Feature 21: Check if deployed site is accessible before returning.
+ *
+ * @param owner - GitHub username
+ * @param repo - Repository name
+ * @param token - GitHub OAuth token (optional - if not available, skips status check)
+ * @param pagesUrl - The expected GitHub Pages URL
+ * @returns Object with isLive status and URL
+ */
+async function waitForPagesLive(
+  owner: string,
+  repo: string,
+  token: string | null,
+  pagesUrl: string
+): Promise<{ isLive: boolean; url: string }> {
+  // If no token available, skip status check
+  if (!token) {
+    await log("log", "   Status check skipped (no token available)");
+    return { isLive: false, url: pagesUrl };
+  }
+
+  const maxAttempts = 6; // 6 attempts × 5s = 30s max
+  const pollInterval = 5000;
+
+  await log("log", "   Checking deployment status...");
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const status = await checkPagesStatus(owner, repo, token);
+
+    if (status.status === "built") {
+      await log("log", "   Site is live!");
+      return { isLive: true, url: pagesUrl };
+    }
+
+    if (status.status === "errored") {
+      await log("log", "   Build failed on GitHub");
+      return { isLive: false, url: pagesUrl };
+    }
+
+    // Still building - wait and retry
+    if (i < maxAttempts - 1) {
+      await reportProgress("deploying", 4, 5, `Building on GitHub... (${i + 1}/${maxAttempts})`);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  }
+
+  // Timeout - return URL anyway with isLive: false
+  await log("log", "   Status check timed out (site may still be building)");
+  return { isLive: false, url: pagesUrl };
+}
 
 // ============================================================================
 // Hook Implementation
@@ -69,15 +128,16 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await log("log", `   Site files: ${context.site_files.length} files ready`);
 
     // Phase 0: Check if we have a git repo and remote
-    // If not, offer to create a repository
+    // If not, automatically create a repository (Feature 20)
     let remoteUrl: string;
 
     let wasFirstSetup = false;
 
-    // First check if this is a git repository
-    if (!await isGitRepository()) {
-      await log("log", "   Not a git repository");
+    // Check if we need to set up a repository
+    const needsGitInit = !await isGitRepository();
+    const needsRemote = !needsGitInit && !await hasRemote();
 
+    if (needsGitInit || needsRemote) {
       // Check if git CLI is available
       if (!await isGitAvailable()) {
         await reportError("Git is not installed. Please install git to continue.", "validation", true);
@@ -87,48 +147,32 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         };
       }
 
-      // Show plugin browser UI for repo setup
-      await reportProgress("setup", 0, 6, "No GitHub repository configured...");
-      const repoInfo = await showRepoSetupBrowser();
+      // Feature 20: Smart repo setup - auto-create or show UI
+      await reportProgress("setup", 0, 6, "Setting up GitHub repository...");
+      const repoInfo = await ensureGitHubRepo();
 
       if (!repoInfo) {
-        // User cancelled
+        // User cancelled or error
         return {
           success: false,
           message: "Repository setup cancelled.",
         };
       }
 
-      // Initialize git and add remote
-      await log("log", "   Initializing git repository...");
-      await reportProgress("setup", 1, 6, "Initializing git...");
-      await initGitRepository();
+      // Initialize git if needed
+      if (needsGitInit) {
+        await log("log", "   Initializing git repository...");
+        await reportProgress("setup", 1, 6, "Initializing git...");
+        await initGitRepository();
+      }
 
+      // Add remote
       await log("log", `   Configuring remote: ${repoInfo.sshUrl}`);
       await reportProgress("setup", 2, 6, "Configuring remote...");
       await ensureRemote("origin", repoInfo.sshUrl);
 
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
       remoteUrl = repoInfo.sshUrl;
-      wasFirstSetup = true;
-    } else if (!await hasRemote()) {
-      // Git repo exists but no remote - use existing dialog flow
-      await log("log", "   No git remote configured");
-      await reportProgress("setup", 0, 6, "No GitHub repository configured...");
-
-      // Offer to create a repository
-      const created = await promptAndCreateRepo();
-
-      if (!created) {
-        await reportError("No GitHub repository configured", "validation", true);
-        return {
-          success: false,
-          message: "No GitHub repository configured. Please create a repository or add a remote.",
-        };
-      }
-
-      await log("log", `   Repository created: ${created.fullName}`);
-      remoteUrl = created.sshUrl;
       wasFirstSetup = true;
     } else {
       try {
@@ -141,29 +185,10 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
 
     if (!useSSH && remoteUrl) {
-      await reportProgress("authentication", 0, 6, "Checking GitHub authentication...");
-      const authState = await checkAuthentication();
-
-      if (!authState.isAuthenticated) {
-        await log("log", "   HTTPS remote detected, authentication required");
-        await reportProgress("authentication", 0, 6, "GitHub login required...");
-
-        const loginSuccess = await promptLogin();
-
-        if (!loginSuccess) {
-          await reportError("GitHub authentication failed or was cancelled", "authentication", true);
-          return {
-            success: false,
-            message: "GitHub authentication failed. Please try again.",
-          };
-        }
-
-        await log("log", "   Successfully authenticated with GitHub");
-      } else {
-        await log("log", `   Already authenticated as ${authState.username}`);
-      }
-
-      await reportProgress("authentication", 1, 6, "Authenticated");
+      // Bug 23 fix: Skip OAuth for existing HTTPS remotes
+      // Git handles push authentication via credential helper - no OAuth needed
+      // OAuth is only required when creating new repos (no remote yet)
+      await log("log", "   HTTPS remote detected, git will handle push authentication");
     } else if (useSSH) {
       await log("log", "   SSH remote detected, using SSH key authentication");
     }
@@ -204,6 +229,14 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Extract the GitHub Pages hostname for CNAME (e.g., "user.github.io")
     const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
+
+    // Feature 21: Check if deployment is live (only if we pushed changes)
+    let isLive = false;
+    if (commitSha && parsed) {
+      const token = await getToken();
+      const liveStatus = await waitForPagesLive(parsed.owner, parsed.repo, token, pagesUrl);
+      isLive = liveStatus.isLive;
+    }
 
     // Build DNS target for custom domain configuration
     const dnsTarget: DnsTarget = {
@@ -262,6 +295,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
           branch,
           was_first_setup: String(wasFirstSetup),
           commit_sha: commitSha,
+          is_live: String(isLive),
         },
         dns_target: dnsTarget,
       },

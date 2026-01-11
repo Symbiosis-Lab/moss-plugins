@@ -131,8 +131,8 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
-      // New message reflects the repo creation flow
-      expect(result.message).toContain("No GitHub repository configured");
+      // Feature 20: Consolidated repo setup - simplified messaging
+      expect(result.message).toContain("Repository setup cancelled");
     });
 
     it("fails when remote is not GitHub (SSH protocol path)", async () => {
@@ -372,7 +372,10 @@ describe("on_deploy integration", () => {
   });
 
   describe("HTTPS Remote Authentication", () => {
-    it("detects HTTPS remote and checks for authentication", async () => {
+    it("skips OAuth for existing HTTPS remotes (Bug 23 fix)", async () => {
+      // Bug 23: For existing HTTPS remotes, git handles push auth via credential helper
+      // OAuth is only needed when creating new repos (no remote yet)
+
       // Git repo exists
       ctx.binaryConfig.setResult("git rev-parse --git-dir", {
         success: true,
@@ -381,7 +384,7 @@ describe("on_deploy integration", () => {
         stderr: "",
       });
 
-      // HTTPS remote
+      // HTTPS remote exists
       ctx.binaryConfig.setResult("git remote get-url origin", {
         success: true,
         exitCode: 0,
@@ -392,14 +395,11 @@ describe("on_deploy integration", () => {
       // Set up site files
       ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
 
-      // Note: Full auth flow testing is in auth.test.ts and auth.steps.ts
-      // Here we just verify the HTTPS detection triggers auth check
-
       const result = await on_deploy(createMockContext());
 
-      // The result will fail because we haven't mocked the full auth flow
-      // but we've verified the path detection works
-      expect(result.success).toBe(false);
+      // Should not have opened browser for OAuth (git handles push auth)
+      expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(0);
+      // Deployment proceeds (may still fail due to other mocks, but not auth)
     });
   });
 
@@ -1313,6 +1313,93 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain("No changes to deploy");
+    });
+  });
+
+  describe("Bug 23: OAuth should not trigger when git credentials work", () => {
+    it("should deploy without OAuth when HTTPS remote exists (git handles auth)", async () => {
+      // Setup: Git repo exists with HTTPS remote
+      // Git push will use git's own credential helper - no OAuth needed
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      // HTTPS remote (triggers auth check in buggy code)
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "https://github.com/user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages branch exists (returning user scenario)
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "def456",
+        stderr: "",
+      });
+
+      // Git worktree and push commands succeed
+      ctx.binaryConfig.setResult("git worktree", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git -C", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext({
+        site_files: ["index.html"],
+      }));
+
+      expect(result.success).toBe(true);
+      // Key assertion: No OAuth browser should have been opened
+      expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(0);
     });
   });
 });

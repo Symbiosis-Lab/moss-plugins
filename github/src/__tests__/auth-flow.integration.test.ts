@@ -313,17 +313,15 @@ describe("GitHub OAuth Device Flow", () => {
   // ==========================================================================
 
   describe("hasRequiredScopes", () => {
-    it("returns true when all required scopes are present", () => {
-      expect(hasRequiredScopes(["repo", "workflow"])).toBe(true);
+    it("returns true when repo scope is present", () => {
+      expect(hasRequiredScopes(["repo"])).toBe(true);
+      expect(hasRequiredScopes(["repo", "user"])).toBe(true);
       expect(hasRequiredScopes(["repo", "workflow", "user"])).toBe(true);
     });
 
     it("returns false when repo scope is missing", () => {
       expect(hasRequiredScopes(["workflow"])).toBe(false);
-    });
-
-    it("returns false when workflow scope is missing", () => {
-      expect(hasRequiredScopes(["repo"])).toBe(false);
+      expect(hasRequiredScopes(["user", "gist"])).toBe(false);
     });
 
     it("returns false with empty scopes", () => {
@@ -389,11 +387,11 @@ describe("GitHub OAuth Device Flow", () => {
         { name: "__github_access_token", value: "gho_limitedtoken", domain: "github.com" },
       ]);
 
-      // Mock token validation - valid but missing workflow scope
+      // Mock token validation - valid but missing repo scope
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ login: "testuser" }),
-        headers: new Headers({ "X-OAuth-Scopes": "repo" }), // Missing workflow
+        headers: new Headers({ "X-OAuth-Scopes": "user, gist" }), // Missing repo
       });
       global.fetch = mockFetch;
 

@@ -2,66 +2,68 @@
 
 Generate static sites using [Hugo](https://gohugo.io/) with Moss's zero-flicker preview and smart-diff refresh.
 
+## Features
+
+- Automatic Hugo binary resolution (uses system Hugo or auto-downloads)
+- Symlink-based structure translation (efficient, no file duplication)
+- Cross-platform support (macOS, Linux, Windows)
+- Smart-diff refresh for instant previews
+
 ## Installation
 
-1. Copy the plugin to your project:
-   ```bash
-   cp -r hugo-generator/ your-project/.moss/plugins/
-   ```
+The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
 
-2. Configure Moss to use the Hugo generator in `.moss/config.toml`:
-   ```toml
-   [hooks]
-   build = "hugo-generator"
-   ```
+```toml
+[hooks]
+build = "hugo-generator"
+```
 
 ## Configuration
-
-Configure the plugin in `.moss/config.toml`:
 
 ```toml
 [hooks]
 build = "hugo-generator"
 
 [plugins.hugo-generator]
-# Path to Hugo binary (default: "hugo" from PATH)
+# Path to Hugo binary (default: auto-detect or download)
 hugo_path = "/usr/local/bin/hugo"
 
 # Build arguments passed to Hugo (default: ["--minify"])
 build_args = ["--minify", "--gc"]
 ```
 
-## Requirements
+## Structure Translation
 
-- [Hugo](https://gohugo.io/installation/) must be installed and available in PATH (or configured via `hugo_path`)
-- Your project should be a valid Hugo site (with `hugo.toml` or `config.toml`)
+The plugin translates Moss's flexible folder structure to Hugo's expected layout using symlinks:
+
+| Moss Structure | Hugo Structure | Resulting URL |
+|----------------|----------------|---------------|
+| `index.md` (homepage) | `content/_index.md` | `/` |
+| `posts/` (collection) | `content/posts/` | `/posts/*` |
+| `posts/article.md` | `content/posts/article.md` | `/posts/article/` |
+| `about.md` (root page) | `content/about.md` | `/about/` |
+| `assets/` | `static/assets/` | `/assets/*` |
 
 ## How It Works
 
-1. When you save a file, Moss detects the change
-2. Moss calls the Hugo generator plugin
-3. Hugo builds your site to `.moss/site-stage/`
-4. Moss compares output hashes (smart-diff)
-5. Moss atomically switches the preview to show new content (zero-flicker)
-6. Browser only refreshes if the current page changed
+1. **Binary Resolution**: Finds Hugo in PATH or auto-downloads if not found
+2. **Structure Translation**: Creates symlinks from your content to Hugo's expected layout
+3. **Build**: Runs Hugo to generate static files
+4. **Preview**: Moss serves the output with smart-diff for instant updates
+
+## Requirements
+
+- Hugo is auto-downloaded if not installed
+- Or install manually: [Hugo Installation Guide](https://gohugo.io/installation/)
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Build the plugin
-npm run build
-
-# Run unit tests
-npm test
-
-# Run E2E tests (requires Hugo installed)
-npm run test:e2e
-
-# Watch mode for development
-npm run dev
+npm install          # Install dependencies
+npm run build        # Build the plugin
+npm test             # Run unit tests
+npm run test:e2e     # Run E2E tests (requires Hugo)
+npm run dev          # Watch mode
 ```
 
 ## License

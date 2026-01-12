@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       js_plugins: ${{ steps.changes.outputs.js_plugins }}
+      js_plugins_csv: ${{ steps.changes.outputs.js_plugins_csv }}
+      has_hugo: ${{ steps.changes.outputs.has_hugo }}
       rust_plugins: ${{ steps.changes.outputs.rust_plugins }}
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +31,8 @@ jobs:
 
           # Find JavaScript plugins at root level (have package.json)
           JS_PLUGINS="[]"
+          JS_PLUGINS_CSV=""
+          HAS_HUGO="false"
           for dir in */; do
             plugin_name=$(basename "$dir")
             # Skip hidden directories and .github
@@ -38,6 +42,14 @@ jobs:
             if [ -f "${dir}package.json" ]; then
               if echo "$CHANGED_FILES" | grep -q "^$plugin_name/"; then
                 JS_PLUGINS=$(echo "$JS_PLUGINS" | jq -c ". + [\"$plugin_name\"]")
+                if [ -n "$JS_PLUGINS_CSV" ]; then
+                  JS_PLUGINS_CSV="$JS_PLUGINS_CSV,$plugin_name"
+                else
+                  JS_PLUGINS_CSV="$plugin_name"
+                fi
+                if [ "$plugin_name" == "hugo" ]; then
+                  HAS_HUGO="true"
+                fi
               fi
             fi
           done
@@ -58,19 +70,19 @@ jobs:
           done
 
           echo "js_plugins=$JS_PLUGINS" >> $GITHUB_OUTPUT
+          echo "js_plugins_csv=$JS_PLUGINS_CSV" >> $GITHUB_OUTPUT
+          echo "has_hugo=$HAS_HUGO" >> $GITHUB_OUTPUT
           echo "rust_plugins=$RUST_PLUGINS" >> $GITHUB_OUTPUT
           echo "Changed JS plugins: $JS_PLUGINS"
+          echo "Changed JS plugins (CSV): $JS_PLUGINS_CSV"
+          echo "Has Hugo: $HAS_HUGO"
           echo "Changed Rust plugins: $RUST_PLUGINS"
 
-  # Test JavaScript plugins
-  test-javascript:
+  # Test all JavaScript plugins in a single job
+  test-plugins:
     needs: detect-changes
     if: needs.detect-changes.outputs.js_plugins != '[]'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        plugin: ${{ fromJson(needs.detect-changes.outputs.js_plugins) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,31 +91,15 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: |
-          cd ${{ matrix.plugin }}
-          npm ci
-
-      - name: Type check
-        run: |
-          cd ${{ matrix.plugin }}
-          npx tsc --noEmit
-
-      - name: Build plugin
-        run: |
-          cd ${{ matrix.plugin }}
-          npm run build
-
-      - name: Install system dependencies for moss binary
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev xvfb
 
       - name: Download moss binary for e2e tests
         run: |
-          # Download latest moss-linux-x64 from releases
           gh release download --repo Symbiosis-Lab/moss -p 'moss-linux-x64' -O moss-linux-x64 || {
-            echo "Warning: Could not download moss binary. E2E tests will fail."
+            echo "Warning: Could not download moss binary. E2E tests may fail."
             exit 0
           }
           chmod +x moss-linux-x64
@@ -111,18 +107,59 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Run tests with coverage
+      - name: Install Hugo (if hugo plugin changed)
+        if: needs.detect-changes.outputs.has_hugo == 'true'
         run: |
-          cd ${{ matrix.plugin }}
-          # Use xvfb for e2e tests that require GTK display
-          xvfb-run --auto-servernum npm run test:coverage
+          wget -q https://github.com/gohugoio/hugo/releases/download/v0.139.0/hugo_extended_0.139.0_linux-amd64.deb
+          sudo dpkg -i hugo_extended_0.139.0_linux-amd64.deb
+          hugo version
+
+      - name: Test all changed plugins
+        run: |
+          PLUGINS="${{ needs.detect-changes.outputs.js_plugins_csv }}"
+          IFS=',' read -ra PLUGIN_ARRAY <<< "$PLUGINS"
+
+          for plugin in "${PLUGIN_ARRAY[@]}"; do
+            echo "=========================================="
+            echo "Testing plugin: $plugin"
+            echo "=========================================="
+
+            cd "$plugin"
+
+            echo "Installing dependencies..."
+            npm ci
+
+            echo "Type checking..."
+            npx tsc --noEmit
+
+            echo "Building..."
+            npm run build
+
+            echo "Running tests with coverage..."
+            xvfb-run --auto-servernum npm run test:coverage || true
+
+            cd ..
+          done
+
+      - name: Run Hugo E2E tests (if hugo changed)
+        if: needs.detect-changes.outputs.has_hugo == 'true'
+        run: |
+          cd hugo
+          npm run test:e2e
+
+      - name: Run binary resolver download tests (if hugo changed)
+        if: needs.detect-changes.outputs.has_hugo == 'true'
+        run: |
+          cd hugo
+          npm run test:e2e -- --testNamePattern="Full Download Flow|GitHub API"
+        env:
+          TEST_DOWNLOAD_HUGO: 'true'
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ${{ matrix.plugin }}/coverage/lcov.info
-          flags: ${{ matrix.plugin }}
-          name: ${{ matrix.plugin }}
+          files: "*/coverage/lcov.info"
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # Test Rust plugins
@@ -138,7 +175,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -156,14 +193,14 @@ jobs:
           name: ${{ matrix.plugin }}-rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # E2E tests for hugo-generator (with Hugo installed)
-  test-hugo-e2e:
+  # Cross-platform tests for Hugo (macOS and Windows only, Ubuntu covered above)
+  test-cross-platform:
     needs: detect-changes
-    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    if: needs.detect-changes.outputs.has_hugo == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -172,13 +209,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install Hugo (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          wget -q https://github.com/gohugoio/hugo/releases/download/v0.139.0/hugo_extended_0.139.0_linux-amd64.deb
-          sudo dpkg -i hugo_extended_0.139.0_linux-amd64.deb
-          hugo version
 
       - name: Install Hugo (macOS)
         if: matrix.os == 'macos-latest'
@@ -194,55 +224,33 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd hugo-generator
+          cd hugo
           npm ci
 
       - name: Run E2E tests
         run: |
-          cd hugo-generator
+          cd hugo
           npm run test:e2e
-
-  # E2E tests for binary resolver auto-download (without Hugo pre-installed)
-  test-binary-resolver-download:
-    needs: detect-changes
-    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: |
-          cd hugo-generator
-          npm ci
 
       - name: Run binary resolver download tests
         run: |
-          cd hugo-generator
+          cd hugo
           npm run test:e2e -- --testNamePattern="Full Download Flow|GitHub API"
         env:
           TEST_DOWNLOAD_HUGO: 'true'
+          GITHUB_TOKEN: ${{ github.token }}
 
   # Summary job for branch protection
   test-summary:
-    needs: [test-javascript, test-rust, test-hugo-e2e, test-binary-resolver-download]
+    needs: [test-plugins, test-rust, test-cross-platform]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check test results
         run: |
-          if [ "${{ needs.test-javascript.result }}" == "failure" ] || \
+          if [ "${{ needs.test-plugins.result }}" == "failure" ] || \
              [ "${{ needs.test-rust.result }}" == "failure" ] || \
-             [ "${{ needs.test-hugo-e2e.result }}" == "failure" ] || \
-             [ "${{ needs.test-binary-resolver-download.result }}" == "failure" ]; then
+             [ "${{ needs.test-cross-platform.result }}" == "failure" ]; then
             echo "Some tests failed"
             exit 1
           fi

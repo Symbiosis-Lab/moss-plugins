@@ -128,7 +128,7 @@ async function ensureAuthenticated(): Promise<string | null> {
  * Auto-create the root repo (no UI needed)
  */
 async function createRootRepo(
-  username: string,
+  _username: string,
   repoName: string,
   token: string
 ): Promise<RepoSetupResult | null> {

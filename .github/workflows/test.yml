@@ -230,6 +230,7 @@ jobs:
           npm run test:e2e -- --testNamePattern="Full Download Flow|GitHub API"
         env:
           TEST_DOWNLOAD_HUGO: 'true'
+          GITHUB_TOKEN: ${{ github.token }}
 
   # Summary job for branch protection
   test-summary:

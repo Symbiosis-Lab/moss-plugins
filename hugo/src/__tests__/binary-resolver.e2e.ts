@@ -237,14 +237,18 @@ describe("Binary Resolution E2E", () => {
     describe.skipIf(!shouldRunDownloadTests())("release fetching", () => {
       it("fetches latest Hugo release from GitHub", async () => {
         // Use Node.js fetch (available in Node 18+)
+        // Use GITHUB_TOKEN if available to avoid rate limiting
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "moss-hugo-generator-test",
+        };
+        if (process.env.GITHUB_TOKEN) {
+          headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
+        }
+
         const response = await fetch(
           "https://api.github.com/repos/gohugoio/hugo/releases/latest",
-          {
-            headers: {
-              Accept: "application/vnd.github.v3+json",
-              "User-Agent": "moss-hugo-generator-test",
-            },
-          }
+          { headers }
         );
 
         expect(response.ok).toBe(true);
@@ -369,13 +373,34 @@ describe("Binary Resolution E2E", () => {
           ? `https://api.github.com/repos/gohugoio/hugo/releases/tags/v${pinnedVersion}`
           : "https://api.github.com/repos/gohugoio/hugo/releases/latest";
 
-        const releaseResponse = await fetch(releaseUrl, {
-          headers: {
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "moss-hugo-generator-test",
-          },
-        });
+        // Use GITHUB_TOKEN if available to avoid rate limiting
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "moss-hugo-generator-test",
+        };
+        if (process.env.GITHUB_TOKEN) {
+          headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
+        }
+
+        const releaseResponse = await fetch(releaseUrl, { headers });
+
+        // Check for rate limiting or other API errors
+        if (!releaseResponse.ok) {
+          const errorBody = await releaseResponse.text();
+          throw new Error(
+            `GitHub API error (${releaseResponse.status}): ${errorBody.substring(0, 200)}`
+          );
+        }
+
         const release = await releaseResponse.json();
+
+        // Validate response has expected structure
+        if (!release.tag_name) {
+          throw new Error(
+            `Invalid release response: missing tag_name. Got: ${JSON.stringify(release).substring(0, 200)}`
+          );
+        }
+
         const version = release.tag_name.replace(/^v/, "");
 
         // Determine asset name

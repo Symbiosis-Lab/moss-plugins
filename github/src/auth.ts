@@ -29,8 +29,12 @@ import type {
 /** GitHub OAuth App Client ID for Moss */
 const CLIENT_ID = "Ov23li8HTgRH8nuO16oK";
 
-/** Required OAuth scopes for GitHub Pages deployment */
-const REQUIRED_SCOPES = ["repo", "workflow"];
+/** Required OAuth scopes for GitHub Pages deployment
+ * Note: We only need "repo" scope for gh-pages deployment since we push directly
+ * to the gh-pages branch. The "workflow" scope is NOT needed because we don't
+ * use GitHub Actions for deployment. (Bug 23 fix)
+ */
+const REQUIRED_SCOPES = ["repo"];
 
 /** GitHub API endpoints */
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";

@@ -283,4 +283,165 @@ describe("GitHub API", () => {
       ).rejects.toThrow("Repository creation failed: Name already exists");
     });
   });
+
+  // ============================================================================
+  // Feature 21: checkPagesStatus() tests
+  // ============================================================================
+  describe("checkPagesStatus", () => {
+    // Import will fail until we implement the function
+    let checkPagesStatus: (
+      owner: string,
+      repo: string,
+      token: string
+    ) => Promise<{ status: string; url: string }>;
+
+    beforeEach(async () => {
+      const module = await import("../github-api");
+      checkPagesStatus = module.checkPagesStatus;
+      mockFetch.mockReset();
+    });
+
+    it("returns 'built' when site is live", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "built" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "testuser.github.io", "test-token");
+
+      expect(result.status).toBe("built");
+      expect(result.url).toBe("https://testuser.github.io/");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/testuser.github.io/pages/builds/latest",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer test-token",
+          }),
+        })
+      );
+    });
+
+    it("returns 'building' when deployment in progress", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "building" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.status).toBe("building");
+      expect(result.url).toBe("https://testuser.github.io/my-repo");
+    });
+
+    it("returns 'errored' when deployment failed", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "errored" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.status).toBe("errored");
+    });
+
+    it("returns 'unknown' on 404 (no Pages configured)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.status).toBe("unknown");
+      expect(result.url).toBe("");
+    });
+
+    it("returns 'unknown' on network error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.status).toBe("unknown");
+      expect(result.url).toBe("");
+    });
+
+    it("generates correct URL for root repo (username.github.io)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "built" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "testuser.github.io", "test-token");
+
+      // Root repo URL should have trailing slash, no repo path
+      expect(result.url).toBe("https://testuser.github.io/");
+    });
+
+    it("generates correct URL for project repo", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "built" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-project", "test-token");
+
+      // Project repo URL should include repo name as path
+      expect(result.url).toBe("https://testuser.github.io/my-project");
+    });
+  });
+
+  // ============================================================================
+  // Feature 20: checkRepoExists() tests
+  // ============================================================================
+  describe("checkRepoExists", () => {
+    // Import will fail until we implement the function
+    let checkRepoExists: (owner: string, name: string, token: string) => Promise<boolean>;
+
+    beforeEach(async () => {
+      // Dynamic import to get the function
+      const module = await import("../github-api");
+      checkRepoExists = module.checkRepoExists;
+      mockFetch.mockReset();
+    });
+
+    it("returns true when repo exists (200 response)", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+      const exists = await checkRepoExists("testuser", "testuser.github.io", "test-token");
+
+      expect(exists).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/testuser.github.io",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer test-token",
+          }),
+        })
+      );
+    });
+
+    it("returns false when repo doesn't exist (404 response)", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+      const exists = await checkRepoExists("testuser", "testuser.github.io", "test-token");
+
+      expect(exists).toBe(false);
+    });
+
+    it("returns false on network error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+      const exists = await checkRepoExists("testuser", "testuser.github.io", "test-token");
+
+      expect(exists).toBe(false);
+    });
+
+    it("returns false on other HTTP errors", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+      const exists = await checkRepoExists("testuser", "testuser.github.io", "test-token");
+
+      expect(exists).toBe(false);
+    });
+  });
 });

@@ -137,13 +137,13 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And('the error should mention "No git remote configured"', () => {
-      // Updated to reflect new repo creation flow messaging
-      expect(deployResult?.message).toContain("No GitHub repository configured");
+      // Feature 20: Consolidated repo setup - shows cancelled message
+      expect(deployResult?.message).toContain("cancelled");
     });
 
     And("the error should include instructions to add a GitHub remote", () => {
-      // Updated to reflect new repo creation flow messaging
-      expect(deployResult?.message).toContain("create a repository or add a remote");
+      // Feature 20: Consolidated repo setup - simplified messaging
+      expect(deployResult?.message).toContain("Repository setup cancelled");
     });
   });
 

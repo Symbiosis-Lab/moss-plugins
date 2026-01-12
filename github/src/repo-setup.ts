@@ -1,17 +1,20 @@
 /**
- * Repository Setup in Plugin Browser
+ * Repository Setup Module (Consolidated)
  *
- * Shows a full plugin browser UI for creating a new GitHub repository
- * when the project is not yet a git repository.
+ * Feature 20: Smart Repo Setup
+ * - Auto-creates {username}.github.io when available (no UI needed)
+ * - Shows UI only when root is already taken
  *
- * Uses the plugin browser (side-by-side webview) for a better UX
- * compared to the modal dialog approach.
+ * This module replaces:
+ * - repo-setup-browser.ts
+ * - repo-create.ts
+ * - repo-dialog.ts
  */
 
 import { openBrowserWithHtml, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
-import { getAuthenticatedUser, createRepository } from "./github-api";
+import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 
 /**
@@ -35,55 +38,24 @@ interface RepoSetupEvent {
 }
 
 /**
- * Show the repository setup UI in the plugin browser
+ * Ensure a GitHub repository exists for deployment
  *
  * This function:
  * 1. Ensures user is authenticated with GitHub
- * 2. Opens the plugin browser with the repo setup UI
- * 3. Waits for user to submit a repo name
- * 4. Creates the repository via GitHub API
- * 5. Returns the created repo info
+ * 2. Checks if {username}.github.io exists
+ * 3. If available, auto-creates it (no UI needed)
+ * 4. If taken, shows UI for user to enter custom repo name
+ * 5. Returns the repo info
  *
- * @returns Created repository info, or null if cancelled/failed
+ * @returns Repository info, or null if cancelled/failed
  */
-export async function showRepoSetupBrowser(): Promise<RepoSetupResult | null> {
-  await log("log", "   Starting repository setup in plugin browser...");
+export async function ensureGitHubRepo(): Promise<RepoSetupResult | null> {
+  await log("log", "   Ensuring GitHub repository...");
 
   // Step 1: Ensure authentication
-  let token = await getToken();
-
-  // Bug 10 fix: Try git credentials if no plugin cookie
+  const token = await ensureAuthenticated();
   if (!token) {
-    await log("log", "   No cached token, checking git credentials...");
-    token = await getTokenFromGit();
-
-    if (token) {
-      // Validate the git credential token
-      const validation = await validateToken(token);
-      if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
-        await log("log", `   Using token from git credentials (${validation.user?.login})`);
-        // Store in plugin cookies for faster future access
-        await storeToken(token);
-      } else {
-        await log("log", "   Git credential token invalid or missing scopes");
-        token = null;
-      }
-    }
-  }
-
-  // If still no token, prompt OAuth login
-  if (!token) {
-    await log("log", "   No valid credentials found, prompting login...");
-    const loginSuccess = await promptLogin();
-    if (!loginSuccess) {
-      await log("warn", "   GitHub login cancelled or failed");
-      return null;
-    }
-    token = await getToken();
-    if (!token) {
-      await log("error", "   Failed to get token after login");
-      return null;
-    }
+    return null;
   }
 
   // Step 2: Get authenticated user info
@@ -97,32 +69,117 @@ export async function showRepoSetupBrowser(): Promise<RepoSetupResult | null> {
     return null;
   }
 
-  // Step 3: Open plugin browser with repo setup UI
+  // Step 3: Check if {username}.github.io exists
+  const rootRepoName = `${username}.github.io`;
+  const rootExists = await checkRepoExists(username, rootRepoName, token);
+
+  // Step 4: Auto-create or show UI
+  if (!rootExists) {
+    // Root is available - auto-create (no UI needed!)
+    return await createRootRepo(username, rootRepoName, token);
+  } else {
+    // Root is taken - show UI for custom repo name
+    return await showRepoNameUI(username, token);
+  }
+}
+
+/**
+ * Ensure user is authenticated, trying various sources
+ */
+async function ensureAuthenticated(): Promise<string | null> {
+  // Try 1: Cached token
+  let token = await getToken();
+  if (token) {
+    return token;
+  }
+
+  // Try 2: Git credential helper
+  await log("log", "   No cached token, checking git credentials...");
+  token = await getTokenFromGit();
+  if (token) {
+    const validation = await validateToken(token);
+    if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+      await log("log", `   Using token from git credentials (${validation.user?.login})`);
+      await storeToken(token);
+      return token;
+    } else {
+      await log("log", "   Git credential token invalid or missing scopes");
+    }
+  }
+
+  // Try 3: OAuth login
+  await log("log", "   No valid credentials found, prompting login...");
+  const loginSuccess = await promptLogin();
+  if (!loginSuccess) {
+    await log("warn", "   GitHub login cancelled or failed");
+    return null;
+  }
+
+  token = await getToken();
+  if (!token) {
+    await log("error", "   Failed to get token after login");
+    return null;
+  }
+
+  return token;
+}
+
+/**
+ * Auto-create the root repo (no UI needed)
+ */
+async function createRootRepo(
+  username: string,
+  repoName: string,
+  token: string
+): Promise<RepoSetupResult | null> {
+  await log("log", `   Auto-creating ${repoName} (will deploy to root URL)...`);
+
+  try {
+    const createdRepo = await createRepository(repoName, token, "Created with Moss");
+    await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
+
+    return {
+      name: createdRepo.name,
+      sshUrl: createdRepo.sshUrl,
+      fullName: createdRepo.fullName,
+    };
+  } catch (error) {
+    await log("error", `   Failed to create repository: ${error}`);
+    return null;
+  }
+}
+
+/**
+ * Show UI for custom repo name (when root is taken)
+ */
+async function showRepoNameUI(
+  username: string,
+  token: string
+): Promise<RepoSetupResult | null> {
+  await log("log", "   Root repo already exists, showing UI for custom name...");
+
   const html = createRepoSetupHtml(username, token);
-  await log("log", "   Opening repository setup browser...");
   await openBrowserWithHtml(html);
 
-  // Step 4: Wait for user input (5 minutes timeout)
+  // Wait for user input (5 minutes timeout)
   let eventResult: RepoSetupEvent;
   try {
     eventResult = await waitForEvent<RepoSetupEvent>("repo-setup-submit", 300000);
-  } catch (error) {
-    // Timeout or error - close browser and return null
+  } catch {
     await closeBrowser();
     await log("warn", "   Repository setup timed out or was cancelled");
     return null;
   }
 
-  // Step 5: Close plugin browser
   await closeBrowser();
 
-  // Step 6: Check if user cancelled
+  // Check if user cancelled
   if (eventResult.type === "cancelled" || !eventResult.name) {
     await log("log", "   User cancelled repository setup");
     return null;
   }
 
-  // Step 7: Create the repository
+  // Create the custom repo
   const repoName = eventResult.name;
   await log("log", `   Creating repository: ${repoName}`);
 
@@ -143,8 +200,11 @@ export async function showRepoSetupBrowser(): Promise<RepoSetupResult | null> {
 
 /**
  * Generate the HTML for the repo setup browser UI
+ * Shows explanation that root is already taken
  */
 function createRepoSetupHtml(username: string, token: string): string {
+  const rootRepoName = `${username}.github.io`;
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -162,6 +222,7 @@ function createRepoSetupHtml(username: string, token: string): string {
       --primary-hover: #2ea043;
       --success: #3fb950;
       --error: #f85149;
+      --warning: #d29922;
       --border: #30363d;
       --link: #58a6ff;
     }
@@ -185,7 +246,7 @@ function createRepoSetupHtml(username: string, token: string): string {
 
     .container {
       width: 100%;
-      max-width: 400px;
+      max-width: 440px;
     }
 
     .icon {
@@ -203,8 +264,26 @@ function createRepoSetupHtml(username: string, token: string): string {
     .subtitle {
       color: var(--text-muted);
       font-size: 14px;
-      margin-bottom: 32px;
+      margin-bottom: 24px;
       line-height: 1.5;
+    }
+
+    .info-box {
+      padding: 12px 16px;
+      background: rgba(210, 153, 34, 0.1);
+      border: 1px solid var(--warning);
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--warning);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .info-box code {
+      background: rgba(210, 153, 34, 0.2);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
     }
 
     .form-group {
@@ -296,7 +375,7 @@ function createRepoSetupHtml(username: string, token: string): string {
       to { transform: rotate(360deg); }
     }
 
-    .note {
+    .url-preview {
       padding: 12px 16px;
       background: var(--surface);
       border-radius: 6px;
@@ -304,6 +383,10 @@ function createRepoSetupHtml(username: string, token: string): string {
       color: var(--text-muted);
       margin-bottom: 24px;
       line-height: 1.5;
+    }
+
+    .url-preview strong {
+      color: var(--text);
     }
 
     .buttons {
@@ -359,10 +442,15 @@ function createRepoSetupHtml(username: string, token: string): string {
       <path d="M12 2C6.475 2 2 6.475 2 12c0 4.42 2.865 8.17 6.84 9.49.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48C19.14 20.17 22 16.42 22 12c0-5.525-4.475-10-10-10z" fill="#8b949e"/>
     </svg>
 
-    <h1>No GitHub repo configured</h1>
+    <h1>Choose a repository name</h1>
     <p class="subtitle">
-      Create a new repository to deploy your site to GitHub Pages.
+      Create a repository for your site.
     </p>
+
+    <div class="info-box">
+      <strong>Note:</strong> <code>${rootRepoName}</code> is already in use.
+      Your site will be deployed to <strong>${username}.github.io/<em>repo-name</em>/</strong>
+    </div>
 
     <div class="form-group">
       <label for="repo-name">Repository name</label>
@@ -373,8 +461,8 @@ function createRepoSetupHtml(username: string, token: string): string {
       <div class="status" id="status"></div>
     </div>
 
-    <div class="note">
-      A public repository will be created. This is required for GitHub Pages free hosting.
+    <div class="url-preview" id="url-preview">
+      Your site URL: <strong>https://${username}.github.io/<span id="preview-name">my-website</span>/</strong>
     </div>
 
     <div class="buttons">
@@ -395,6 +483,7 @@ function createRepoSetupHtml(username: string, token: string): string {
     const createBtn = document.getElementById('create-btn');
     const btnText = document.getElementById('btn-text');
     const cancelBtn = document.getElementById('cancel-btn');
+    const previewName = document.getElementById('preview-name');
 
     let checkTimeout = null;
     let isAvailable = false;
@@ -478,6 +567,7 @@ function createRepoSetupHtml(username: string, token: string): string {
 
     input.addEventListener('input', (e) => {
       const name = e.target.value.trim();
+      previewName.textContent = name || 'my-website';
 
       if (checkTimeout) {
         clearTimeout(checkTimeout);
@@ -509,4 +599,3 @@ function createRepoSetupHtml(username: string, token: string): string {
 </body>
 </html>`;
 }
-

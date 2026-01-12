@@ -12,9 +12,9 @@
  * 4. Store token in git credential helper
  */
 
-import { openBrowser, closeBrowser } from "@symbiosis-lab/moss-api";
+import { openSystemBrowser, httpPost } from "@symbiosis-lab/moss-api";
 import { log, sleep, reportProgress } from "./utils";
-import { storeToken, getToken, clearToken } from "./token";
+import { storeToken, getToken, clearToken, getTokenFromGit } from "./token";
 import type {
   DeviceCodeResponse,
   TokenResponse,
@@ -29,8 +29,12 @@ import type {
 /** GitHub OAuth App Client ID for Moss */
 const CLIENT_ID = "Ov23li8HTgRH8nuO16oK";
 
-/** Required OAuth scopes for GitHub Pages deployment */
-const REQUIRED_SCOPES = ["repo", "workflow"];
+/** Required OAuth scopes for GitHub Pages deployment
+ * Note: We only need "repo" scope for gh-pages deployment since we push directly
+ * to the gh-pages branch. The "workflow" scope is NOT needed because we don't
+ * use GitHub Actions for deployment. (Bug 23 fix)
+ */
+const REQUIRED_SCOPES = ["repo"];
 
 /** GitHub API endpoints */
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
@@ -46,28 +50,30 @@ const MAX_POLL_TIME_MS = 300000;
 
 /**
  * Request a device code from GitHub
+ *
+ * Uses httpPost to bypass CORS restrictions in Tauri WebView.
  */
 export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
   await log("log", "   Requesting device code from GitHub...");
 
-  const response = await fetch(GITHUB_DEVICE_CODE_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const response = await httpPost(
+    GITHUB_DEVICE_CODE_URL,
+    {
       client_id: CLIENT_ID,
       scope: REQUIRED_SCOPES.join(" "),
-    }),
-  });
+    },
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to request device code: ${response.status} ${errorText}`);
+    throw new Error(`Failed to request device code: ${response.status} ${response.text()}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(response.text());
 
   if (data.error) {
     throw new Error(`GitHub error: ${data.error_description || data.error}`);
@@ -81,6 +87,8 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
 /**
  * Poll GitHub for access token
  *
+ * Uses httpPost to bypass CORS restrictions in Tauri WebView.
+ *
  * Returns the token response, which may contain:
  * - access_token: Success!
  * - error: "authorization_pending" - Keep polling
@@ -92,25 +100,25 @@ export async function pollForToken(
   deviceCode: string,
   _interval: number
 ): Promise<TokenResponse> {
-  const response = await fetch(GITHUB_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const response = await httpPost(
+    GITHUB_TOKEN_URL,
+    {
       client_id: CLIENT_ID,
       device_code: deviceCode,
       grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    }),
-  });
+    },
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to poll for token: ${response.status} ${errorText}`);
+    throw new Error(`Failed to poll for token: ${response.status} ${response.text()}`);
   }
 
-  return (await response.json()) as TokenResponse;
+  return JSON.parse(response.text()) as TokenResponse;
 }
 
 /**
@@ -159,45 +167,60 @@ export function hasRequiredScopes(scopes: string[]): boolean {
 
 /**
  * Check if user is authenticated with valid GitHub credentials
+ *
+ * Checks in order:
+ * 1. Plugin cookies (fastest - cached from previous auth)
+ * 2. Git credential helper (system-stored tokens)
+ *
  * Note: Plugin identity and project path are auto-detected from runtime context.
  */
 export async function checkAuthentication(): Promise<AuthState> {
   await log("log", "   Checking GitHub authentication...");
 
-  // Try to get token from credential helper
-  const token = await getToken();
+  // 1. Try to get token from plugin cookies (fastest)
+  let token = await getToken();
 
-  if (!token) {
-    await log("log", "   No token found in credential helper");
-    return { isAuthenticated: false };
-  }
+  if (token) {
+    // Validate the cached token
+    const validation = await validateToken(token);
 
-  // Validate the token
-  const validation = await validateToken(token);
+    if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+      await log("log", `   Authenticated as ${validation.user?.login} (from plugin cookies)`);
+      return {
+        isAuthenticated: true,
+        username: validation.user?.login,
+        scopes: validation.scopes,
+      };
+    }
 
-  if (!validation.valid) {
-    await log("log", "   Token is invalid or expired");
-    // Clear the invalid token
+    // Token is invalid - clear it and try git credentials
+    await log("log", "   Cached token invalid, clearing...");
     await clearToken();
-    return { isAuthenticated: false };
   }
 
-  // Check for required scopes
-  if (!hasRequiredScopes(validation.scopes || [])) {
-    await log(
-      "warn",
-      `   Token missing required scopes. Has: ${validation.scopes?.join(", ")}, needs: ${REQUIRED_SCOPES.join(", ")}`
-    );
-    return { isAuthenticated: false };
+  // 2. Try git credential helper (Bug 8 fix)
+  await log("log", "   Checking git credential helper...");
+  token = await getTokenFromGit();
+
+  if (token) {
+    const validation = await validateToken(token);
+
+    if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+      // Store in plugin cookies for faster future access
+      await storeToken(token);
+      await log("log", `   Authenticated as ${validation.user?.login} (from git credentials)`);
+      return {
+        isAuthenticated: true,
+        username: validation.user?.login,
+        scopes: validation.scopes,
+      };
+    }
+
+    await log("log", "   Git credential token lacks required scopes or is invalid");
   }
 
-  await log("log", `   Authenticated as ${validation.user?.login}`);
-
-  return {
-    isAuthenticated: true,
-    username: validation.user?.login,
-    scopes: validation.scopes,
-  };
+  await log("log", "   No valid credentials found");
+  return { isAuthenticated: false };
 }
 
 /**
@@ -205,10 +228,10 @@ export async function checkAuthentication(): Promise<AuthState> {
  *
  * This will:
  * 1. Request a device code
- * 2. Open the browser for user authorization
+ * 2. Open the SYSTEM browser for user authorization (Bug 9 fix)
  * 3. Display the user code
  * 4. Poll for the access token
- * 5. Store the token in git credential helper
+ * 5. Store the token in plugin cookies
  *
  * Note: Plugin identity and project path are auto-detected from runtime context.
  */
@@ -218,17 +241,18 @@ export async function promptLogin(): Promise<boolean> {
     await reportProgress("authentication", 0, 4, "Requesting authorization...");
     const deviceCodeResponse = await requestDeviceCode();
 
-    // Step 2: Open browser
+    // Step 2: Open SYSTEM browser (Bug 9 fix - user may already be logged in)
     await reportProgress(
       "authentication",
       1,
       4,
       `Enter code: ${deviceCodeResponse.user_code}`
     );
-    await log("log", `   Opening browser for GitHub authorization...`);
+    await log("log", `   Opening system browser for GitHub authorization...`);
     await log("log", `   Enter code: ${deviceCodeResponse.user_code}`);
 
-    await openBrowser(deviceCodeResponse.verification_uri);
+    // Use system browser instead of plugin browser (Bug 9 fix)
+    await openSystemBrowser(deviceCodeResponse.verification_uri);
 
     // Step 3: Poll for token
     await reportProgress("authentication", 2, 4, "Waiting for authorization...");
@@ -240,11 +264,7 @@ export async function promptLogin(): Promise<boolean> {
 
     if (!token) {
       await log("warn", "   Authorization timed out or was denied");
-      try {
-        await closeBrowser();
-      } catch {
-        // Browser might already be closed
-      }
+      // System browser manages itself - no need to close
       return false;
     }
 
@@ -253,16 +273,11 @@ export async function promptLogin(): Promise<boolean> {
     const stored = await storeToken(token);
 
     if (!stored) {
-      await log("warn", "   Failed to store token in credential helper");
+      await log("warn", "   Failed to store token");
       // Continue anyway - the token is valid, just won't persist
     }
 
-    // Close browser
-    try {
-      await closeBrowser();
-    } catch {
-      // Browser might already be closed
-    }
+    // System browser manages itself - no need to close
 
     await reportProgress("authentication", 4, 4, "Authenticated");
     await log("log", "   Successfully authenticated with GitHub");
@@ -270,11 +285,7 @@ export async function promptLogin(): Promise<boolean> {
     return true;
   } catch (error) {
     await log("error", `   Authentication failed: ${error}`);
-    try {
-      await closeBrowser();
-    } catch {
-      // Ignore close errors
-    }
+    // System browser manages itself - no need to close
     return false;
   }
 }

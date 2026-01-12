@@ -50,6 +50,17 @@ export interface RepoAvailabilityResult {
   message?: string;
 }
 
+/**
+ * GitHub Pages deployment status
+ * Feature 21: Used to check if a deployed site is live
+ */
+export interface PagesStatus {
+  /** Deployment status: built, building, errored, or unknown */
+  status: "built" | "building" | "errored" | "unknown";
+  /** The GitHub Pages URL for this repository */
+  url: string;
+}
+
 // ============================================================================
 // API Constants
 // ============================================================================
@@ -198,6 +209,92 @@ export async function createRepository(
     sshUrl: repo.ssh_url,
     cloneUrl: repo.clone_url,
   };
+}
+
+/**
+ * Check if a repository exists for a given owner
+ *
+ * Feature 20: Used to check if {username}.github.io already exists
+ * before auto-creating it.
+ *
+ * @param owner - Repository owner (username or org)
+ * @param name - Repository name
+ * @param token - GitHub OAuth access token
+ * @returns true if repo exists, false otherwise (including errors)
+ */
+export async function checkRepoExists(
+  owner: string,
+  name: string,
+  token: string
+): Promise<boolean> {
+  try {
+    const response = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${name}`, {
+      headers: {
+        ...GITHUB_API_HEADERS,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    return response.ok;
+  } catch {
+    // Network errors or other failures - treat as "doesn't exist"
+    return false;
+  }
+}
+
+/**
+ * Check GitHub Pages deployment status
+ *
+ * Feature 21: Used to verify if a deployed site is live.
+ * Uses GET /repos/{owner}/{repo}/pages/builds/latest
+ *
+ * @see https://docs.github.com/en/rest/pages/pages
+ *
+ * @param owner - Repository owner (username or org)
+ * @param repo - Repository name
+ * @param token - GitHub OAuth access token
+ * @returns Pages status with deployment state and URL
+ */
+export async function checkPagesStatus(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<PagesStatus> {
+  try {
+    const response = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages/builds/latest`,
+      {
+        headers: {
+          ...GITHUB_API_HEADERS,
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return { status: "unknown", url: "" };
+    }
+
+    const data = await response.json();
+
+    // Generate the GitHub Pages URL
+    // Root repo ({username}.github.io) → https://{username}.github.io/
+    // Project repo → https://{username}.github.io/{repo}
+    const isRootRepo = repo === `${owner}.github.io`;
+    const url = isRootRepo
+      ? `https://${owner}.github.io/`
+      : `https://${owner}.github.io/${repo}`;
+
+    // Map API status to our status type
+    const status = data.status as "built" | "building" | "errored" | undefined;
+
+    return {
+      status: status || "unknown",
+      url,
+    };
+  } catch {
+    return { status: "unknown", url: "" };
+  }
 }
 
 /**

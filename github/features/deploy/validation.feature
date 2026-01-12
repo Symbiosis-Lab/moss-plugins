@@ -7,8 +7,7 @@ Feature: GitHub Deployer Validation
     Given the directory is not a git repository
     When I attempt to deploy
     Then the deployment should fail
-    And the error should mention "not a git repository"
-    And the error should include instructions to run "git init"
+    And the error should indicate setup was cancelled
 
   Scenario: Deploy without any git remote
     Given the directory is a git repository

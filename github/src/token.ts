@@ -11,7 +11,7 @@
  * to include the token (https://x-access-token:TOKEN@github.com/...)
  */
 
-import { getPluginCookie, setPluginCookie } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, setPluginCookie, executeBinary } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 
 const GITHUB_HOST = "github.com";
@@ -58,6 +58,50 @@ export function parseCredentialOutput(output: string): {
   }
 
   return result;
+}
+
+/**
+ * Try to retrieve GitHub token from git credential helper
+ *
+ * Uses `git credential fill` with stdin input to query the system's
+ * configured credential helper (e.g., macOS Keychain, Windows Credential Manager).
+ *
+ * @returns The token if found in git credentials, null otherwise
+ */
+export async function getTokenFromGit(): Promise<string | null> {
+  try {
+    await log("log", "   Checking git credential helper for GitHub token...");
+
+    // Format the credential request for github.com
+    const input = formatCredentialInput(GITHUB_HOST, "https");
+
+    // Execute git credential fill with stdin
+    const result = await executeBinary({
+      binaryPath: "git",
+      args: ["credential", "fill"],
+      stdin: input,
+      timeoutMs: 5000,
+    });
+
+    if (!result.success) {
+      await log("log", "   No credentials found in git credential helper");
+      return null;
+    }
+
+    // Parse the credential output
+    const { password } = parseCredentialOutput(result.stdout);
+
+    if (password) {
+      await log("log", "   Found GitHub token in git credential helper");
+      return password;
+    }
+
+    await log("log", "   Git credential helper returned no password");
+    return null;
+  } catch (error) {
+    await log("log", `   Git credential helper failed: ${error}`);
+    return null;
+  }
 }
 
 /**

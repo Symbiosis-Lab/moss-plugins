@@ -14,31 +14,32 @@ describe("auth", () => {
       expect(CLIENT_ID).toMatch(/^Ov/);
     });
 
-    it("requires repo and workflow scopes", () => {
+    it("requires repo scope for gh-pages deployment", () => {
+      // gh-pages deployment pushes directly - no GitHub Actions needed
       expect(REQUIRED_SCOPES).toContain("repo");
-      expect(REQUIRED_SCOPES).toContain("workflow");
+      expect(REQUIRED_SCOPES).not.toContain("workflow");
     });
   });
 
   describe("hasRequiredScopes", () => {
     it("returns true when all required scopes are present", () => {
-      const scopes = ["repo", "workflow", "user"];
+      const scopes = ["repo", "user"];
       expect(hasRequiredScopes(scopes)).toBe(true);
     });
 
     it("returns true with exact required scopes", () => {
-      const scopes = ["repo", "workflow"];
+      const scopes = ["repo"];
       expect(hasRequiredScopes(scopes)).toBe(true);
     });
 
     it("returns false when repo scope is missing", () => {
-      const scopes = ["workflow", "user"];
+      const scopes = ["user", "gist"];
       expect(hasRequiredScopes(scopes)).toBe(false);
     });
 
-    it("returns false when workflow scope is missing", () => {
-      const scopes = ["repo", "user"];
-      expect(hasRequiredScopes(scopes)).toBe(false);
+    it("returns true with additional scopes beyond repo", () => {
+      const scopes = ["repo", "workflow", "user"];
+      expect(hasRequiredScopes(scopes)).toBe(true);
     });
 
     it("returns false with empty scopes", () => {

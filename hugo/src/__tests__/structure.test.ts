@@ -2,17 +2,19 @@
  * Unit tests for Hugo Structure Translation
  *
  * Tests the structure translation logic using mocked moss-api functions.
+ * Verifies that symlinks are used for efficiency, with copies only when renaming is required.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock the moss-api module with hoisted mocks
-const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists } =
+const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, mockCreateSymlink } =
   vi.hoisted(() => ({
     mockReadFile: vi.fn(),
     mockWriteFile: vi.fn(),
     mockListFiles: vi.fn(),
     mockFileExists: vi.fn(),
+    mockCreateSymlink: vi.fn(),
   }));
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
@@ -20,6 +22,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: mockWriteFile,
   listFiles: mockListFiles,
   fileExists: mockFileExists,
+  createSymlink: mockCreateSymlink,
 }));
 
 // Import after mocking
@@ -34,10 +37,10 @@ import {
 describe("createHugoStructure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCreateSymlink.mockResolvedValue(undefined);
   });
 
-  it("copies homepage as _index.md", async () => {
-    // Setup mocks - new API only takes relativePath
+  it("copies homepage as _index.md (rename required)", async () => {
     mockFileExists.mockResolvedValue(true);
     mockReadFile.mockResolvedValue("# Home");
     mockListFiles.mockResolvedValue(["index.md"]);
@@ -52,21 +55,20 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify homepage was written as _index.md (new API: relativePath, content)
+    // Homepage must be COPIED (not symlinked) because it's renamed from index.md to _index.md
     expect(mockWriteFile).toHaveBeenCalledWith(
       expect.stringContaining("content/_index.md"),
       "# Home"
     );
   });
 
-  it("copies root markdown files (excluding homepage)", async () => {
+  it("uses symlink for root markdown files (excluding homepage)", async () => {
     mockFileExists.mockResolvedValue(true);
     mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
-      if (file === "about.md") return "# About";
       return "";
     });
     mockListFiles.mockResolvedValue(["index.md", "about.md"]);
@@ -81,13 +83,13 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify about.md was copied (new API: relativePath, content)
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/about.md"),
-      "# About"
+    // about.md should be SYMLINKED (not copied)
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "about.md",
+      expect.stringContaining("content/about.md")
     );
   });
 
@@ -106,24 +108,29 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify only _index.md was written, not index.md (new API: args[0] is path)
+    // Verify only _index.md was written
     const writeFileCalls = mockWriteFile.mock.calls;
     const contentWrites = writeFileCalls.filter((call: string[]) =>
       call[0].includes("content/")
     );
     expect(contentWrites).toHaveLength(1);
     expect(contentWrites[0][0]).toContain("_index.md");
+
+    // Verify no symlink was created for homepage
+    expect(mockCreateSymlink).not.toHaveBeenCalledWith(
+      "index.md",
+      expect.anything()
+    );
   });
 
-  it("copies content folder files with index.md → _index.md renaming", async () => {
+  it("copies index.md → _index.md but symlinks other content files", async () => {
     mockFileExists.mockResolvedValue(true);
     mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
       if (file === "posts/index.md") return "# Posts";
-      if (file === "posts/article.md") return "# Article";
       return "";
     });
     mockListFiles.mockResolvedValue([
@@ -142,19 +149,19 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify posts/index.md was renamed to _index.md
+    // posts/index.md must be COPIED because it's renamed to _index.md
     expect(mockWriteFile).toHaveBeenCalledWith(
       expect.stringContaining("content/posts/_index.md"),
       "# Posts"
     );
 
-    // Verify posts/article.md was copied as-is
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/posts/article.md"),
-      "# Article"
+    // posts/article.md should be SYMLINKED
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "posts/article.md",
+      expect.stringContaining("content/posts/article.md")
     );
   });
 
@@ -175,19 +182,15 @@ describe("createHugoStructure", () => {
       createHugoStructure(
         "/test/project",
         projectInfo,
-        "/test/project/.moss/plugins/hugo-generator/.runtime"
+        "/test/project/.moss/plugins/hugo/.runtime"
       )
     ).resolves.not.toThrow();
   });
 
-  it("copies text assets to static folder", async () => {
+  it("uses symlinks for asset files", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (file: string) => {
-      if (file === "index.md") return "# Home";
-      if (file === "assets/style.css") return "body { color: black; }";
-      return "";
-    });
-    mockListFiles.mockResolvedValue(["index.md", "assets/style.css"]);
+    mockReadFile.mockResolvedValue("# Home");
+    mockListFiles.mockResolvedValue(["index.md", "assets/style.css", "assets/logo.png"]);
     mockWriteFile.mockResolvedValue(undefined);
 
     const projectInfo: ProjectInfo = {
@@ -199,24 +202,23 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify CSS file was copied to static
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("static/assets/style.css"),
-      "body { color: black; }"
+    // Assets should be SYMLINKED (supports binary files correctly)
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "assets/style.css",
+      expect.stringContaining("static/assets/style.css")
+    );
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "assets/logo.png",
+      expect.stringContaining("static/assets/logo.png")
     );
   });
 
-  it("handles multiple content folders", async () => {
+  it("handles multiple content folders with symlinks", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (file: string) => {
-      if (file === "index.md") return "# Home";
-      if (file === "posts/post.md") return "# Post";
-      if (file === "projects/project.md") return "# Project";
-      return "";
-    });
+    mockReadFile.mockResolvedValue("# Home");
     mockListFiles.mockResolvedValue([
       "index.md",
       "posts/post.md",
@@ -233,24 +235,24 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/posts/post.md"),
-      "# Post"
+    // Non-index files should be SYMLINKED
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "posts/post.md",
+      expect.stringContaining("content/posts/post.md")
     );
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/projects/project.md"),
-      "# Project"
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "projects/project.md",
+      expect.stringContaining("content/projects/project.md")
     );
   });
 
-  it("handles nested folder structure", async () => {
+  it("handles nested folder structure with symlinks", async () => {
     mockFileExists.mockResolvedValue(true);
     mockReadFile.mockImplementation(async (file: string) => {
       if (file === "index.md") return "# Home";
-      if (file === "docs/guide/intro.md") return "# Intro";
       if (file === "docs/guide/index.md") return "# Guide";
       return "";
     });
@@ -270,29 +272,25 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    // Verify nested index.md is renamed to _index.md
+    // Nested index.md must be COPIED (renamed to _index.md)
     expect(mockWriteFile).toHaveBeenCalledWith(
       expect.stringContaining("content/docs/guide/_index.md"),
       "# Guide"
     );
 
-    // Verify other files are copied as-is
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/docs/guide/intro.md"),
-      "# Intro"
+    // Other files should be SYMLINKED
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "docs/guide/intro.md",
+      expect.stringContaining("content/docs/guide/intro.md")
     );
   });
 
-  it("handles Chinese folder names", async () => {
+  it("handles Chinese folder names with symlinks", async () => {
     mockFileExists.mockResolvedValue(true);
-    mockReadFile.mockImplementation(async (file: string) => {
-      if (file === "index.md") return "# Home";
-      if (file === "文章/文章1.md") return "# 文章1";
-      return "";
-    });
+    mockReadFile.mockResolvedValue("# Home");
     mockListFiles.mockResolvedValue(["index.md", "文章/文章1.md"]);
     mockWriteFile.mockResolvedValue(undefined);
 
@@ -305,13 +303,50 @@ describe("createHugoStructure", () => {
     await createHugoStructure(
       "/test/project",
       projectInfo,
-      "/test/project/.moss/plugins/hugo-generator/.runtime"
+      "/test/project/.moss/plugins/hugo/.runtime"
     );
 
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("content/文章/文章1.md"),
-      "# 文章1"
+    // Chinese filename should be SYMLINKED
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "文章/文章1.md",
+      expect.stringContaining("content/文章/文章1.md")
     );
+  });
+
+  it("verifies symlinks are used for efficiency, not copies", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockReadFile.mockResolvedValue("# Home");
+    mockListFiles.mockResolvedValue([
+      "index.md",
+      "about.md",
+      "contact.md",
+      "posts/post1.md",
+      "posts/post2.md",
+      "assets/image.png",
+    ]);
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["posts"],
+      total_files: 6,
+      homepage_file: "index.md",
+    };
+
+    await createHugoStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/hugo/.runtime"
+    );
+
+    // Only homepage should be copied (rename required)
+    const writeCalls = mockWriteFile.mock.calls.filter((call: string[]) =>
+      call[0].includes("content/")
+    );
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0][0]).toContain("_index.md");
+
+    // All other files should be symlinked
+    expect(mockCreateSymlink).toHaveBeenCalledTimes(5); // about, contact, post1, post2, image
   });
 });
 
@@ -327,11 +362,10 @@ describe("createHugoConfig", () => {
 
     await createHugoConfig(
       siteConfig,
-      "/test/project/.moss/plugins/hugo-generator/.runtime",
+      "/test/project/.moss/plugins/hugo/.runtime",
       "/test/project"
     );
 
-    // New API: writeFile(relativePath, content)
     expect(mockWriteFile).toHaveBeenCalledWith(
       expect.stringContaining("hugo.toml"),
       expect.stringContaining('baseURL = "/"')
@@ -349,7 +383,7 @@ describe("createHugoConfig", () => {
 
     await createHugoConfig(
       siteConfig,
-      "/test/project/.moss/plugins/hugo-generator/.runtime",
+      "/test/project/.moss/plugins/hugo/.runtime",
       "/test/project"
     );
 
@@ -366,7 +400,7 @@ describe("createHugoConfig", () => {
 
     await createHugoConfig(
       siteConfig,
-      "/test/project/.moss/plugins/hugo-generator/.runtime",
+      "/test/project/.moss/plugins/hugo/.runtime",
       "/test/project"
     );
 
@@ -383,18 +417,14 @@ describe("createHugoConfig", () => {
 
     await createHugoConfig(
       siteConfig,
-      "/test/project/.moss/plugins/hugo-generator/.runtime",
+      "/test/project/.moss/plugins/hugo/.runtime",
       "/test/project"
     );
 
-    // New API: args[1] is content (not args[2])
     const configContent = mockWriteFile.mock.calls[0][1];
 
-    // Check for permalink configuration
     expect(configContent).toContain("[permalinks]");
-    // Check for disabled features
     expect(configContent).toContain("disableKinds");
-    // Check for markdown settings
     expect(configContent).toContain("[markup.goldmark]");
     expect(configContent).toContain("unsafe = true");
   });
@@ -402,9 +432,8 @@ describe("createHugoConfig", () => {
 
 describe("cleanupRuntime", () => {
   it("is a no-op (cleanup handled by moss core)", async () => {
-    // cleanupRuntime should not throw
     await expect(
-      cleanupRuntime("/test/project/.moss/plugins/hugo-generator/.runtime")
+      cleanupRuntime("/test/project/.moss/plugins/hugo/.runtime")
     ).resolves.not.toThrow();
   });
 });

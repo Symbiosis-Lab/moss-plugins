@@ -1,12 +1,16 @@
 /**
  * Unit tests for Astro Structure Translation
+ *
+ * Tests that symlinks are used for content collections and assets,
+ * while pages are written as transformed Astro components.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles } =
+const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, mockCreateSymlink, writtenFiles, createdSymlinks } =
   vi.hoisted(() => {
     const writtenFiles = new Map<string, string>();
+    const createdSymlinks = new Map<string, string>();
     return {
       mockReadFile: vi.fn(),
       mockWriteFile: vi.fn().mockImplementation((path: string, content: string) => {
@@ -15,7 +19,12 @@ const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles
       }),
       mockListFiles: vi.fn(),
       mockFileExists: vi.fn(),
+      mockCreateSymlink: vi.fn().mockImplementation((target: string, link: string) => {
+        createdSymlinks.set(link, target);
+        return Promise.resolve();
+      }),
       writtenFiles,
+      createdSymlinks,
     };
   });
 
@@ -24,6 +33,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: mockWriteFile,
   listFiles: mockListFiles,
   fileExists: mockFileExists,
+  createSymlink: mockCreateSymlink,
 }));
 
 import {
@@ -37,10 +47,11 @@ describe("Astro Structure Translation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     writtenFiles.clear();
+    createdSymlinks.clear();
   });
 
   describe("createAstroStructure", () => {
-    it("copies homepage as index.astro in src/pages", async () => {
+    it("writes homepage as index.astro in src/pages (transformed)", async () => {
       mockFileExists.mockResolvedValue(true);
       mockReadFile.mockResolvedValue("# Home");
       mockListFiles.mockResolvedValue(["index.md"]);
@@ -54,14 +65,15 @@ describe("Astro Structure Translation", () => {
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
+      // Homepage is written (transformed to Astro component)
       const files = Array.from(writtenFiles.keys());
       expect(files.some(f => f.includes("src/pages/index.astro"))).toBe(true);
     });
 
-    it("copies root markdown files as Astro pages", async () => {
+    it("writes root markdown files as Astro pages (transformed)", async () => {
       mockFileExists.mockResolvedValue(true);
       mockReadFile.mockImplementation((path: string) => {
         if (path === "index.md") return Promise.resolve("# Home");
@@ -79,20 +91,17 @@ describe("Astro Structure Translation", () => {
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
+      // Root pages are written (transformed to Astro components)
       const files = Array.from(writtenFiles.keys());
       expect(files.some(f => f.includes("src/pages/about.astro"))).toBe(true);
     });
 
-    it("copies collection files to src/content/", async () => {
+    it("symlinks collection files to src/content/", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "posts/post-1.md") return Promise.resolve("# Post 1");
-        return Promise.resolve("");
-      });
+      mockReadFile.mockResolvedValue("# Home");
       mockListFiles.mockResolvedValue(["index.md", "posts/post-1.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -104,11 +113,14 @@ describe("Astro Structure Translation", () => {
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/content/posts/post-1.md"))).toBe(true);
+      // Collection files are symlinked (not written)
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "posts/post-1.md",
+        expect.stringContaining("src/content/posts/post-1.md")
+      );
     });
 
     it("handles missing homepage gracefully", async () => {
@@ -125,45 +137,44 @@ describe("Astro Structure Translation", () => {
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
       const files = Array.from(writtenFiles.keys());
       expect(files.some(f => f.includes("about.astro"))).toBe(true);
     });
 
-    it("copies assets to public/ directory", async () => {
+    it("symlinks assets to public/ directory", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "assets/style.css") return Promise.resolve("body {}");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "assets/style.css"]);
+      mockReadFile.mockResolvedValue("# Home");
+      mockListFiles.mockResolvedValue(["index.md", "assets/style.css", "assets/logo.png"]);
 
       const projectInfo: ProjectInfo = {
         content_folders: [],
-        total_files: 2,
+        total_files: 3,
         homepage_file: "index.md",
       };
 
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("public/assets/style.css"))).toBe(true);
+      // Assets are symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "assets/style.css",
+        expect.stringContaining("public/assets/style.css")
+      );
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "assets/logo.png",
+        expect.stringContaining("public/assets/logo.png")
+      );
     });
 
-    it("handles Chinese folder names", async () => {
+    it("symlinks Chinese folder names", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# 首页");
-        if (path === "文章/article.md") return Promise.resolve("# 文章");
-        return Promise.resolve("");
-      });
+      mockReadFile.mockResolvedValue("# 首页");
       mockListFiles.mockResolvedValue(["index.md", "文章/article.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -175,11 +186,14 @@ describe("Astro Structure Translation", () => {
       await createAstroStructure(
         "/project",
         projectInfo,
-        "/project/.moss/plugins/astro-generator/.runtime"
+        "/project/.moss/plugins/astro/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("文章/article.md"))).toBe(true);
+      // Chinese folder content is symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "文章/article.md",
+        expect.stringContaining("文章/article.md")
+      );
     });
   });
 
@@ -189,7 +203,7 @@ describe("Astro Structure Translation", () => {
 
       await createAstroConfig(
         siteConfig,
-        "/project/.moss/plugins/astro-generator/.runtime",
+        "/project/.moss/plugins/astro/.runtime",
         "/project"
       );
 
@@ -205,7 +219,7 @@ describe("Astro Structure Translation", () => {
 
       await createAstroConfig(
         siteConfig,
-        "/project/.moss/plugins/astro-generator/.runtime",
+        "/project/.moss/plugins/astro/.runtime",
         "/project"
       );
 

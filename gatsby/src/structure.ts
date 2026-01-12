@@ -21,6 +21,7 @@ import {
   writeFile,
   listFiles,
   fileExists,
+  createSymlink,
 } from "@symbiosis-lab/moss-api";
 
 export interface ProjectInfo {
@@ -119,17 +120,16 @@ export async function createGatsbyStructure(
   const allFiles = await listFiles();
   const markdownFiles = allFiles.filter((f: string) => f.endsWith(".md"));
 
-  // 3. Copy content folder files to src/content/
+  // 3. Symlink content folder files to src/content/
   for (const folder of projectInfo.content_folders) {
     const folderFiles = markdownFiles.filter((f: string) =>
       f.startsWith(`${folder}/`)
     );
 
     for (const file of folderFiles) {
-      const content = await readFile(file);
       const relativePath = file.substring(folder.length + 1);
-      // Content collections go to src/content/
-      await writeFile(`${runtimeRelative}/src/content/${folder}/${relativePath}`, content);
+      // Content collections go to src/content/ - use symlink for efficiency
+      await createSymlink(file, `${runtimeRelative}/src/content/${folder}/${relativePath}`);
     }
   }
 
@@ -147,17 +147,10 @@ export async function createGatsbyStructure(
     await writeFile(`${runtimeRelative}/src/pages/${baseName}.js`, gatsbyContent);
   }
 
-  // 5. Copy assets to static/
+  // 5. Symlink assets to static/ (supports binary files correctly)
   const assetFiles = allFiles.filter((f: string) => f.startsWith("assets/"));
   for (const file of assetFiles) {
-    if (isTextFile(file)) {
-      try {
-        const content = await readFile(file);
-        await writeFile(`${runtimeRelative}/static/${file}`, content);
-      } catch {
-        // Skip files that can't be read as text
-      }
-    }
+    await createSymlink(file, `${runtimeRelative}/static/${file}`);
   }
 }
 
@@ -220,11 +213,3 @@ function getRelativePath(basePath: string, targetPath: string): string {
   return targetPath;
 }
 
-function isTextFile(filePath: string): boolean {
-  const textExtensions = [
-    ".md", ".txt", ".css", ".js", ".json", ".html",
-    ".xml", ".svg", ".yaml", ".yml", ".toml", ".mjs", ".ts",
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-  return textExtensions.includes(ext);
-}

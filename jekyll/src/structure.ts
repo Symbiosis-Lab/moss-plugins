@@ -2,8 +2,8 @@
  * Jekyll Structure Translation Module
  *
  * Creates a Jekyll-compatible folder structure from moss's parsed project info
- * by copying content files. This enables Jekyll to build any folder structure
- * without requiring the user to reorganize their content.
+ * using symbolic links where possible. This enables Jekyll to build any folder
+ * structure without requiring the user to reorganize their content.
  *
  * ## Translation Rules
  *
@@ -19,7 +19,7 @@
  *
  * - Jekyll expects posts in `_posts/` directory (with optional date prefix)
  * - Other collections stay in their original directories
- * - Assets folder is copied as-is
+ * - Uses symlinks for efficiency; copies only when renaming is required
  * - Runtime directory is ephemeral and cleaned up after build
  */
 
@@ -28,6 +28,7 @@ import {
   writeFile,
   listFiles,
   fileExists,
+  createSymlink,
 } from "@symbiosis-lab/moss-api";
 
 /**
@@ -62,10 +63,11 @@ export interface SiteConfig {
 }
 
 /**
- * Creates the Jekyll-compatible folder structure by copying content files.
+ * Creates the Jekyll-compatible folder structure using symlinks.
  *
  * This is the core translation function that maps moss's flexible folder
- * structure to Jekyll's expected layout.
+ * structure to Jekyll's expected layout. Uses symlinks for efficiency,
+ * only copying when renaming is required.
  *
  * @param projectPath - Absolute path to the project folder
  * @param projectInfo - Parsed project structure from moss
@@ -81,28 +83,25 @@ export async function createJekyllStructure(
   // Calculate relative paths from project root
   const runtimeRelative = getRelativePath(projectPath, runtimeDir);
 
-  // 1. Handle homepage - Jekyll uses index.md at root
+  // 1. Handle homepage - Jekyll uses index.md at root (can be symlinked)
   if (projectInfo.homepage_file) {
     const homepageExists = await fileExists(projectInfo.homepage_file);
     if (homepageExists) {
-      const content = await readFile(projectInfo.homepage_file);
-      await writeFile(`${runtimeRelative}/index.md`, content);
+      await createSymlink(projectInfo.homepage_file, `${runtimeRelative}/index.md`);
     }
   }
 
-  // 2. Get all files in the project to copy content
+  // 2. Get all files in the project
   const allFiles = await listFiles();
   const markdownFiles = allFiles.filter((f: string) => f.endsWith(".md"));
 
-  // 3. Copy content folder files with appropriate transformations
+  // 3. Process content folder files with symlinks
   for (const folder of projectInfo.content_folders) {
     const folderFiles = markdownFiles.filter((f: string) =>
       f.startsWith(`${folder}/`)
     );
 
     for (const file of folderFiles) {
-      const content = await readFile(file);
-
       // Get the relative path within the folder
       const relativePath = file.substring(folder.length + 1);
 
@@ -110,17 +109,19 @@ export async function createJekyllStructure(
       let destPath: string;
       if (folder === "posts" || folder === "_posts") {
         // Posts go to _posts directory (Jekyll convention)
+        // Symlink individual files (folder is renamed, not files)
         destPath = `${runtimeRelative}/_posts/${relativePath}`;
       } else {
         // Other collections stay in their original directories
         destPath = `${runtimeRelative}/${folder}/${relativePath}`;
       }
 
-      await writeFile(destPath, content);
+      // Use symlink for all content files
+      await createSymlink(file, destPath);
     }
   }
 
-  // 4. Copy root-level markdown files (excluding homepage)
+  // 4. Process root-level markdown files (excluding homepage)
   const rootMarkdownFiles = markdownFiles.filter(
     (f: string) =>
       !f.includes("/") && // No subdirectory
@@ -128,23 +129,15 @@ export async function createJekyllStructure(
   );
 
   for (const file of rootMarkdownFiles) {
-    const content = await readFile(file);
-    await writeFile(`${runtimeRelative}/${file}`, content);
+    // Use symlink for root-level files
+    await createSymlink(file, `${runtimeRelative}/${file}`);
   }
 
-  // 5. Copy assets folder if it exists
+  // 5. Symlink assets folder if it exists
   const assetFiles = allFiles.filter((f: string) => f.startsWith("assets/"));
   for (const file of assetFiles) {
-    // For binary files, we need a different approach since readFile returns string
-    // For now, we'll skip binary assets and only copy text-based assets
-    if (isTextFile(file)) {
-      try {
-        const content = await readFile(file);
-        await writeFile(`${runtimeRelative}/${file}`, content);
-      } catch {
-        // Skip files that can't be read as text
-      }
-    }
+    // Use symlink for all asset files (supports binary files correctly)
+    await createSymlink(file, `${runtimeRelative}/${file}`);
   }
 }
 
@@ -233,25 +226,4 @@ function getRelativePath(basePath: string, targetPath: string): string {
   }
   // Fallback: return the target path
   return targetPath;
-}
-
-/**
- * Checks if a file is likely a text file based on extension.
- */
-function isTextFile(filePath: string): boolean {
-  const textExtensions = [
-    ".md",
-    ".txt",
-    ".css",
-    ".js",
-    ".json",
-    ".html",
-    ".xml",
-    ".svg",
-    ".yaml",
-    ".yml",
-    ".toml",
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-  return textExtensions.includes(ext);
 }

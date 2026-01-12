@@ -2,8 +2,8 @@
  * Hugo Structure Translation Module
  *
  * Creates a Hugo-compatible folder structure from moss's parsed project info
- * by copying content files. This enables Hugo to build any folder structure
- * without requiring the user to reorganize their content.
+ * using symbolic links where possible. This enables Hugo to build any folder
+ * structure without requiring the user to reorganize their content.
  *
  * ## Translation Rules
  *
@@ -17,7 +17,8 @@
  * ## Key Conventions
  *
  * - Hugo expects section indices to be `_index.md`, not `index.md`
- * - Assets folder is copied to `static/assets` for Hugo's static file handling
+ * - Assets folder is symlinked to `static/assets` for Hugo's static file handling
+ * - Uses symlinks for efficiency; copies only when renaming is required
  * - Runtime directory is ephemeral and cleaned up after build
  */
 
@@ -26,6 +27,7 @@ import {
   writeFile,
   listFiles,
   fileExists,
+  createSymlink,
 } from "@symbiosis-lab/moss-api";
 
 /**
@@ -60,10 +62,11 @@ export interface SiteConfig {
 }
 
 /**
- * Creates the Hugo-compatible folder structure by copying content files.
+ * Creates the Hugo-compatible folder structure using symlinks.
  *
  * This is the core translation function that maps moss's flexible folder
- * structure to Hugo's expected layout.
+ * structure to Hugo's expected layout. Uses symlinks for efficiency,
+ * only copying when file renaming is required.
  *
  * @param projectPath - Absolute path to the project folder
  * @param projectInfo - Parsed project structure from moss
@@ -82,6 +85,7 @@ export async function createHugoStructure(
   const staticDir = `${runtimeRelative}/static`;
 
   // 1. Handle homepage - Hugo expects _index.md at content root
+  // Must copy because we need to rename index.md to _index.md
   if (projectInfo.homepage_file) {
     const homepageExists = await fileExists(projectInfo.homepage_file);
     if (homepageExists) {
@@ -90,37 +94,41 @@ export async function createHugoStructure(
     }
   }
 
-  // 2. Get all files in the project to copy content
+  // 2. Get all files in the project
   const allFiles = await listFiles();
   const markdownFiles = allFiles.filter((f: string) => f.endsWith(".md"));
 
-  // 3. Copy content folder files with index.md → _index.md renaming
+  // 3. Process content folder files with symlinks (copy only for index.md → _index.md)
   for (const folder of projectInfo.content_folders) {
     const folderFiles = markdownFiles.filter((f: string) => f.startsWith(`${folder}/`));
 
     for (const file of folderFiles) {
-      const content = await readFile(file);
-
       // Get the relative path within the folder
       const relativePath = file.substring(folder.length + 1);
       const fileName = getFileName(relativePath);
 
-      // Rename index.md to _index.md (Hugo's section index convention)
+      // Determine destination path
       let destPath: string;
-      if (fileName.toLowerCase() === "index.md") {
+      const needsRename = fileName.toLowerCase() === "index.md";
+
+      if (needsRename) {
+        // Rename index.md to _index.md (Hugo's section index convention)
+        // Must copy because symlinks can't rename
         const dirPart = getDirName(relativePath);
         destPath = dirPart
           ? `${contentDir}/${folder}/${dirPart}/_index.md`
           : `${contentDir}/${folder}/_index.md`;
+        const content = await readFile(file);
+        await writeFile(destPath, content);
       } else {
+        // Use symlink for non-index files
         destPath = `${contentDir}/${folder}/${relativePath}`;
+        await createSymlink(file, destPath);
       }
-
-      await writeFile(destPath, content);
     }
   }
 
-  // 4. Copy root-level markdown files (excluding homepage)
+  // 4. Process root-level markdown files (excluding homepage)
   const rootMarkdownFiles = markdownFiles.filter(
     (f: string) =>
       !f.includes("/") && // No subdirectory
@@ -128,23 +136,15 @@ export async function createHugoStructure(
   );
 
   for (const file of rootMarkdownFiles) {
-    const content = await readFile(file);
-    await writeFile(`${contentDir}/${file}`, content);
+    // Use symlink for root-level files
+    await createSymlink(file, `${contentDir}/${file}`);
   }
 
-  // 5. Copy assets folder if it exists
+  // 5. Symlink assets folder if it exists
   const assetFiles = allFiles.filter((f: string) => f.startsWith("assets/"));
   for (const file of assetFiles) {
-    // For binary files, we need a different approach since readFile returns string
-    // For now, we'll skip binary assets and only copy text-based assets
-    if (isTextFile(file)) {
-      try {
-        const content = await readFile(file);
-        await writeFile(`${staticDir}/${file}`, content);
-      } catch {
-        // Skip files that can't be read as text
-      }
-    }
+    // Use symlink for all asset files (preserves binary files correctly)
+    await createSymlink(file, `${staticDir}/${file}`);
   }
 }
 
@@ -246,25 +246,4 @@ function getDirName(filePath: string): string {
     return "";
   }
   return parts.slice(0, -1).join("/");
-}
-
-/**
- * Checks if a file is likely a text file based on extension.
- */
-function isTextFile(filePath: string): boolean {
-  const textExtensions = [
-    ".md",
-    ".txt",
-    ".css",
-    ".js",
-    ".json",
-    ".html",
-    ".xml",
-    ".svg",
-    ".yaml",
-    ".yml",
-    ".toml",
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-  return textExtensions.includes(ext);
 }

@@ -25,7 +25,7 @@ var Gatsby = (() => {
     on_build: () => on_build
   });
 
-  // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
+  // ../../../moss-api/main/dist/index.mjs
   function getTauriCore() {
     const w = window;
     if (!w.__TAURI__?.core) throw new Error("Tauri core not available");
@@ -89,6 +89,14 @@ var Gatsby = (() => {
       return false;
     }
   }
+  async function createSymlink(targetPath, linkPath) {
+    const ctx = getInternalContext();
+    await getTauriCore().invoke("create_project_symlink", {
+      projectPath: ctx.project_path,
+      targetPath,
+      linkPath
+    });
+  }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
     return getTauriCore().invoke("read_plugin_file", {
@@ -135,13 +143,14 @@ var Gatsby = (() => {
   }
   async function executeBinary(options) {
     const ctx = getInternalContext();
-    const { binaryPath, args, timeoutMs = 6e4, env } = options;
+    const { binaryPath, args, timeoutMs = 6e4, env, stdin } = options;
     const result = await getTauriCore().invoke("execute_binary", {
       binaryPath,
       args,
       workingDir: ctx.project_path,
       timeoutMs,
-      env
+      env,
+      stdinData: stdin
     });
     return {
       success: result.success,
@@ -604,9 +613,8 @@ export const Head = () => <title>${pageTitle}</title>
         (f) => f.startsWith(`${folder}/`)
       );
       for (const file of folderFiles) {
-        const content = await readFile(file);
         const relativePath = file.substring(folder.length + 1);
-        await writeFile(`${runtimeRelative}/src/content/${folder}/${relativePath}`, content);
+        await createSymlink(file, `${runtimeRelative}/src/content/${folder}/${relativePath}`);
       }
     }
     const rootMarkdownFiles = markdownFiles.filter(
@@ -620,13 +628,7 @@ export const Head = () => <title>${pageTitle}</title>
     }
     const assetFiles = allFiles.filter((f) => f.startsWith("assets/"));
     for (const file of assetFiles) {
-      if (isTextFile(file)) {
-        try {
-          const content = await readFile(file);
-          await writeFile(`${runtimeRelative}/static/${file}`, content);
-        } catch {
-        }
-      }
+      await createSymlink(file, `${runtimeRelative}/static/${file}`);
     }
   }
   async function createGatsbyConfig(siteConfig, runtimeDir, projectPath) {
@@ -671,25 +673,6 @@ module.exports = {
       return targetPath;
     }
     return targetPath;
-  }
-  function isTextFile(filePath) {
-    const textExtensions = [
-      ".md",
-      ".txt",
-      ".css",
-      ".js",
-      ".json",
-      ".html",
-      ".xml",
-      ".svg",
-      ".yaml",
-      ".yml",
-      ".toml",
-      ".mjs",
-      ".ts"
-    ];
-    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-    return textExtensions.includes(ext);
   }
 
   // src/templates.ts

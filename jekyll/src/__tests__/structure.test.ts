@@ -1,24 +1,26 @@
 /**
  * Unit tests for Jekyll Structure Translation
  *
- * Tests the translation logic from moss project structure to Jekyll structure.
+ * Tests the structure translation logic using mocked moss-api functions.
+ * Verifies that symlinks are used for efficiency.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock the moss-api module with hoisted mocks
-const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles } =
+const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, mockCreateSymlink, createdSymlinks } =
   vi.hoisted(() => {
-    const writtenFiles = new Map<string, string>();
+    const createdSymlinks = new Map<string, string>();
     return {
       mockReadFile: vi.fn(),
-      mockWriteFile: vi.fn().mockImplementation((path: string, content: string) => {
-        writtenFiles.set(path, content);
-        return Promise.resolve();
-      }),
+      mockWriteFile: vi.fn(),
       mockListFiles: vi.fn(),
       mockFileExists: vi.fn(),
-      writtenFiles,
+      mockCreateSymlink: vi.fn().mockImplementation((target: string, link: string) => {
+        createdSymlinks.set(link, target);
+        return Promise.resolve();
+      }),
+      createdSymlinks,
     };
   });
 
@@ -27,296 +29,360 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: mockWriteFile,
   listFiles: mockListFiles,
   fileExists: mockFileExists,
+  createSymlink: mockCreateSymlink,
 }));
 
 // Import after mocking
 import {
   createJekyllStructure,
   createJekyllConfig,
+  cleanupRuntime,
   type ProjectInfo,
   type SiteConfig,
 } from "../structure";
 
-describe("Jekyll Structure Translation", () => {
+describe("createJekyllStructure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    writtenFiles.clear();
+    createdSymlinks.clear();
   });
 
-  describe("createJekyllStructure", () => {
-    it("copies homepage as index.md", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("# Home");
-      mockListFiles.mockResolvedValue(["index.md"]);
+  it("symlinks homepage as index.md", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue(["index.md"]);
 
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 1,
-        homepage_file: "index.md",
-      };
+    const projectInfo: ProjectInfo = {
+      content_folders: [],
+      total_files: 1,
+      homepage_file: "index.md",
+    };
 
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
 
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/index.md")).toBe(true);
-      expect(writtenFiles.get(".moss/plugins/jekyll-generator/.runtime/index.md")).toBe("# Home");
-    });
-
-    it("copies root markdown files (excluding homepage)", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "about.md") return Promise.resolve("# About");
-        if (path === "contact.md") return Promise.resolve("# Contact");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "about.md", "contact.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 3,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/about.md")).toBe(true);
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/contact.md")).toBe(true);
-    });
-
-    it("does not duplicate homepage in content folder", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("# Home");
-      mockListFiles.mockResolvedValue(["index.md", "about.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 2,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      // Homepage should only appear once at root
-      const homepageWrites = Array.from(writtenFiles.keys()).filter(
-        (k) => k.endsWith("/index.md")
-      );
-      expect(homepageWrites).toHaveLength(1);
-    });
-
-    it("copies collection files to _posts directory for posts", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "posts/post-1.md") return Promise.resolve("# Post 1");
-        if (path === "posts/post-2.md") return Promise.resolve("# Post 2");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue([
-        "index.md",
-        "posts/post-1.md",
-        "posts/post-2.md",
-      ]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: ["posts"],
-        total_files: 3,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      // Posts should be in _posts directory (Jekyll convention)
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/_posts/post-1.md")).toBe(true);
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/_posts/post-2.md")).toBe(true);
-    });
-
-    it("handles missing homepage gracefully", async () => {
-      mockFileExists.mockResolvedValue(false);
-      mockListFiles.mockResolvedValue(["about.md"]);
-      mockReadFile.mockResolvedValue("# About");
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 1,
-        homepage_file: undefined,
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      // Should not throw
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/about.md")).toBe(true);
-    });
-
-    it("copies text assets to assets/ directory", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "assets/style.css") return Promise.resolve("body {}");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "assets/style.css"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 2,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/assets/style.css")).toBe(true);
-    });
-
-    it("handles multiple content folders", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "posts/post-1.md") return Promise.resolve("# Post");
-        if (path === "projects/project-1.md") return Promise.resolve("# Project");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue([
-        "index.md",
-        "posts/post-1.md",
-        "projects/project-1.md",
-      ]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: ["posts", "projects"],
-        total_files: 3,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      // posts go to _posts, other collections to their own directories
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/_posts/post-1.md")).toBe(true);
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/projects/project-1.md")).toBe(true);
-    });
-
-    it("handles nested folder structures", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "docs/guide/intro.md") return Promise.resolve("# Intro");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "docs/guide/intro.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: ["docs"],
-        total_files: 2,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/docs/guide/intro.md")).toBe(true);
-    });
-
-    it("handles Chinese folder names", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# 首页");
-        if (path === "文章/article.md") return Promise.resolve("# 文章");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "文章/article.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: ["文章"],
-        total_files: 2,
-        homepage_file: "index.md",
-      };
-
-      await createJekyllStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/jekyll-generator/.runtime"
-      );
-
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/文章/article.md")).toBe(true);
-    });
+    // Jekyll can symlink homepage (no rename needed)
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "index.md",
+      expect.stringContaining("index.md")
+    );
   });
 
-  describe("createJekyllConfig", () => {
-    it("creates _config.yml with default values", async () => {
-      const siteConfig: SiteConfig = {};
+  it("symlinks root markdown files (excluding homepage)", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue(["index.md", "about.md", "contact.md"]);
 
-      await createJekyllConfig(
-        siteConfig,
-        "/project/.moss/plugins/jekyll-generator/.runtime",
-        "/project"
-      );
+    const projectInfo: ProjectInfo = {
+      content_folders: [],
+      total_files: 3,
+      homepage_file: "index.md",
+    };
 
-      expect(writtenFiles.has(".moss/plugins/jekyll-generator/.runtime/_config.yml")).toBe(true);
-      const config = writtenFiles.get(".moss/plugins/jekyll-generator/.runtime/_config.yml");
-      expect(config).toContain("title:");
-      expect(config).toContain("baseurl:");
-    });
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
 
-    it("uses site_name and base_url from config", async () => {
-      const siteConfig: SiteConfig = {
-        site_name: "My Site",
-        base_url: "/blog",
-      };
+    // about.md and contact.md should be symlinked
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "about.md",
+      expect.stringContaining("about.md")
+    );
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "contact.md",
+      expect.stringContaining("contact.md")
+    );
+  });
 
-      await createJekyllConfig(
-        siteConfig,
-        "/project/.moss/plugins/jekyll-generator/.runtime",
-        "/project"
-      );
+  it("symlinks posts to _posts directory", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue([
+      "index.md",
+      "posts/post-1.md",
+      "posts/post-2.md",
+    ]);
 
-      const config = writtenFiles.get(".moss/plugins/jekyll-generator/.runtime/_config.yml");
-      expect(config).toContain('title: "My Site"');
-      expect(config).toContain('baseurl: "/blog"');
-    });
+    const projectInfo: ProjectInfo = {
+      content_folders: ["posts"],
+      total_files: 3,
+      homepage_file: "index.md",
+    };
 
-    it("includes required Jekyll settings", async () => {
-      const siteConfig: SiteConfig = {};
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
 
-      await createJekyllConfig(
-        siteConfig,
-        "/project/.moss/plugins/jekyll-generator/.runtime",
-        "/project"
-      );
+    // posts/article.md should be symlinked to _posts/article.md
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "posts/post-1.md",
+      expect.stringContaining("_posts/post-1.md")
+    );
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "posts/post-2.md",
+      expect.stringContaining("_posts/post-2.md")
+    );
+  });
 
-      const config = writtenFiles.get(".moss/plugins/jekyll-generator/.runtime/_config.yml");
-      // Jekyll requires certain settings
-      expect(config).toContain("markdown:");
-      expect(config).toContain("kramdown");
-    });
+  it("symlinks other content folders without renaming", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue([
+      "index.md",
+      "projects/project1.md",
+    ]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["projects"],
+      total_files: 2,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    // projects should stay as-is
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "projects/project1.md",
+      expect.stringContaining("projects/project1.md")
+    );
+  });
+
+  it("symlinks asset files", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue(["index.md", "assets/style.css", "assets/logo.png"]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: [],
+      total_files: 1,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    // Assets should be symlinked
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "assets/style.css",
+      expect.stringContaining("assets/style.css")
+    );
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "assets/logo.png",
+      expect.stringContaining("assets/logo.png")
+    );
+  });
+
+  it("handles missing homepage gracefully", async () => {
+    mockFileExists.mockResolvedValue(false);
+    mockListFiles.mockResolvedValue(["about.md"]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: [],
+      total_files: 1,
+      homepage_file: undefined,
+    };
+
+    await expect(
+      createJekyllStructure(
+        "/test/project",
+        projectInfo,
+        "/test/project/.moss/plugins/jekyll/.runtime"
+      )
+    ).resolves.not.toThrow();
+  });
+
+  it("handles multiple content folders", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue([
+      "index.md",
+      "posts/post-1.md",
+      "projects/project-1.md",
+    ]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["posts", "projects"],
+      total_files: 3,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    // posts go to _posts, other collections to their own directories
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "posts/post-1.md",
+      expect.stringContaining("_posts/post-1.md")
+    );
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "projects/project-1.md",
+      expect.stringContaining("projects/project-1.md")
+    );
+  });
+
+  it("handles nested folder structures", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue(["index.md", "docs/guide/intro.md"]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["docs"],
+      total_files: 2,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "docs/guide/intro.md",
+      expect.stringContaining("docs/guide/intro.md")
+    );
+  });
+
+  it("handles Chinese folder names", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue(["index.md", "文章/article.md"]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["文章"],
+      total_files: 2,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    expect(mockCreateSymlink).toHaveBeenCalledWith(
+      "文章/article.md",
+      expect.stringContaining("文章/article.md")
+    );
+  });
+
+  it("uses symlinks for all content files (no writeFile for content)", async () => {
+    mockFileExists.mockResolvedValue(true);
+    mockListFiles.mockResolvedValue([
+      "index.md",
+      "about.md",
+      "posts/post1.md",
+      "posts/post2.md",
+      "assets/image.png",
+    ]);
+
+    const projectInfo: ProjectInfo = {
+      content_folders: ["posts"],
+      total_files: 5,
+      homepage_file: "index.md",
+    };
+
+    await createJekyllStructure(
+      "/test/project",
+      projectInfo,
+      "/test/project/.moss/plugins/jekyll/.runtime"
+    );
+
+    // All files should be symlinked (Jekyll doesn't need to rename content files)
+    expect(mockCreateSymlink).toHaveBeenCalledTimes(5); // index, about, post1, post2, image
+    // writeFile should not be called for content
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("createJekyllConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates _config.yml with default values", async () => {
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const siteConfig: SiteConfig = {};
+
+    await createJekyllConfig(
+      siteConfig,
+      "/test/project/.moss/plugins/jekyll/.runtime",
+      "/test/project"
+    );
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.stringContaining("_config.yml"),
+      expect.stringContaining('title: "Site"')
+    );
+  });
+
+  it("uses site_name from config", async () => {
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const siteConfig: SiteConfig = { site_name: "My Blog" };
+
+    await createJekyllConfig(
+      siteConfig,
+      "/test/project/.moss/plugins/jekyll/.runtime",
+      "/test/project"
+    );
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('title: "My Blog"')
+    );
+  });
+
+  it("uses base_url from config", async () => {
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const siteConfig: SiteConfig = { base_url: "/blog" };
+
+    await createJekyllConfig(
+      siteConfig,
+      "/test/project/.moss/plugins/jekyll/.runtime",
+      "/test/project"
+    );
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('baseurl: "/blog"')
+    );
+  });
+
+  it("includes required Jekyll settings", async () => {
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const siteConfig: SiteConfig = {};
+
+    await createJekyllConfig(
+      siteConfig,
+      "/test/project/.moss/plugins/jekyll/.runtime",
+      "/test/project"
+    );
+
+    const configContent = mockWriteFile.mock.calls[0][1];
+
+    expect(configContent).toContain("markdown: kramdown");
+    expect(configContent).toContain("permalink:");
+    expect(configContent).toContain("exclude:");
+  });
+});
+
+describe("cleanupRuntime", () => {
+  it("is a no-op (cleanup handled by moss core)", async () => {
+    await expect(
+      cleanupRuntime("/test/project/.moss/plugins/jekyll/.runtime")
+    ).resolves.not.toThrow();
   });
 });

@@ -4,9 +4,10 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles } =
+const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, mockCreateSymlink, writtenFiles, createdSymlinks } =
   vi.hoisted(() => {
     const writtenFiles = new Map<string, string>();
+    const createdSymlinks = new Map<string, string>();
     return {
       mockReadFile: vi.fn(),
       mockWriteFile: vi.fn().mockImplementation((path: string, content: string) => {
@@ -15,7 +16,12 @@ const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles
       }),
       mockListFiles: vi.fn(),
       mockFileExists: vi.fn(),
+      mockCreateSymlink: vi.fn().mockImplementation((source: string, dest: string) => {
+        createdSymlinks.set(dest, source);
+        return Promise.resolve();
+      }),
       writtenFiles,
+      createdSymlinks,
     };
   });
 
@@ -24,6 +30,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: mockWriteFile,
   listFiles: mockListFiles,
   fileExists: mockFileExists,
+  createSymlink: mockCreateSymlink,
 }));
 
 import {
@@ -37,6 +44,7 @@ describe("Gatsby Structure Translation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     writtenFiles.clear();
+    createdSymlinks.clear();
   });
 
   describe("createGatsbyStructure", () => {
@@ -86,7 +94,7 @@ describe("Gatsby Structure Translation", () => {
       expect(files.some(f => f.includes("src/pages/about.js"))).toBe(true);
     });
 
-    it("copies collection files to src/content/", async () => {
+    it("symlinks collection files to src/content/", async () => {
       mockFileExists.mockResolvedValue(true);
       mockReadFile.mockImplementation((path: string) => {
         if (path === "index.md") return Promise.resolve("# Home");
@@ -107,8 +115,8 @@ describe("Gatsby Structure Translation", () => {
         "/project/.moss/plugins/gatsby-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/content/posts/post-1.md"))).toBe(true);
+      const symlinks = Array.from(createdSymlinks.keys());
+      expect(symlinks.some(f => f.includes("src/content/posts/post-1.md"))).toBe(true);
     });
 
     it("handles missing homepage gracefully", async () => {
@@ -132,7 +140,7 @@ describe("Gatsby Structure Translation", () => {
       expect(files.some(f => f.includes("about.js"))).toBe(true);
     });
 
-    it("copies assets to static/ directory", async () => {
+    it("symlinks assets to static/ directory", async () => {
       mockFileExists.mockResolvedValue(true);
       mockReadFile.mockImplementation((path: string) => {
         if (path === "index.md") return Promise.resolve("# Home");
@@ -153,11 +161,11 @@ describe("Gatsby Structure Translation", () => {
         "/project/.moss/plugins/gatsby-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("static/assets/style.css"))).toBe(true);
+      const symlinks = Array.from(createdSymlinks.keys());
+      expect(symlinks.some(f => f.includes("static/assets/style.css"))).toBe(true);
     });
 
-    it("handles Chinese folder names", async () => {
+    it("handles folder names with symlinks", async () => {
       mockFileExists.mockResolvedValue(true);
       mockReadFile.mockImplementation((path: string) => {
         if (path === "index.md") return Promise.resolve("# Home");
@@ -178,8 +186,8 @@ describe("Gatsby Structure Translation", () => {
         "/project/.moss/plugins/gatsby-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("articles/article.md"))).toBe(true);
+      const symlinks = Array.from(createdSymlinks.keys());
+      expect(symlinks.some(f => f.includes("articles/article.md"))).toBe(true);
     });
 
     it("generates React components with correct structure", async () => {

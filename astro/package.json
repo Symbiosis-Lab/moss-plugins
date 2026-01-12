@@ -34,6 +34,6 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@symbiosis-lab/moss-api": "^0.6.1"
+    "@symbiosis-lab/moss-api": "^0.7.0"
   }
 }

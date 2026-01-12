@@ -16,10 +16,10 @@
  */
 
 import {
-  readFile,
   writeFile,
   listFiles,
   fileExists,
+  createSymlink,
 } from "@symbiosis-lab/moss-api";
 
 export interface ProjectInfo {
@@ -41,33 +41,10 @@ export interface SiteConfig {
   [key: string]: unknown;
 }
 
-/**
- * Ensures markdown content has proper frontmatter with layout.
- * Eleventy uses layouts specified in frontmatter.
- */
-function ensureLayoutInFrontmatter(
-  content: string,
-  layoutName: string = "base.njk"
-): string {
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-
-  if (frontmatterMatch) {
-    const frontmatter = frontmatterMatch[1];
-    // Check if layout is already specified
-    if (!/^layout:/m.test(frontmatter)) {
-      // Add layout to existing frontmatter
-      const newFrontmatter = `layout: ${layoutName}\n${frontmatter}`;
-      return `---\n${newFrontmatter}\n---${content.substring(frontmatterMatch[0].length)}`;
-    }
-    return content;
-  }
-
-  // No frontmatter exists, add one with layout
-  return `---\nlayout: ${layoutName}\n---\n\n${content}`;
-}
 
 /**
  * Creates the Eleventy-compatible folder structure.
+ * Uses symlinks for content and asset files to avoid duplication.
  */
 export async function createEleventyStructure(
   projectPath: string,
@@ -77,13 +54,11 @@ export async function createEleventyStructure(
 ): Promise<void> {
   const runtimeRelative = getRelativePath(projectPath, runtimeDir);
 
-  // 1. Handle homepage
+  // 1. Handle homepage - symlink to src/index.md
   if (projectInfo.homepage_file) {
     const homepageExists = await fileExists(projectInfo.homepage_file);
     if (homepageExists) {
-      const content = await readFile(projectInfo.homepage_file);
-      const eleventyContent = ensureLayoutInFrontmatter(content);
-      await writeFile(`${runtimeRelative}/src/index.md`, eleventyContent);
+      await createSymlink(projectInfo.homepage_file, `${runtimeRelative}/src/index.md`);
     }
   }
 
@@ -91,42 +66,31 @@ export async function createEleventyStructure(
   const allFiles = await listFiles();
   const markdownFiles = allFiles.filter((f: string) => f.endsWith(".md"));
 
-  // 3. Copy content folder files to src/
+  // 3. Symlink content folder files to src/
   for (const folder of projectInfo.content_folders) {
     const folderFiles = markdownFiles.filter((f: string) =>
       f.startsWith(`${folder}/`)
     );
 
     for (const file of folderFiles) {
-      const content = await readFile(file);
-      const eleventyContent = ensureLayoutInFrontmatter(content);
       // Keep the folder structure under src/
-      await writeFile(`${runtimeRelative}/src/${file}`, eleventyContent);
+      await createSymlink(file, `${runtimeRelative}/src/${file}`);
     }
   }
 
-  // 4. Copy root-level markdown files to src/
+  // 4. Symlink root-level markdown files to src/
   const rootMarkdownFiles = markdownFiles.filter(
     (f: string) => !f.includes("/") && f !== projectInfo.homepage_file
   );
 
   for (const file of rootMarkdownFiles) {
-    const content = await readFile(file);
-    const eleventyContent = ensureLayoutInFrontmatter(content);
-    await writeFile(`${runtimeRelative}/src/${file}`, eleventyContent);
+    await createSymlink(file, `${runtimeRelative}/src/${file}`);
   }
 
-  // 5. Copy assets to src/assets/
+  // 5. Symlink assets to src/assets/
   const assetFiles = allFiles.filter((f: string) => f.startsWith("assets/"));
   for (const file of assetFiles) {
-    if (isTextFile(file)) {
-      try {
-        const content = await readFile(file);
-        await writeFile(`${runtimeRelative}/src/${file}`, content);
-      } catch {
-        // Skip files that can't be read as text
-      }
-    }
+    await createSymlink(file, `${runtimeRelative}/src/${file}`);
   }
 }
 
@@ -194,23 +158,3 @@ function getRelativePath(basePath: string, targetPath: string): string {
   return targetPath;
 }
 
-function isTextFile(filePath: string): boolean {
-  const textExtensions = [
-    ".md",
-    ".txt",
-    ".css",
-    ".js",
-    ".json",
-    ".html",
-    ".xml",
-    ".svg",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".njk",
-    ".liquid",
-    ".ts",
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-  return textExtensions.includes(ext);
-}

@@ -4,9 +4,10 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles } =
+const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, mockCreateSymlink, writtenFiles, createdSymlinks } =
   vi.hoisted(() => {
     const writtenFiles = new Map<string, string>();
+    const createdSymlinks = new Map<string, string>();
     return {
       mockReadFile: vi.fn(),
       mockWriteFile: vi.fn().mockImplementation((path: string, content: string) => {
@@ -15,7 +16,12 @@ const { mockReadFile, mockWriteFile, mockListFiles, mockFileExists, writtenFiles
       }),
       mockListFiles: vi.fn(),
       mockFileExists: vi.fn(),
+      mockCreateSymlink: vi.fn().mockImplementation((target: string, link: string) => {
+        createdSymlinks.set(link, target);
+        return Promise.resolve();
+      }),
       writtenFiles,
+      createdSymlinks,
     };
   });
 
@@ -24,6 +30,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: mockWriteFile,
   listFiles: mockListFiles,
   fileExists: mockFileExists,
+  createSymlink: mockCreateSymlink,
 }));
 
 import {
@@ -40,12 +47,12 @@ describe("Eleventy Structure Translation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     writtenFiles.clear();
+    createdSymlinks.clear();
   });
 
   describe("createEleventyStructure", () => {
-    it("copies homepage as index.md in src/", async () => {
+    it("symlinks homepage as index.md in src/", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("# Home");
       mockListFiles.mockResolvedValue(["index.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -60,87 +67,15 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/index.md"))).toBe(true);
-    });
-
-    it("adds layout to frontmatter if missing", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("---\ntitle: Home\n---\n\n# Welcome");
-      mockListFiles.mockResolvedValue(["index.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 1,
-        homepage_file: "index.md",
-      };
-
-      await createEleventyStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/eleventy-generator/.runtime"
+      // Homepage is symlinked (not written)
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "index.md",
+        expect.stringContaining("src/index.md")
       );
-
-      const indexContent = Array.from(writtenFiles.entries())
-        .find(([k]) => k.includes("src/index.md"));
-      expect(indexContent).toBeDefined();
-      expect(indexContent![1]).toContain("layout: base.njk");
     });
 
-    it("creates frontmatter with layout if none exists", async () => {
+    it("symlinks root markdown files to src/", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("# Home without frontmatter");
-      mockListFiles.mockResolvedValue(["index.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 1,
-        homepage_file: "index.md",
-      };
-
-      await createEleventyStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/eleventy-generator/.runtime"
-      );
-
-      const indexContent = Array.from(writtenFiles.entries())
-        .find(([k]) => k.includes("src/index.md"));
-      expect(indexContent).toBeDefined();
-      expect(indexContent![1]).toContain("---\nlayout: base.njk\n---");
-    });
-
-    it("preserves existing layout in frontmatter", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("---\nlayout: custom.njk\ntitle: Home\n---\n\n# Welcome");
-      mockListFiles.mockResolvedValue(["index.md"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 1,
-        homepage_file: "index.md",
-      };
-
-      await createEleventyStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/eleventy-generator/.runtime"
-      );
-
-      const indexContent = Array.from(writtenFiles.entries())
-        .find(([k]) => k.includes("src/index.md"));
-      expect(indexContent).toBeDefined();
-      expect(indexContent![1]).toContain("layout: custom.njk");
-      expect(indexContent![1]).not.toContain("layout: base.njk");
-    });
-
-    it("copies root markdown files to src/", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "about.md") return Promise.resolve("# About");
-        return Promise.resolve("");
-      });
       mockListFiles.mockResolvedValue(["index.md", "about.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -155,17 +90,15 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/about.md"))).toBe(true);
+      // Root files are symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "about.md",
+        expect.stringContaining("src/about.md")
+      );
     });
 
-    it("copies collection files to src/folder/", async () => {
+    it("symlinks collection files to src/folder/", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "posts/post-1.md") return Promise.resolve("# Post 1");
-        return Promise.resolve("");
-      });
       mockListFiles.mockResolvedValue(["index.md", "posts/post-1.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -180,14 +113,16 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/posts/post-1.md"))).toBe(true);
+      // Collection files are symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "posts/post-1.md",
+        expect.stringContaining("src/posts/post-1.md")
+      );
     });
 
     it("handles missing homepage gracefully", async () => {
       mockFileExists.mockResolvedValue(false);
       mockListFiles.mockResolvedValue(["about.md"]);
-      mockReadFile.mockResolvedValue("# About");
 
       const projectInfo: ProjectInfo = {
         content_folders: [],
@@ -201,17 +136,15 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("about.md"))).toBe(true);
+      // about.md should be symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "about.md",
+        expect.stringContaining("src/about.md")
+      );
     });
 
-    it("copies assets to src/assets/ directory", async () => {
+    it("symlinks assets to src/assets/ directory", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "assets/style.css") return Promise.resolve("body {}");
-        return Promise.resolve("");
-      });
       mockListFiles.mockResolvedValue(["index.md", "assets/style.css"]);
 
       const projectInfo: ProjectInfo = {
@@ -226,21 +159,19 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("src/assets/style.css"))).toBe(true);
+      // Assets are symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "assets/style.css",
+        expect.stringContaining("src/assets/style.css")
+      );
     });
 
     it("handles Chinese folder names", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "posts/article.md") return Promise.resolve("# Article");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "posts/article.md"]);
+      mockListFiles.mockResolvedValue(["index.md", "文章/article.md"]);
 
       const projectInfo: ProjectInfo = {
-        content_folders: ["posts"],
+        content_folders: ["文章"],
         total_files: 2,
         homepage_file: "index.md",
       };
@@ -251,8 +182,39 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("posts/article.md"))).toBe(true);
+      // Chinese folder content is symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "文章/article.md",
+        expect.stringContaining("文章/article.md")
+      );
+    });
+
+    it("uses symlinks for all content files (no writeFile for content)", async () => {
+      mockFileExists.mockResolvedValue(true);
+      mockListFiles.mockResolvedValue([
+        "index.md",
+        "about.md",
+        "posts/post1.md",
+        "posts/post2.md",
+        "assets/style.css",
+      ]);
+
+      const projectInfo: ProjectInfo = {
+        content_folders: ["posts"],
+        total_files: 5,
+        homepage_file: "index.md",
+      };
+
+      await createEleventyStructure(
+        "/project",
+        projectInfo,
+        "/project/.moss/plugins/eleventy-generator/.runtime"
+      );
+
+      // All files should be symlinked
+      expect(mockCreateSymlink).toHaveBeenCalledTimes(5); // index, about, post1, post2, style.css
+      // writeFile should not be called for content
+      expect(mockWriteFile).not.toHaveBeenCalled();
     });
   });
 
@@ -389,36 +351,9 @@ describe("Eleventy Structure Translation", () => {
   });
 
   describe("edge cases", () => {
-    it("handles asset files that throw read errors", async () => {
+    it("symlinks all asset files including binary", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        if (path === "assets/binary.png") return Promise.reject(new Error("Binary file"));
-        return Promise.resolve("");
-      });
       mockListFiles.mockResolvedValue(["index.md", "assets/binary.png"]);
-
-      const projectInfo: ProjectInfo = {
-        content_folders: [],
-        total_files: 2,
-        homepage_file: "index.md",
-      };
-
-      // Should not throw, just skip the binary file
-      await expect(createEleventyStructure(
-        "/project",
-        projectInfo,
-        "/project/.moss/plugins/eleventy-generator/.runtime"
-      )).resolves.toBeUndefined();
-    });
-
-    it("skips non-text asset files", async () => {
-      mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockImplementation((path: string) => {
-        if (path === "index.md") return Promise.resolve("# Home");
-        return Promise.resolve("");
-      });
-      mockListFiles.mockResolvedValue(["index.md", "assets/image.png"]);
 
       const projectInfo: ProjectInfo = {
         content_folders: [],
@@ -432,14 +367,15 @@ describe("Eleventy Structure Translation", () => {
         "/project/.moss/plugins/eleventy-generator/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      // PNG files should be skipped (not text files)
-      expect(files.some(f => f.includes("image.png"))).toBe(false);
+      // Binary assets are symlinked (not read/copied)
+      expect(mockCreateSymlink).toHaveBeenCalledWith(
+        "assets/binary.png",
+        expect.stringContaining("src/assets/binary.png")
+      );
     });
 
     it("handles runtime path that starts with /", async () => {
       mockFileExists.mockResolvedValue(true);
-      mockReadFile.mockResolvedValue("# Home");
       mockListFiles.mockResolvedValue(["index.md"]);
 
       const projectInfo: ProjectInfo = {
@@ -454,8 +390,8 @@ describe("Eleventy Structure Translation", () => {
         "/different/path/.runtime"
       );
 
-      const files = Array.from(writtenFiles.keys());
-      expect(files.some(f => f.includes("/different/path/.runtime"))).toBe(true);
+      const links = Array.from(createdSymlinks.keys());
+      expect(links.some(l => l.includes("/different/path/.runtime"))).toBe(true);
     });
   });
 });

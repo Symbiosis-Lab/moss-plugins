@@ -24,7 +24,6 @@
  */
 
 import {
-  readFile,
   writeFile,
   listFiles,
   fileExists,

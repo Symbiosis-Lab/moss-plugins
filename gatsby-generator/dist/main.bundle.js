@@ -780,15 +780,10 @@ export default Layout
   // src/gatsby-config.ts
   var GATSBY_BINARY_CONFIG = {
     name: "npx",
-    displayName: "npx (for Gatsby)",
-    versionCommand: ["--version"],
+    versionCommand: "{name} --version",
     versionPattern: /(\d+\.\d+\.\d+)/,
-    platforms: {},
-    installInstructions: {
-      darwin: "Install Node.js from nodejs.org or via: brew install node",
-      linux: "Install Node.js from nodejs.org or via: apt install nodejs npm",
-      win32: "Install Node.js from nodejs.org"
-    }
+    sources: {},
+    binaryName: "npx"
   };
 
   // src/main.ts

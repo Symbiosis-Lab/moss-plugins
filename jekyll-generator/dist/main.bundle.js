@@ -776,17 +776,10 @@ layout: default
   // src/jekyll-config.ts
   var JEKYLL_BINARY_CONFIG = {
     name: "jekyll",
-    displayName: "Jekyll",
-    versionCommand: ["--version"],
+    versionCommand: "{name} --version",
     versionPattern: /jekyll\s+(\d+\.\d+\.\d+)/i,
-    // No auto-download for Jekyll (requires Ruby ecosystem)
-    platforms: {},
-    // Installation instructions
-    installInstructions: {
-      darwin: "Install with: gem install jekyll bundler",
-      linux: "Install with: gem install jekyll bundler",
-      win32: "Install Ruby from rubyinstaller.org, then: gem install jekyll bundler"
-    }
+    sources: {},
+    binaryName: "jekyll"
   };
 
   // src/main.ts

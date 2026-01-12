@@ -790,15 +790,10 @@ layout: base.njk
   // src/eleventy-config.ts
   var ELEVENTY_BINARY_CONFIG = {
     name: "npx",
-    displayName: "npx (for Eleventy)",
-    versionCommand: ["--version"],
+    versionCommand: "{name} --version",
     versionPattern: /(\d+\.\d+\.\d+)/,
-    platforms: {},
-    installInstructions: {
-      darwin: "Install Node.js from nodejs.org or via: brew install node",
-      linux: "Install Node.js from nodejs.org or via: apt install nodejs npm",
-      win32: "Install Node.js from nodejs.org"
-    }
+    sources: {},
+    binaryName: "npx"
   };
 
   // src/main.ts

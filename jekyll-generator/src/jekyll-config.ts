@@ -27,28 +27,8 @@ import type { BinaryConfig } from "@symbiosis-lab/moss-api";
  */
 export const JEKYLL_BINARY_CONFIG: BinaryConfig = {
   name: "jekyll",
-  displayName: "Jekyll",
-  versionCommand: ["--version"],
+  versionCommand: "{name} --version",
   versionPattern: /jekyll\s+(\d+\.\d+\.\d+)/i,
-
-  // No auto-download for Jekyll (requires Ruby ecosystem)
-  platforms: {},
-
-  // Installation instructions
-  installInstructions: {
-    darwin: "Install with: gem install jekyll bundler",
-    linux: "Install with: gem install jekyll bundler",
-    win32: "Install Ruby from rubyinstaller.org, then: gem install jekyll bundler",
-  },
-};
-
-/**
- * Bundler configuration for running Jekyll via bundle exec.
- */
-export const BUNDLER_CONFIG: BinaryConfig = {
-  name: "bundle",
-  displayName: "Bundler",
-  versionCommand: ["--version"],
-  versionPattern: /Bundler version (\d+\.\d+\.\d+)/i,
-  platforms: {},
+  sources: {},
+  binaryName: "jekyll",
 };

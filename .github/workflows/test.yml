@@ -156,10 +156,10 @@ jobs:
           name: ${{ matrix.plugin }}-rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # E2E tests for hugo-generator (with Hugo installed)
+  # E2E tests for hugo (with Hugo installed)
   test-hugo-e2e:
     needs: detect-changes
-    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo')
     strategy:
       fail-fast: false
       matrix:
@@ -194,18 +194,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd hugo-generator
+          cd hugo
           npm ci
 
       - name: Run E2E tests
         run: |
-          cd hugo-generator
+          cd hugo
           npm run test:e2e
 
   # E2E tests for binary resolver auto-download (without Hugo pre-installed)
   test-binary-resolver-download:
     needs: detect-changes
-    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo-generator')
+    if: contains(needs.detect-changes.outputs.js_plugins, 'hugo')
     strategy:
       fail-fast: false
       matrix:
@@ -221,12 +221,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd hugo-generator
+          cd hugo
           npm ci
 
       - name: Run binary resolver download tests
         run: |
-          cd hugo-generator
+          cd hugo
           npm run test:e2e -- --testNamePattern="Full Download Flow|GitHub API"
         env:
           TEST_DOWNLOAD_HUGO: 'true'

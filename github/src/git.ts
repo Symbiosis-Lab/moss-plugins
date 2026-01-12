@@ -452,6 +452,58 @@ export async function branchExists(branch: string): Promise<boolean> {
 }
 
 /**
+ * Add a worktree with recovery for stale worktree errors
+ * Bug 24 fix: If worktree add fails because the branch is already checked out
+ * in a stale worktree (from a crashed previous deployment), parse the stale path
+ * from the error message, remove it, and retry.
+ */
+async function addWorktreeWithRecovery(worktreePath: string, branch: string): Promise<void> {
+  try {
+    await runGit(["worktree", "add", worktreePath, branch]);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    // Check if this is the "already checked out" error
+    // Error format: "fatal: 'gh-pages' is already checked out at '/path/to/stale'"
+    const alreadyCheckedOutMatch = errorMsg.match(/already checked out at '([^']+)'/);
+
+    if (alreadyCheckedOutMatch) {
+      const stalePath = alreadyCheckedOutMatch[1];
+      await log("log", `   Found stale worktree at ${stalePath}, cleaning up...`);
+
+      // Try to remove the stale worktree
+      try {
+        await runGit(["worktree", "remove", stalePath, "--force"]);
+      } catch {
+        // If git worktree remove fails, try direct directory removal
+        await log("log", "   Worktree remove failed, trying direct cleanup...");
+      }
+
+      // Also remove the directory if it still exists
+      try {
+        await runShell(["rm", "-rf", stalePath]);
+      } catch {
+        // Directory might not exist, that's fine
+      }
+
+      // Prune again to clean up any remaining references
+      try {
+        await runGit(["worktree", "prune"]);
+      } catch {
+        // Prune failed, continue anyway
+      }
+
+      // Retry the worktree add
+      await log("log", "   Retrying worktree creation...");
+      await runGit(["worktree", "add", worktreePath, branch]);
+    } else {
+      // Not a stale worktree error, rethrow
+      throw error;
+    }
+  }
+}
+
+/**
  * Generate a unique temp directory path for worktree
  * Uses system temp directory to avoid issues with .moss being in git
  */
@@ -472,15 +524,25 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
   const worktreePath = getWorktreePath();
 
   try {
-    // Step 0: Remove stale worktree if exists (shouldn't happen with unique paths, but be safe)
+    // Step 0: Clean up stale worktrees from previous crashed deployments
+    // Bug 24 fix: If a previous deployment crashed, a stale worktree entry may still
+    // reference gh-pages, causing "already checked out" errors. Prune removes entries
+    // for worktrees whose directories no longer exist.
     await log("log", "   Preparing gh-pages worktree...");
+    try {
+      await runGit(["worktree", "prune"]);
+    } catch {
+      // Prune failed, continue anyway - might still work
+    }
+
+    // Also try to remove the specific worktree path if it exists
     try {
       await runGit(["worktree", "remove", worktreePath, "--force"]);
     } catch {
       // Worktree doesn't exist, that's fine
     }
 
-    // Also clean up the directory if it exists
+    // Clean up the directory if it exists
     try {
       await runShell(["rm", "-rf", worktreePath]);
     } catch {
@@ -506,11 +568,11 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
       // Step 3: Create branch reference (without switching current branch)
       await runGit(["update-ref", "refs/heads/gh-pages", commitHash.trim()]);
 
-      // Step 4: Add worktree for the new branch
-      await runGit(["worktree", "add", worktreePath, "gh-pages"]);
+      // Step 4: Add worktree for the new branch (with recovery for edge cases)
+      await addWorktreeWithRecovery(worktreePath, "gh-pages");
     } else {
-      // Use existing gh-pages branch
-      await runGit(["worktree", "add", worktreePath, "gh-pages"]);
+      // Use existing gh-pages branch with recovery for stale worktrees
+      await addWorktreeWithRecovery(worktreePath, "gh-pages");
     }
 
     // Step 2: Clean worktree (remove all files except .git)

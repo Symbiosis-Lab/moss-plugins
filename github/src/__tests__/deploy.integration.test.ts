@@ -1316,6 +1316,121 @@ describe("on_deploy integration", () => {
     });
   });
 
+  // ============================================================================
+  // Bug 24: Stale Worktree Blocks Deployment
+  // When a previous deploy crashed, a stale worktree may still have gh-pages
+  // checked out, blocking new deployments. Plugin must recover gracefully.
+  // ============================================================================
+
+  describe("Stale Worktree Recovery (Bug 24 Fix)", () => {
+    it("recovers from stale worktree when gh-pages is already checked out elsewhere", async () => {
+      // Bug 24: When a previous deployment crashed, a stale worktree may still have
+      // gh-pages checked out, causing "already checked out" errors on subsequent deploys.
+      // The fix calls worktree prune proactively and handles errors with retry logic.
+
+      // Git repo exists
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      // SSH remote
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages EXISTS
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "def456ghi",
+        stderr: "",
+      });
+
+      // CRITICAL: worktree add fails because gh-pages is checked out elsewhere
+      // This simulates a stale worktree from a crashed previous deployment
+      ctx.binaryConfig.setResult("git worktree add", {
+        success: false,
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: 'gh-pages' is already checked out at '/tmp/moss-gh-pages-stale-123'",
+      });
+
+      // worktree prune succeeds (cleans up stale entries)
+      ctx.binaryConfig.setResult("git worktree prune", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      // worktree remove succeeds
+      ctx.binaryConfig.setResult("git worktree remove", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      // Default success for other git commands
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "A  index.html",
+        stderr: "",
+      });
+
+      // Shell commands succeed
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      // After the fix, deployment should succeed because:
+      // 1. worktree prune is called proactively to clean up stale entries
+      // 2. OR the code handles the "already checked out" error and recovers
+      expect(result.success).toBe(true);
+      expect(result.deployment?.method).toBe("github-pages");
+    });
+  });
+
   describe("Bug 23: OAuth should not trigger when git credentials work", () => {
     it("should deploy without OAuth when HTTPS remote exists (git handles auth)", async () => {
       // Setup: Git repo exists with HTTPS remote

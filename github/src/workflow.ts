@@ -2,7 +2,7 @@
  * GitHub Actions workflow template and creation
  */
 
-import { readFile, writeFile, fileExists } from "@symbiosis-lab/moss-api";
+import { writeFile, fileExists } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 
 /**
@@ -70,59 +70,6 @@ export async function createWorkflowFile(branch: string): Promise<void> {
   await writeFile(".github/workflows/moss-deploy.yml", content);
 
   await log("log", "   Workflow file created");
-}
-
-/**
- * Update .gitignore to track .moss/site/ while ignoring other .moss/ contents
- */
-export async function updateGitignore(): Promise<void> {
-  await log("log", "   Updating .gitignore...");
-
-  // Read current gitignore
-  let currentContent = "";
-  try {
-    currentContent = await readFile(".gitignore");
-  } catch {
-    // File doesn't exist, that's fine
-  }
-
-  // Check if already configured
-  const hasMossIgnore = currentContent.split("\n").some((line) => {
-    const trimmed = line.trim();
-    return trimmed === ".moss/" || trimmed === ".moss" || trimmed === "/.moss/" || trimmed === "/.moss";
-  });
-
-  const hasSiteException = currentContent.split("\n").some((line) => {
-    const trimmed = line.trim();
-    return trimmed === "!.moss/site/" || trimmed === "!.moss/site";
-  });
-
-  if (hasMossIgnore && hasSiteException) {
-    await log("log", "   .gitignore already configured correctly");
-    return;
-  }
-
-  let newContent = currentContent;
-
-  // Ensure content ends with newline
-  if (newContent && !newContent.endsWith("\n")) {
-    newContent += "\n";
-  }
-
-  // Add .moss/* if not ignoring .moss/
-  if (!hasMossIgnore) {
-    newContent += "\n# Moss build artifacts (except site/)\n";
-    newContent += ".moss/*\n";
-  }
-
-  // Add exception for .moss/site/
-  if (!hasSiteException) {
-    newContent += "!.moss/site/\n";
-  }
-
-  await writeFile(".gitignore", newContent);
-
-  await log("log", "   .gitignore updated");
 }
 
 /**

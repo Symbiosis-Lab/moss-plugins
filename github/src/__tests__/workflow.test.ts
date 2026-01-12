@@ -20,7 +20,6 @@ import {
   WORKFLOW_TEMPLATE,
   generateWorkflowContent,
   createWorkflowFile,
-  updateGitignore,
   workflowExists,
 } from "../workflow";
 
@@ -119,61 +118,6 @@ describe("createWorkflowFile", () => {
 
     const file = ctx.filesystem.getFile(`${projectPath}/.github/workflows/moss-deploy.yml`);
     expect(file?.content).toContain("branches: [develop]");
-  });
-});
-
-describe("updateGitignore", () => {
-  let ctx: MockTauriContext;
-  const projectPath = "/test/project";
-
-  beforeEach(() => {
-    ctx = setupMockTauri({ projectPath });
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    ctx.cleanup();
-  });
-
-  it("creates .gitignore if it doesn't exist", async () => {
-    await updateGitignore();
-
-    const file = ctx.filesystem.getFile(`${projectPath}/.gitignore`);
-    expect(file?.content).toContain(".moss/*");
-    expect(file?.content).toContain("!.moss/site/");
-  });
-
-  it("adds .moss/* to existing .gitignore", async () => {
-    ctx.filesystem.setFile(`${projectPath}/.gitignore`, "node_modules/\n");
-
-    await updateGitignore();
-
-    const file = ctx.filesystem.getFile(`${projectPath}/.gitignore`);
-    expect(file?.content).toContain("node_modules/");
-    expect(file?.content).toContain(".moss/*");
-    expect(file?.content).toContain("!.moss/site/");
-  });
-
-  it("does not duplicate if already configured", async () => {
-    ctx.filesystem.setFile(`${projectPath}/.gitignore`, ".moss/\n!.moss/site/\n");
-
-    await updateGitignore();
-
-    const file = ctx.filesystem.getFile(`${projectPath}/.gitignore`);
-    const content = file?.content || "";
-    // Should not add duplicate entries
-    const mossMatches = content.match(/\.moss/g) || [];
-    expect(mossMatches.length).toBe(2); // Original two entries only
-  });
-
-  it("handles .gitignore without trailing newline", async () => {
-    ctx.filesystem.setFile(`${projectPath}/.gitignore`, "node_modules/");
-
-    await updateGitignore();
-
-    const file = ctx.filesystem.getFile(`${projectPath}/.gitignore`);
-    expect(file?.content).toContain("node_modules/");
-    expect(file?.content).toContain(".moss/*");
   });
 });
 

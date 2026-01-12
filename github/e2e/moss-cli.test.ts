@@ -30,6 +30,9 @@ const MOSS_BINARY = process.env.MOSS_BINARY || path.join(
   "../../../../moss/develop/src-tauri/target/debug/moss"
 );
 
+// Check if we're using a release binary (from CI) vs local dev build
+const IS_CI_BINARY = !!process.env.MOSS_BINARY;
+
 // Path to plugin dist
 const PLUGIN_DIST = path.join(__dirname, "../dist");
 
@@ -221,13 +224,10 @@ describe("Moss CLI E2E Tests", () => {
   });
 
   describe("Deploy command", () => {
-    // SKIP: Requires moss binary with fix/github-plugin-bugs changes
     // This test verifies exit code 1 when no deploy plugin is installed.
-    // The behavior was fixed in moss fix/github-plugin-bugs branch (Bug 5).
-    // Enable this test once that release is available in GitHub releases.
-    // CI downloads pre-built binary from releases, so we can't test this until
-    // the fix is released. See: .github/workflows/test.yml lines 102-112
-    it.skip("shows 'no plugin' message when no deploy plugin installed", async () => {
+    // The behavior was fixed in moss v0.3.0 (Bug 5).
+    // Only runs in CI with release binary - local dev builds may have different behavior.
+    it.skipIf(!IS_CI_BINARY)("shows 'no plugin' message when no deploy plugin installed", async () => {
       const fixture = createFixture({
         withGit: true,
         withRemote: "git@github.com:user/test-repo.git",

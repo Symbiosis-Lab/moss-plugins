@@ -28,6 +28,9 @@ const MOSS_BINARY =
   process.env.MOSS_BINARY ||
   path.join(__dirname, "../../../../moss/develop/src-tauri/target/debug/moss");
 
+// Check if moss binary exists
+const MOSS_AVAILABLE = fs.existsSync(MOSS_BINARY);
+
 // Check if --wait-plugins is supported
 let HAS_WAIT_PLUGINS = false;
 
@@ -145,16 +148,9 @@ function runMoss(
   });
 }
 
-describe("Nostr Plugin E2E Tests", () => {
+// Use describe.skipIf to skip all tests if moss is not available
+describe.skipIf(!MOSS_AVAILABLE)("Nostr Plugin E2E Tests", () => {
   beforeAll(async () => {
-    // Verify moss binary exists
-    if (!fs.existsSync(MOSS_BINARY)) {
-      throw new Error(
-        `Moss binary not found at ${MOSS_BINARY}. ` +
-          `Set MOSS_BINARY environment variable or build moss locally.`
-      );
-    }
-
     // Verify plugin dist exists
     if (!fs.existsSync(PLUGIN_DIST)) {
       throw new Error(

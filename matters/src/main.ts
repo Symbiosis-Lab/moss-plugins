@@ -36,7 +36,7 @@ import { syncToLocalFiles } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
-import { readFile, writeFile } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, showToast } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 
 // ============================================================================
@@ -413,12 +413,17 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
     console.log(`🌐 Deployed site: ${siteUrl}`);
     console.log(`📅 Deployed at: ${deployed_at}`);
 
+    // Show starting toast
+    await showToast("Starting Matters syndication...", "info", 3000);
+
     // Check authentication
     const isAuthenticated = await checkAuthentication();
     if (!isAuthenticated) {
       console.log("🔐 Not authenticated, prompting login...");
+      await showToast("Matters login required", "info", 5000);
       const loginSuccess = await promptLogin();
       if (!loginSuccess) {
+        await showToast("Login cancelled", "warning", 3000);
         return {
           success: false,
           message: "Login required for syndication",
@@ -511,6 +516,9 @@ async function syndicateArticle(
 ): Promise<{ draftId: string; publishedUrl?: string }> {
   console.log(`  → Syndicating: ${article.title}`);
 
+  // Show creating draft toast
+  await showToast(`Creating draft: ${article.title}`, "info", 5000);
+
   const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
   let content = article.content;
@@ -528,6 +536,9 @@ async function syndicateArticle(
 
   console.log(`    📝 Draft created with ID: ${draft.id}`);
 
+  // Show draft ready toast
+  await showToast("Draft created! Opening for review...", "success", 3000);
+
   // Step 2: Open draft in browser for user review
   const draftUrl = `https://matters.town/me/drafts/${draft.id}`;
   console.log(`    🌐 Opening draft for review: ${draftUrl}`);
@@ -541,6 +552,9 @@ async function syndicateArticle(
     const publishedUrl = `https://matters.town/@${userName}/${publishedArticle.slug}-${publishedArticle.shortHash}`;
     console.log(`    ✅ Published: ${publishedUrl}`);
 
+    // Show success toast
+    await showToast(`Published to Matters!`, "success", 5000);
+
     // Update the local markdown file's frontmatter
     if (article.source_path) {
       await updateFrontmatterSyndicated(article.source_path, publishedUrl);
@@ -552,6 +566,7 @@ async function syndicateArticle(
 
   // Step 5: Timeout - draft left for later
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
+  await showToast("Draft saved - publish when ready", "info", 5000);
   return { draftId: draft.id };
 }
 

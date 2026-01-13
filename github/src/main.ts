@@ -13,7 +13,7 @@
 import type { OnDeployContext, HookResult, DnsTarget } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists } from "./git";
+import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
 // For existing HTTPS remotes, git handles push auth via credential helper
 import { ensureGitHubRepo } from "./repo-setup";
@@ -209,10 +209,50 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     const ghPagesExisted = await branchExists("gh-pages");
     wasFirstSetup = !ghPagesExisted;
 
+    // Early change detection: If gh-pages exists, check if content has changed
+    // This avoids expensive worktree operations when there are no changes to deploy
+    let commitSha = "";
+    if (ghPagesExisted) {
+      const changeCheck = await checkForChanges();
+      if (!changeCheck.hasChanges) {
+        // No changes detected - skip worktree operations entirely
+        await reportProgress("complete", 5, 5, "No changes to deploy");
+        const pagesUrl = extractGitHubPagesUrl(remoteUrl);
+        await log("log", `   No changes to deploy`);
+        await log("log", `   🌐 Site URL: ${pagesUrl}`);
+
+        const parsed = parseGitHubUrl(remoteUrl);
+        const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
+
+        const dnsTarget: DnsTarget = {
+          type: "github-pages",
+          a_records: GITHUB_PAGES_IPS,
+          cname_target: pagesHostname,
+        };
+
+        return {
+          success: true,
+          message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
+          deployment: {
+            method: "github-pages",
+            url: pagesUrl,
+            deployed_at: new Date().toISOString(),
+            metadata: {
+              branch,
+              was_first_setup: "false",
+              commit_sha: "", // Empty = no changes
+              is_live: "true", // Already deployed, should be live
+            },
+            dns_target: dnsTarget,
+          },
+        };
+      }
+    }
+
     // Phase 4 & 5: Deploy to gh-pages branch using worktree (zero-config approach)
     // Bug 16 fix: Use git worktree to deploy without switching current branch
     await reportProgress("deploying", 4, 5, "Deploying to gh-pages...");
-    let commitSha = await deployToGhPages();
+    commitSha = await deployToGhPages();
 
     // Generate pages URL for logging and response
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);

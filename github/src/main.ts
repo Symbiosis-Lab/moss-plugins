@@ -287,7 +287,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Build result message based on scenario
     // Bug 16: Zero-config deployment - no manual steps needed
+    // Determine toast message and outcome based on scenario
     let message: string;
+    let toastTitle: string;
+    let toastOutcome: "success" | "info" | "error";
+
     if (wasFirstSetup && commitSha) {
       // Scenario 1: First-time deployment (gh-pages branch created)
       message =
@@ -295,18 +299,25 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         `Your site will be available at: ${pagesUrl}\n\n` +
         `GitHub Pages is automatically enabled for the gh-pages branch.\n` +
         `It may take a few minutes for your site to appear.`;
+      toastTitle = "🟢 Deploy configured!";
+      toastOutcome = "success";
     } else if (commitSha) {
       // Scenario 2: Subsequent deploy with changes pushed
       message =
         `Site deployed to GitHub Pages!\n\n` +
         `Your site: ${pagesUrl}\n\n` +
         `Changes have been pushed to gh-pages branch.`;
+      // Use is_live to determine if site is confirmed live
+      toastTitle = isLive ? "🟢 Live!" : "🟡 Deploying...";
+      toastOutcome = "success";
     } else {
       // Scenario 3: No changes to push
       message =
         `No changes to deploy.\n\n` +
         `Your site: ${pagesUrl}\n\n` +
         `Your local site is already up to date.`;
+      toastTitle = "No changes to deploy";
+      toastOutcome = "info";
     }
 
     // Final progress message based on scenario
@@ -327,6 +338,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     return {
       success: true,
       message,
+      toast: {
+        outcome: toastOutcome,
+        title: toastTitle,
+        url: pagesUrl,
+      },
       deployment: {
         method: "github-pages",
         url: pagesUrl,
@@ -345,9 +361,28 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await reportError(errorMessage, "deploy", true);
     await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
 
+    // Categorize error for toast display
+    const lowerError = errorMessage.toLowerCase();
+    let toastTitle: string;
+    if (lowerError.includes("authentication") || lowerError.includes("auth") || lowerError.includes("token")) {
+      toastTitle = "Authentication failed";
+    } else if (lowerError.includes("network") || lowerError.includes("connection") || lowerError.includes("timeout")) {
+      toastTitle = "Network error";
+    } else if (lowerError.includes("not a git repository") || lowerError.includes("no remote")) {
+      toastTitle = "Git not configured";
+    } else if (errorMessage.length > 50) {
+      toastTitle = errorMessage.slice(0, 50) + "...";
+    } else {
+      toastTitle = errorMessage;
+    }
+
     return {
       success: false,
       message: errorMessage,
+      toast: {
+        outcome: "error",
+        title: toastTitle,
+      },
     };
   }
 }

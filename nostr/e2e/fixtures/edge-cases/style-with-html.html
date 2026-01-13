@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Style with HTML-like Content</title>
+    <style>
+    /* CSS with </article> */
+    article::after {
+        content: '</article>';
+    }
+    </style>
+</head>
+<body>
+    <main>
+        <article>
+            <h1>Post with Style Tag</h1>
+            <p>Content here</p>
+            <style>
+            /* Inline style */
+            .test::before { content: '</article>'; }
+            </style>
+        </article>
+    </main>
+</body>
+</html>

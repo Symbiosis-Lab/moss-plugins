@@ -19,6 +19,30 @@ export type SSGType =
   | "unknown";
 
 /**
+ * Find the last index of a tag (case-insensitive)
+ *
+ * @param html - HTML content to search
+ * @param tag - Tag to find (lowercase, e.g., "</article>")
+ * @returns Index of the tag or -1 if not found
+ */
+function lastIndexOfTag(html: string, tag: string): number {
+  // Try lowercase first (most common)
+  const lowerIndex = html.lastIndexOf(tag);
+  if (lowerIndex !== -1) {
+    return lowerIndex;
+  }
+
+  // Try uppercase (legacy HTML)
+  const upperIndex = html.lastIndexOf(tag.toUpperCase());
+  if (upperIndex !== -1) {
+    return upperIndex;
+  }
+
+  // Not found
+  return -1;
+}
+
+/**
  * Find the best insertion point for the comment widget
  *
  * Priority:
@@ -32,19 +56,19 @@ export type SSGType =
  */
 export function findInsertionPoint(html: string): number {
   // Priority 1: Look for </article> tag (most reliable)
-  const articleEnd = html.lastIndexOf("</article>");
+  const articleEnd = lastIndexOfTag(html, "</article>");
   if (articleEnd !== -1) {
     return articleEnd;
   }
 
   // Priority 2: Look for </main> tag
-  const mainEnd = html.lastIndexOf("</main>");
+  const mainEnd = lastIndexOfTag(html, "</main>");
   if (mainEnd !== -1) {
     return mainEnd;
   }
 
   // Priority 3: Look for </body> tag
-  const bodyEnd = html.lastIndexOf("</body>");
+  const bodyEnd = lastIndexOfTag(html, "</body>");
   if (bodyEnd !== -1) {
     return bodyEnd;
   }
@@ -78,8 +102,8 @@ export function injectWidget(
   // Insert widget at the insertion point
   let result = html.slice(0, insertionPoint) + widgetWithAttr + html.slice(insertionPoint);
 
-  // Find </body> for loader script
-  const bodyEnd = result.lastIndexOf("</body>");
+  // Find </body> for loader script (case-insensitive)
+  const bodyEnd = lastIndexOfTag(result, "</body>");
   if (bodyEnd !== -1) {
     result = result.slice(0, bodyEnd) + loaderScript + result.slice(bodyEnd);
   } else {

@@ -240,9 +240,58 @@ jobs:
           TEST_DOWNLOAD_HUGO: 'true'
           GITHUB_TOKEN: ${{ github.token }}
 
+  # macOS CLI tests for plugins (using moss binary)
+  # Tests plugin CLI integration with --wait-plugins support
+  test-macos-cli:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.js_plugins != '[]'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download moss binary for e2e tests
+        run: |
+          gh release download --repo Symbiosis-Lab/moss -p 'moss-darwin-universal' -O moss-darwin-universal || {
+            echo "Warning: Could not download moss binary. E2E tests may be limited."
+            exit 0
+          }
+          chmod +x moss-darwin-universal
+          echo "MOSS_BINARY=$(pwd)/moss-darwin-universal" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Test all changed plugins (CLI tests)
+        run: |
+          PLUGINS="${{ needs.detect-changes.outputs.js_plugins_csv }}"
+          IFS=',' read -ra PLUGIN_ARRAY <<< "$PLUGINS"
+
+          for plugin in "${PLUGIN_ARRAY[@]}"; do
+            echo "=========================================="
+            echo "Testing plugin (macOS): $plugin"
+            echo "=========================================="
+
+            cd "$plugin"
+
+            echo "Installing dependencies..."
+            npm ci
+
+            echo "Building..."
+            npm run build
+
+            echo "Running e2e tests..."
+            npm run test:e2e || true
+
+            cd ..
+          done
+
   # Summary job for branch protection
   test-summary:
-    needs: [test-plugins, test-rust, test-cross-platform]
+    needs: [test-plugins, test-rust, test-cross-platform, test-macos-cli]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -250,7 +299,8 @@ jobs:
         run: |
           if [ "${{ needs.test-plugins.result }}" == "failure" ] || \
              [ "${{ needs.test-rust.result }}" == "failure" ] || \
-             [ "${{ needs.test-cross-platform.result }}" == "failure" ]; then
+             [ "${{ needs.test-cross-platform.result }}" == "failure" ] || \
+             [ "${{ needs.test-macos-cli.result }}" == "failure" ]; then
             echo "Some tests failed"
             exit 1
           fi

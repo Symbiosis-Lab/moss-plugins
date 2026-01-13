@@ -8,16 +8,17 @@
  * - moss binary built and available (set MOSS_BINARY env var or build locally)
  * - Plugin built (npm run build)
  * - Tests create temporary directories for fixtures
+ * - Display server available (xvfb-run on Linux CI)
  *
- * Plugin Execution Tests:
- * - With --wait-plugins flag, the CLI waits for plugin hooks to complete
- * - Requires a display (xvfb on Linux, native on macOS) for plugin webview
- * - Tests verify plugin validation errors and workflow file creation
+ * Plugin Execution:
+ * - Use --wait-plugins flag to wait for plugin hooks to complete
+ * - Plugin JavaScript runs in Tauri webview (requires display)
+ * - Tests verify plugin validation messages and error handling
  *
  * CI Setup:
- * - The workflow downloads moss-linux-x64 from releases before running tests
+ * - The workflow downloads moss binary from releases before running tests
  * - Set MOSS_BINARY environment variable to the binary path
- * - Use xvfb-run on Linux for display-requiring tests
+ * - Linux CI uses xvfb-run for display server
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -34,6 +35,9 @@ const MOSS_BINARY = process.env.MOSS_BINARY || path.join(
 
 // Check if we're using a release binary (from CI) vs local dev build
 const IS_CI_BINARY = !!process.env.MOSS_BINARY;
+
+// Check if --wait-plugins is supported (v0.3.1+)
+let HAS_WAIT_PLUGINS = false;
 
 // Path to plugin dist
 const PLUGIN_DIST = path.join(__dirname, "../dist");
@@ -159,7 +163,7 @@ function runMoss(
 }
 
 describe("Moss CLI E2E Tests", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     // Verify moss binary exists - fail if not available
     if (!fs.existsSync(MOSS_BINARY)) {
       throw new Error(
@@ -178,6 +182,10 @@ describe("Moss CLI E2E Tests", () => {
 
     // Create temp directory for test fixtures
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "moss-e2e-"));
+
+    // Check if --wait-plugins is supported
+    const { stdout } = await runMoss(["--help"]);
+    HAS_WAIT_PLUGINS = stdout.includes("--wait-plugins");
   });
 
   afterAll(() => {
@@ -304,97 +312,167 @@ describe("Moss CLI E2E Tests", () => {
   });
 
   /**
-   * Plugin execution tests using --wait-plugins flag.
+   * Plugin Execution Tests (with --wait-plugins)
    *
-   * These tests require:
-   * - A display (xvfb on Linux, native on macOS)
-   * - moss binary with --wait-plugins support (requires moss release with this feature)
+   * These tests use --wait-plugins to wait for plugin hooks to complete.
+   * Requires:
+   * - moss v0.3.1+ with --wait-plugins support
+   * - Display server (xvfb-run on Linux CI)
    *
-   * The --wait-plugins flag makes the CLI wait for all plugin hooks to complete,
-   * enabling us to verify plugin execution results.
+   * The plugin validation logic runs in the webview and reports errors
+   * via Tauri IPC commands which are captured in the CLI output.
    */
   describe("Plugin execution (with --wait-plugins)", () => {
-    // Check if display is available for plugin execution
-    const hasDisplay = process.env.DISPLAY || process.platform === 'darwin';
+    it.skipIf(!HAS_WAIT_PLUGINS)("reports validation errors for non-git repos", async () => {
+      // Create fixture WITHOUT git initialization - plugin should detect this
+      const fixture = createFixture({
+        withGit: false, // Not a git repo
+        withPlugin: true,
+      });
 
-    // Check if moss binary supports --wait-plugins (feature added in moss PR #35)
-    // This will be skipped until a moss release with --wait-plugins is available
-    let hasWaitPluginsSupport = false;
+      // First compile the site (creates .moss/site)
+      await runMoss(["compile", fixture, "--no-plugins"]);
 
-    beforeAll(async () => {
-      if (fs.existsSync(MOSS_BINARY)) {
-        // Check if --wait-plugins is in help output
-        const { stdout } = await runMoss(["--help"]);
-        hasWaitPluginsSupport = stdout.includes("--wait-plugins");
-      }
+      // Then deploy - plugin should report "not a git repository" error
+      const { stdout, stderr, code } = await runMoss(
+        ["deploy", fixture, "--wait-plugins"],
+        { timeout: 60000 }
+      );
+
+      const output = stdout + stderr;
+
+      // Plugin should have executed and reported validation error
+      // The exact error message depends on the plugin implementation
+      expect(output).toMatch(/not.*git.*repository|git.*init|Repository setup/i);
     });
 
-    it.skipIf(!hasDisplay || !hasWaitPluginsSupport)(
-      "deploy with plugin shows plugin progress (requires display)",
-      async () => {
-        const fixture = createFixture({
-          withGit: true,
-          withRemote: "git@github.com:test-user/test-repo.git",
-          withPlugin: true,
-        });
+    it.skipIf(!HAS_WAIT_PLUGINS)("reports errors for missing remote", async () => {
+      // Create git repo WITHOUT remote
+      const fixture = createFixture({
+        withGit: true,
+        withRemote: undefined, // No remote configured
+        withPlugin: true,
+      });
 
-        // Use --wait-plugins to ensure plugin hooks complete before exiting
-        const { stdout, stderr, code } = await runMoss(
-          ["compile", fixture, "--wait-plugins"],
-          { timeout: 180000 } // 3 minutes for plugin execution
-        );
+      // First compile the site
+      await runMoss(["compile", fixture, "--no-plugins"]);
 
-        const output = stdout + stderr;
+      // Then deploy - plugin should report "no remote" error
+      const { stdout, stderr, code } = await runMoss(
+        ["deploy", fixture, "--wait-plugins"],
+        { timeout: 60000 }
+      );
 
-        // Should show waiting messages from --wait-plugins
-        expect(output).toMatch(/Waiting for|hooks completed/i);
+      const output = stdout + stderr;
 
-        // Site should be generated
-        const siteDir = path.join(fixture, ".moss", "site");
-        expect(fs.existsSync(siteDir)).toBe(true);
-      }
-    );
+      // Plugin should report missing remote or show repo setup UI
+      expect(output).toMatch(/no.*remote|Repository setup|cancelled/i);
+    });
 
-    it.skipIf(!hasDisplay || !hasWaitPluginsSupport)(
-      "deploy command executes plugin deploy hook (requires display)",
-      async () => {
-        const fixture = createFixture({
-          withGit: true,
-          withRemote: "git@github.com:test-user/test-repo.git",
-          withPlugin: true,
-        });
+    it.skipIf(!HAS_WAIT_PLUGINS)("reports errors for non-GitHub remote", async () => {
+      // Create git repo with GitLab remote (not GitHub)
+      const fixture = createFixture({
+        withGit: true,
+        withRemote: "git@gitlab.com:user/repo.git", // GitLab, not GitHub
+        withPlugin: true,
+      });
 
-        // Deploy command doesn't need --wait-plugins as deploy hook is synchronous
-        const { stdout, stderr, code } = await runMoss(
-          ["deploy", fixture],
-          { timeout: 180000 }
-        );
+      // First compile the site
+      await runMoss(["compile", fixture, "--no-plugins"]);
 
-        const output = stdout + stderr;
+      // Then deploy - plugin should report "not a GitHub URL" error
+      const { stdout, stderr, code } = await runMoss(
+        ["deploy", fixture, "--wait-plugins"],
+        { timeout: 60000 }
+      );
 
-        // Should show compilation and deploy steps
-        expect(output).toContain("Compiling");
-        expect(output).toContain("Deploying");
+      const output = stdout + stderr;
 
-        // Note: Deploy will likely fail without actual GitHub auth,
-        // but it should at least show the plugin is running
-      }
-    );
+      // Plugin should report non-GitHub remote error
+      expect(output).toMatch(/not.*GitHub|GitHub.*only|github\.com/i);
+    });
 
-    it("--help shows --wait-plugins option (feature check)", async () => {
-      const { stdout, code } = await runMoss(["--help"]);
+    it.skipIf(!HAS_WAIT_PLUGINS)("validates site is compiled before deploy", async () => {
+      // Create fixture with valid GitHub setup but NO compiled site
+      const fixture = createFixture({
+        withGit: true,
+        withRemote: "git@github.com:testuser/testrepo.git",
+        withPlugin: true,
+      });
 
-      // This test verifies the moss binary has --wait-plugins support
-      // If this fails, the other plugin execution tests will be skipped
-      if (hasWaitPluginsSupport) {
-        expect(stdout).toContain("--wait-plugins");
-      } else {
-        console.log(
-          "NOTE: moss binary does not have --wait-plugins support. " +
-          "Plugin execution tests are skipped. " +
-          "Update to a moss release with --wait-plugins (PR #35)."
-        );
-      }
+      // Do NOT compile - go straight to deploy
+      // Plugin should report "no site files" error
+      const { stdout, stderr, code } = await runMoss(
+        ["deploy", fixture, "--wait-plugins"],
+        { timeout: 60000 }
+      );
+
+      const output = stdout + stderr;
+
+      // Plugin should report empty site or compilation needed
+      expect(output).toMatch(/site.*empty|compile.*first|no.*files/i);
+    });
+
+    it.skipIf(!HAS_WAIT_PLUGINS)("shows deploy progress messages", async () => {
+      // Create fixture with valid GitHub setup
+      const fixture = createFixture({
+        withGit: true,
+        withRemote: "git@github.com:testuser/testrepo.git",
+        withPlugin: true,
+      });
+
+      // Compile first
+      await runMoss(["compile", fixture, "--no-plugins"]);
+
+      // Deploy with --wait-plugins to see full output
+      const { stdout, stderr, code } = await runMoss(
+        ["deploy", fixture, "--wait-plugins"],
+        { timeout: 120000 } // Longer timeout for full deploy
+      );
+
+      const output = stdout + stderr;
+
+      // Should show deploy-related messages
+      // Note: actual deployment will fail without real git push,
+      // but we should see the validation passing and deploy starting
+      expect(output).toMatch(/deploy|GitHub|validat/i);
+    });
+  });
+
+  /**
+   * Compile with plugins tests
+   *
+   * Tests compilation with plugins enabled (no --no-plugins flag).
+   * The GitHub plugin has deploy capability, not process/enhance,
+   * so it won't affect compilation, but this verifies plugin loading works.
+   */
+  describe("Compile with plugins", () => {
+    it.skipIf(!HAS_WAIT_PLUGINS)("compiles successfully with plugin installed", async () => {
+      const fixture = createFixture({
+        withGit: true,
+        withRemote: "git@github.com:testuser/testrepo.git",
+        withPlugin: true,
+        content: {
+          "index.md": "# Test Site\n\nHello world!",
+        },
+      });
+
+      // Compile WITH plugins (default behavior)
+      const { stdout, stderr, code } = await runMoss(
+        ["compile", fixture, "--wait-plugins"],
+        { timeout: 60000 }
+      );
+
+      // Should succeed
+      expect(code).toBe(0);
+
+      // Should create site directory
+      const siteDir = path.join(fixture, ".moss", "site");
+      expect(fs.existsSync(siteDir)).toBe(true);
+
+      // Should have generated HTML
+      const indexHtml = path.join(siteDir, "index.html");
+      expect(fs.existsSync(indexHtml)).toBe(true);
     });
   });
 });

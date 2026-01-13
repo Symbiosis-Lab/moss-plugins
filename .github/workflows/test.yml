@@ -98,12 +98,15 @@ jobs:
 
       - name: Download moss binary for e2e tests
         run: |
+          # Download latest moss release (v0.3.1+ required for --wait-plugins)
           gh release download --repo Symbiosis-Lab/moss -p 'moss-linux-x64' -O moss-linux-x64 || {
-            echo "Warning: Could not download moss binary. E2E tests may fail."
+            echo "Warning: Could not download moss binary. E2E tests will be skipped."
             exit 0
           }
           chmod +x moss-linux-x64
           echo "MOSS_BINARY=$(pwd)/moss-linux-x64" >> $GITHUB_ENV
+          # Verify binary works
+          ./moss-linux-x64 --help | head -5
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -193,6 +196,57 @@ jobs:
           name: ${{ matrix.plugin }}-rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # macOS E2E tests for all JS plugins (no xvfb needed)
+  test-macos-e2e:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.js_plugins != '[]'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download moss binary for e2e tests
+        run: |
+          # Download latest moss release (v0.3.1+ required for --wait-plugins)
+          gh release download --repo Symbiosis-Lab/moss -p 'moss-darwin-universal' -O moss-darwin-universal || {
+            echo "Warning: Could not download moss binary. E2E tests will be skipped."
+            exit 0
+          }
+          chmod +x moss-darwin-universal
+          echo "MOSS_BINARY=$(pwd)/moss-darwin-universal" >> $GITHUB_ENV
+          # Verify binary works
+          ./moss-darwin-universal --help | head -5
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Test all changed plugins (e2e only)
+        run: |
+          PLUGINS="${{ needs.detect-changes.outputs.js_plugins_csv }}"
+          IFS=',' read -ra PLUGIN_ARRAY <<< "$PLUGINS"
+
+          for plugin in "${PLUGIN_ARRAY[@]}"; do
+            echo "=========================================="
+            echo "Testing plugin (macOS e2e): $plugin"
+            echo "=========================================="
+
+            cd "$plugin"
+
+            echo "Installing dependencies..."
+            npm ci
+
+            echo "Building..."
+            npm run build
+
+            echo "Running e2e tests..."
+            npm run test:e2e || true
+
+            cd ..
+          done
+
   # Cross-platform tests for Hugo (macOS and Windows only, Ubuntu covered above)
   test-cross-platform:
     needs: detect-changes
@@ -240,58 +294,9 @@ jobs:
           TEST_DOWNLOAD_HUGO: 'true'
           GITHUB_TOKEN: ${{ github.token }}
 
-  # macOS CLI tests for plugins (using moss binary)
-  # Tests plugin CLI integration with --wait-plugins support
-  test-macos-cli:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.js_plugins != '[]'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Download moss binary for e2e tests
-        run: |
-          gh release download --repo Symbiosis-Lab/moss -p 'moss-darwin-universal' -O moss-darwin-universal || {
-            echo "Warning: Could not download moss binary. E2E tests may be limited."
-            exit 0
-          }
-          chmod +x moss-darwin-universal
-          echo "MOSS_BINARY=$(pwd)/moss-darwin-universal" >> $GITHUB_ENV
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Test all changed plugins (CLI tests)
-        run: |
-          PLUGINS="${{ needs.detect-changes.outputs.js_plugins_csv }}"
-          IFS=',' read -ra PLUGIN_ARRAY <<< "$PLUGINS"
-
-          for plugin in "${PLUGIN_ARRAY[@]}"; do
-            echo "=========================================="
-            echo "Testing plugin (macOS): $plugin"
-            echo "=========================================="
-
-            cd "$plugin"
-
-            echo "Installing dependencies..."
-            npm ci
-
-            echo "Building..."
-            npm run build
-
-            echo "Running e2e tests..."
-            npm run test:e2e || true
-
-            cd ..
-          done
-
   # Summary job for branch protection
   test-summary:
-    needs: [test-plugins, test-rust, test-cross-platform, test-macos-cli]
+    needs: [test-plugins, test-rust, test-cross-platform, test-macos-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -300,7 +305,7 @@ jobs:
           if [ "${{ needs.test-plugins.result }}" == "failure" ] || \
              [ "${{ needs.test-rust.result }}" == "failure" ] || \
              [ "${{ needs.test-cross-platform.result }}" == "failure" ] || \
-             [ "${{ needs.test-macos-cli.result }}" == "failure" ]; then
+             [ "${{ needs.test-macos-e2e.result }}" == "failure" ]; then
             echo "Some tests failed"
             exit 1
           fi

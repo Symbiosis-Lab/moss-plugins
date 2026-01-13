@@ -23,6 +23,15 @@ export default defineConfig({
       //     globals: true,
       //   },
       // },
+      {
+        test: {
+          name: "e2e",
+          include: ["e2e/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 120000, // 2 minutes for CLI tests
+          hookTimeout: 60000,
+        },
+      },
     ],
   },
 });

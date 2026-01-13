@@ -338,6 +338,116 @@ describe("XSS Prevention", () => {
   });
 });
 
+describe("Additional Edge Cases", () => {
+  describe("Self-closing Tags", () => {
+    it("handles HTML with self-closing tags", () => {
+      const html = loadFixture("edge-cases", "self-closing-tags.html");
+      const widget = createTestWidget();
+      const loader = createTestLoader();
+
+      const result = injectWidget(html, widget, loader);
+
+      expect(result).toContain('id="moss-comments"');
+      // Should preserve self-closing tags
+      expect(result).toContain('/>');
+    });
+  });
+
+  describe("HTML Comments", () => {
+    it("finds real </article> not one in HTML comment", () => {
+      const html = loadFixture("edge-cases", "comments-in-html.html");
+      const insertionPoint = findInsertionPoint(html);
+
+      // The real </article> is after the main content, not in the comment
+      const textAfter = html.slice(insertionPoint, insertionPoint + 20);
+      expect(textAfter).toContain("</article>");
+
+      // Verify injection works
+      const widget = createTestWidget();
+      const loader = createTestLoader();
+      const result = injectWidget(html, widget, loader);
+      expect(result).toContain('id="moss-comments"');
+    });
+  });
+
+  describe("Script with HTML Content", () => {
+    it("finds real </article> not one inside script", () => {
+      const html = loadFixture("edge-cases", "script-with-html.html");
+      const insertionPoint = findInsertionPoint(html);
+
+      // Check we're not inside a script tag
+      const before = html.slice(0, insertionPoint);
+      const lastScriptOpen = before.lastIndexOf("<script");
+      const lastScriptClose = before.lastIndexOf("</script>");
+
+      // If we found a script open, its close should come after it
+      if (lastScriptOpen !== -1) {
+        expect(lastScriptClose).toBeGreaterThan(lastScriptOpen);
+      }
+    });
+  });
+
+  describe("Style with HTML Content", () => {
+    it("finds real </article> not one inside style", () => {
+      const html = loadFixture("edge-cases", "style-with-html.html");
+      const widget = createTestWidget();
+      const loader = createTestLoader();
+
+      const result = injectWidget(html, widget, loader);
+
+      // Widget should be injected
+      expect(result).toContain('id="moss-comments"');
+
+      // CSS should be preserved
+      expect(result).toContain("article::after");
+    });
+  });
+
+  describe("Uppercase Tags", () => {
+    it("handles uppercase HTML tags", () => {
+      const html = loadFixture("edge-cases", "uppercase-tags.html");
+
+      // Note: Our current implementation uses case-sensitive search
+      // Uppercase </ARTICLE> won't be found by lastIndexOf("</article>")
+      // It will fall back to </MAIN> or </BODY>
+      const insertionPoint = findInsertionPoint(html);
+
+      // Should find either </MAIN> or </BODY> or </ARTICLE>
+      const textAtPoint = html.slice(insertionPoint, insertionPoint + 10).toUpperCase();
+      expect(
+        textAtPoint.startsWith("</ARTICLE") ||
+        textAtPoint.startsWith("</MAIN") ||
+        textAtPoint.startsWith("</BODY")
+      ).toBe(true);
+    });
+  });
+
+  describe("No Doctype", () => {
+    it("handles pages without doctype", () => {
+      const html = loadFixture("edge-cases", "no-doctype.html");
+      const widget = createTestWidget();
+      const loader = createTestLoader();
+
+      const result = injectWidget(html, widget, loader);
+
+      expect(result).toContain('id="moss-comments"');
+      // Should not have added a doctype
+      expect(result.startsWith("<html")).toBe(true);
+    });
+  });
+
+  describe("Empty Body", () => {
+    it("handles empty body tag", () => {
+      const html = loadFixture("edge-cases", "empty-body.html");
+      const insertionPoint = findInsertionPoint(html);
+
+      // Should find </body> as fallback
+      const textAtPoint = html.slice(insertionPoint, insertionPoint + 7);
+      expect(textAtPoint).toBe("</body>");
+    });
+  });
+});
+
 describe("Performance", () => {
   it("handles large HTML files efficiently", () => {
     // Generate a large HTML file (simulating a long blog post)

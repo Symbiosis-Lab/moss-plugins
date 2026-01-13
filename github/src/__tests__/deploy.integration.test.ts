@@ -1316,6 +1316,280 @@ describe("on_deploy integration", () => {
     });
   });
 
+  // ============================================================================
+  // Bug 24: Stale Worktree Blocks Deployment
+  // When a previous deploy crashed, a stale worktree may still have gh-pages
+  // checked out, blocking new deployments. Plugin must recover gracefully.
+  // ============================================================================
+
+  describe("Stale Worktree Recovery (Bug 24 Fix)", () => {
+    it("succeeds when worktree prune cleans up stale entries proactively", async () => {
+      // Bug 24 fix: worktree prune is called at the start to clean up stale entries
+      // This test verifies normal operation when prune successfully cleans up
+
+      // Git repo exists
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      // SSH remote
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages EXISTS
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+
+      // worktree prune succeeds (cleans up stale entries proactively)
+      ctx.binaryConfig.setResult("git worktree prune", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "def456ghi",
+        stderr: "",
+      });
+
+      // Default success for all git commands (worktree add succeeds after prune)
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "A  index.html",
+        stderr: "",
+      });
+
+      // Shell commands succeed
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.method).toBe("github-pages");
+    });
+
+    it("continues deployment even if worktree prune fails", async () => {
+      // Bug 24 fix: if worktree prune fails, deployment should continue
+      // (the error might be harmless, and worktree add might still work)
+
+      // Git repo exists
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      // SSH remote
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages EXISTS
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+
+      // worktree prune FAILS (but deployment should continue)
+      ctx.binaryConfig.setResult("git worktree prune", {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "error: some prune error",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "def456ghi",
+        stderr: "",
+      });
+
+      // Default success for all git commands
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "A  index.html",
+        stderr: "",
+      });
+
+      // Shell commands succeed
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      // Should still succeed because worktree prune failure is caught and ignored
+      expect(result.success).toBe(true);
+      expect(result.deployment?.method).toBe("github-pages");
+    });
+
+    it("handles first-time deployment with worktree prune (orphan branch)", async () => {
+      // Bug 24 fix: worktree prune is also called for first-time deployments
+      // when creating the orphan gh-pages branch
+
+      // Git repo exists
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      // SSH remote
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages does NOT exist (first time deploy)
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: false,
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: Needed a single revision",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
+        success: false,
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: Needed a single revision",
+      });
+
+      // worktree prune succeeds
+      ctx.binaryConfig.setResult("git worktree prune", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123def",
+        stderr: "",
+      });
+
+      // Default success for all git commands
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "A  index.html",
+        stderr: "",
+      });
+
+      // Shell commands succeed
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.metadata?.was_first_setup).toBe("true");
+    });
+  });
+
   describe("Bug 23: OAuth should not trigger when git credentials work", () => {
     it("should deploy without OAuth when HTTPS remote exists (git handles auth)", async () => {
       // Setup: Git repo exists with HTTPS remote

@@ -46,6 +46,7 @@ import {
   getPublicKeyFromPrivate,
   signEvent,
 } from "./relay";
+import { findInsertionPoint, injectWidget, detectSSG } from "./widget/inject";
 import type {
   Interaction,
   ProcessContext,
@@ -396,8 +397,8 @@ class NostrPluginImpl {
   /**
    * Inject an interaction island into HTML content.
    *
-   * Inserts the interaction section before `</article>` and the async loader
-   * script before `</body>`.
+   * Uses SSG-aware injection to find the best insertion point across
+   * different static site generators (Hugo, Hexo, Astro, Jekyll, etc.)
    *
    * @param html - Original HTML content
    * @param interactions - Interactions to embed
@@ -406,10 +407,15 @@ class NostrPluginImpl {
    * @internal
    */
   private injectInteractionIsland(html: string, interactions: Interaction[]): string {
-    // Find the closing article tag
-    const articleEnd = html.lastIndexOf("</article>");
-    if (articleEnd === -1) {
-      // No article tag found, return unchanged
+    // Detect SSG for logging
+    const ssg = detectSSG(html);
+    log(`[info] Nostr: Detected SSG: ${ssg}`);
+
+    // Find the best insertion point (SSG-aware)
+    const insertionPoint = findInsertionPoint(html);
+    if (insertionPoint === html.length) {
+      // No suitable insertion point found
+      log("[warn] Nostr: No suitable insertion point found, skipping injection");
       return html;
     }
 
@@ -422,47 +428,36 @@ class NostrPluginImpl {
     });
 
     // Build the interaction island HTML
-    const island = `
-<section id="nostr-interactions" class="social-interactions">
-  <script type="application/json" id="interactions-data">
+    const island = `<section id="moss-comments" class="social-interactions">
+  <script type="application/json" id="moss-comments-data">
     ${interactionsJson}
   </script>
   <noscript>
     <div class="interactions-static">
-      <h3>Responses (${interactions.length})</h3>
+      <h3>Comments (${interactions.length})</h3>
       ${this.renderStaticInteractions(interactions)}
     </div>
   </noscript>
-</section>
-`;
+</section>`;
 
     // Build the async loader script
     const loader = `
 <script>
 (function() {
-  if (!document.getElementById('nostr-interactions')) return;
+  if (!document.getElementById('moss-comments')) return;
   var s = document.createElement('script');
-  s.src = '/js/nostr-social.js';
+  s.src = '/js/moss-comments.js';
   s.async = true;
   document.body.appendChild(s);
   var l = document.createElement('link');
   l.rel = 'stylesheet';
-  l.href = '/css/nostr-social.css';
+  l.href = '/css/moss-comments.css';
   document.head.appendChild(l);
 })();
-</script>
-`;
+</script>`;
 
-    // Inject island before </article>
-    let result = html.slice(0, articleEnd) + island + html.slice(articleEnd);
-
-    // Inject loader before </body>
-    const bodyEnd = result.lastIndexOf("</body>");
-    if (bodyEnd !== -1) {
-      result = result.slice(0, bodyEnd) + loader + result.slice(bodyEnd);
-    }
-
-    return result;
+    // Use the widget injection utility
+    return injectWidget(html, island, loader);
   }
 
   /**

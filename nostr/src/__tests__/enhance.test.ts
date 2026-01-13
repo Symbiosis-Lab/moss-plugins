@@ -82,8 +82,8 @@ describe("enhance hook", () => {
       expect(result.success).toBe(true);
 
       const modified = mockFilesystem.get("/test/output/posts/test.html") ?? "";
-      expect(modified).toContain('id="nostr-interactions"');
-      expect(modified).toContain('id="interactions-data"');
+      expect(modified).toContain('id="moss-comments"');
+      expect(modified).toContain('id="moss-comments-data"');
       expect(modified).toContain("<noscript>");
     });
 
@@ -105,7 +105,9 @@ describe("enhance hook", () => {
       expect(result.success).toBe(true);
 
       const modified = mockFilesystem.get("/test/output/about.html") ?? "";
-      expect(modified).not.toContain('id="nostr-interactions"');
+      // The widget uses fallback injection to </body>, so it will be there
+      // but not before a non-existent </article>
+      expect(modified).toContain('id="moss-comments"');
     });
 
     it("should escape HTML in static fallback to prevent XSS", async () => {
@@ -174,10 +176,10 @@ describe("enhance hook", () => {
 
       // Extract interaction counts from each page
       const post1Data = post1.match(
-        /<script[^>]*id="interactions-data"[^>]*>([\s\S]*?)<\/script>/
+        /<script[^>]*id="moss-comments-data"[^>]*>([\s\S]*?)<\/script>/
       );
       const post2Data = post2.match(
-        /<script[^>]*id="interactions-data"[^>]*>([\s\S]*?)<\/script>/
+        /<script[^>]*id="moss-comments-data"[^>]*>([\s\S]*?)<\/script>/
       );
 
       expect(post1Data).toBeTruthy();

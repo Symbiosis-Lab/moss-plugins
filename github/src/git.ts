@@ -404,6 +404,131 @@ export function extractGitHubPagesUrl(remoteUrl: string): string {
 }
 
 // ============================================================================
+// Early Change Detection
+// Compare site content with gh-pages without creating worktree
+// ============================================================================
+
+/**
+ * Run a shell command silently (no logging)
+ * Used for file operations during early change detection
+ */
+async function runShellSilent(args: string[]): Promise<string> {
+  const [binary, ...cmdArgs] = args;
+
+  const result = await executeBinary({
+    binaryPath: binary,
+    args: cmdArgs,
+    timeoutMs: 30000,
+  });
+
+  if (!result.success) {
+    throw new Error(result.stderr || `Command failed: ${args.join(" ")}`);
+  }
+
+  return result.stdout.trim();
+}
+
+/**
+ * Get content fingerprint of gh-pages branch.
+ * Returns list of files with their git blob hashes, sorted for comparison.
+ */
+export async function getGhPagesFingerprint(): Promise<string> {
+  try {
+    // Get list of files and their blob hashes from gh-pages
+    const result = await runGit(["ls-tree", "-r", "gh-pages"]);
+
+    // Format: <mode> <type> <hash>\t<filename>
+    // Extract hash and filename, sort for consistent comparison
+    const lines = result.split("\n").filter(Boolean);
+    const fingerprint = lines
+      .map(line => {
+        const parts = line.split(/\s+/);
+        const hash = parts[2];
+        const filename = parts.slice(3).join(" "); // Handle filenames with spaces
+        return `${hash}  ${filename}`;
+      })
+      .sort()
+      .join("\n");
+
+    return fingerprint || "empty";
+  } catch {
+    return ""; // Return empty on error
+  }
+}
+
+/**
+ * Get content fingerprint of local site directory.
+ * Uses git hash-object to compute blob hashes for each file.
+ */
+export async function getLocalSiteFingerprint(siteDir: string): Promise<string> {
+  try {
+    // Get list of files in site directory
+    const filesResult = await runShellSilent([
+      "sh", "-c",
+      `find "${siteDir}" -type f | sed 's|^${siteDir}/||' | sort`
+    ]);
+
+    const files = filesResult.split("\n").filter(Boolean);
+    if (files.length === 0) {
+      return "empty";
+    }
+
+    // Compute git blob hash for each file
+    const fingerprints: string[] = [];
+    for (const file of files) {
+      const filePath = `${siteDir}/${file}`;
+      const hash = await runGit(["hash-object", filePath]);
+      fingerprints.push(`${hash}  ${file}`);
+    }
+
+    return fingerprints.sort().join("\n");
+  } catch {
+    return ""; // Return empty on error
+  }
+}
+
+/**
+ * Quick check if site content has changed from gh-pages.
+ * This is an optimization to skip expensive worktree operations when there are no changes.
+ *
+ * Uses git blob hashes for comparison (same as git would use internally).
+ *
+ * @param siteDir - Path to site directory (e.g., ".moss/site")
+ * @returns Object with hasChanges boolean and optionally the URL
+ */
+export async function checkForChanges(siteDir: string = ".moss/site"): Promise<{
+  hasChanges: boolean;
+  reason?: string;
+}> {
+  try {
+    await log("log", "   Checking for changes...");
+
+    // Get fingerprint of gh-pages content
+    const ghPagesFingerprint = await getGhPagesFingerprint();
+    if (!ghPagesFingerprint) {
+      return { hasChanges: true, reason: "Could not read gh-pages" };
+    }
+
+    // Get fingerprint of local site
+    const localFingerprint = await getLocalSiteFingerprint(siteDir);
+    if (!localFingerprint) {
+      return { hasChanges: true, reason: "Could not read site directory" };
+    }
+
+    // Compare fingerprints
+    const hasChanges = localFingerprint !== ghPagesFingerprint;
+    if (!hasChanges) {
+      await log("log", "   No changes detected (skipping worktree)");
+    }
+
+    return { hasChanges };
+  } catch (error) {
+    await log("warn", `   Early change detection failed: ${error}`);
+    return { hasChanges: true, reason: "Detection error" };
+  }
+}
+
+// ============================================================================
 // Bug 16: Zero-Config gh-pages Deployment
 // Deploy to gh-pages branch using git worktree approach
 // CRITICAL: Must NOT switch current branch (triggers file watchers)

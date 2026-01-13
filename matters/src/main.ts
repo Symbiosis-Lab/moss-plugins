@@ -37,7 +37,7 @@ import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
 import { readFile, writeFile } from "@symbiosis-lab/moss-api";
-import { parseFrontmatter, generateFrontmatter } from "./converter";
+import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -397,7 +397,7 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 
     // Filter to only articles that don't already have a Matters syndication URL
     const articlesToSyndicate = articles.filter((article) => {
-      const syndicated = article.syndicated || [];
+      const syndicated = (article.frontmatter.syndicated as string[] | undefined) || [];
       return !syndicated.some((url: string) => url.includes("matters.town"));
     });
 
@@ -629,7 +629,7 @@ async function updateFrontmatterSyndicated(
     }
 
     // Regenerate file with updated frontmatter
-    const newContent = generateFrontmatter(parsed.frontmatter as Record<string, unknown>) + "\n\n" + parsed.body;
+    const newContent = regenerateFrontmatter(parsed.frontmatter) + "\n\n" + parsed.body;
     await writeFile(filePath, newContent);
   } catch (error) {
     console.warn(`    ⚠️ Failed to update frontmatter: ${error}`);

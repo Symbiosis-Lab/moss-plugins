@@ -233,6 +233,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         return {
           success: true,
           message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
+          toast: {
+            outcome: "info",
+            title: "No changes to deploy",
+            url: pagesUrl,
+          },
           deployment: {
             method: "github-pages",
             url: pagesUrl,

@@ -475,6 +475,23 @@ export async function getGhPagesFingerprint(): Promise<string> {
 }
 
 /**
+ * Build the shell command to find files and strip the siteDir prefix.
+ * Exported for testing to ensure the command is constructed correctly.
+ *
+ * Bug fix: The original command used single quotes around the sed pattern,
+ * which prevented the siteDir variable from being expanded. Now we escape
+ * special regex characters and use proper string interpolation.
+ *
+ * @param siteDir - The site directory path
+ * @returns The shell command string
+ */
+export function buildFindFilesCommand(siteDir: string): string {
+  // Escape special regex characters in the path for sed
+  const escapedPath = siteDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `find "${siteDir}" -type f | sed "s|^${escapedPath}/||" | sort`;
+}
+
+/**
  * Get content fingerprint of local site directory.
  * Uses git hash-object to compute blob hashes for each file.
  */
@@ -483,7 +500,7 @@ export async function getLocalSiteFingerprint(siteDir: string): Promise<string> 
     // Get list of files in site directory
     const filesResult = await runShellSilent([
       "sh", "-c",
-      `find "${siteDir}" -type f | sed 's|^${siteDir}/||' | sort`
+      buildFindFilesCommand(siteDir)
     ]);
 
     const files = filesResult.split("\n").filter(Boolean);

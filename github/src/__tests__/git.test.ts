@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath, buildFindFilesCommand } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -147,5 +147,28 @@ describe("parseStaleWorktreePath", () => {
       const result = parseStaleWorktreePath(errorMsg);
       expect(result).toBe("/tmp/test");
     });
+  });
+});
+
+describe("buildFindFilesCommand", () => {
+  it("builds command that strips siteDir prefix correctly", () => {
+    const cmd = buildFindFilesCommand(".moss/site");
+    // The sed pattern must contain the actual siteDir value, not a literal ${siteDir}
+    expect(cmd).not.toContain("${siteDir}");
+    expect(cmd).toContain(".moss/site");
+    // The sed pattern should strip the prefix
+    expect(cmd).toMatch(/sed.*\.moss\/site/);
+  });
+
+  it("escapes special regex characters in path", () => {
+    const cmd = buildFindFilesCommand("path/with.dots");
+    // Dots should be escaped for sed regex
+    expect(cmd).toContain("path/with\\.dots");
+  });
+
+  it("handles paths with spaces", () => {
+    const cmd = buildFindFilesCommand("path with spaces");
+    // Path should be quoted
+    expect(cmd).toContain('"path with spaces"');
   });
 });

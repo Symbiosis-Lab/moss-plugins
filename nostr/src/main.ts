@@ -424,7 +424,10 @@ class NostrPluginImpl {
       interactions,
       config: {
         // Add any config needed by browser JS
+        relays: ["wss://relay.damus.io", "wss://nos.lol"],
       },
+      // Build timestamp for incremental polling in browser
+      buildTime: Math.floor(Date.now() / 1000),
     });
 
     // Build the interaction island HTML

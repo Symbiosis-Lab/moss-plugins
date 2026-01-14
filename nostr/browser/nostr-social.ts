@@ -146,6 +146,12 @@ class NostrSocialManager {
   /** Current user's public key (if logged in) */
   private userPubkey: string | null = null;
 
+  /** Type of signer being used */
+  private signerType: "nip07" | "local" | "iframe" | null = null;
+
+  /** Local private key (if using local signer) */
+  private localPrivateKey: Uint8Array | null = null;
+
   /**
    * Create a new NostrSocialManager.
    *
@@ -203,10 +209,9 @@ class NostrSocialManager {
    * Render the complete interaction UI.
    *
    * Replaces the noscript fallback with interactive elements:
-   * - Header with login button
+   * - Comment form (always visible, like Waline)
    * - Stats (likes, zaps)
    * - Comments list
-   * - Reply form (hidden until login)
    *
    * @private
    */
@@ -220,16 +225,15 @@ class NostrSocialManager {
     const likes = interactions.filter((i) => i.interaction_type === "like");
     const zaps = interactions.filter((i) => i.interaction_type === "zap");
 
-    // Build the UI
+    // Build the UI - comment form at top, then stats, then comments
     this.container.innerHTML = `
       <div class="social-header">
-        <h3>Responses</h3>
-        <button id="nostr-login-btn" class="nostr-login">Login with Nostr</button>
+        <h3>Comments</h3>
       </div>
 
+      ${this.renderCommentForm()}
       ${this.renderStats(likes, zaps)}
       ${this.renderComments(comments)}
-      ${this.renderReplyForm()}
     `;
 
     // Attach event listeners to buttons
@@ -315,9 +319,109 @@ class NostrSocialManager {
   }
 
   /**
+   * Render the comment form (always visible, like Waline).
+   *
+   * Fields are shown directly without expansion.
+   * Email field is only shown if host has email capability.
+   *
+   * @returns HTML string for comment form
+   *
+   * @private
+   */
+  private renderCommentForm(): string {
+    // Check if host has email capability
+    const hasEmailCapability = this.checkEmailCapability();
+
+    // Load saved user info from localStorage
+    const savedName = localStorage.getItem("moss_comment_name") || "";
+    const savedEmail = localStorage.getItem("moss_comment_email") || "";
+    const savedWebsite = localStorage.getItem("moss_comment_website") || "";
+
+    return `
+      <div class="comment-form" id="moss-comment-form">
+        <div class="comment-form-header">
+          <input
+            type="text"
+            id="comment-name"
+            class="comment-input"
+            placeholder="Name"
+            value="${this.escapeHtml(savedName)}"
+            maxlength="50"
+          />
+          ${
+            hasEmailCapability
+              ? `<input
+            type="email"
+            id="comment-email"
+            class="comment-input"
+            placeholder="Email"
+            value="${this.escapeHtml(savedEmail)}"
+            maxlength="100"
+          />`
+              : ""
+          }
+          <input
+            type="url"
+            id="comment-website"
+            class="comment-input"
+            placeholder="Website"
+            value="${this.escapeHtml(savedWebsite)}"
+            maxlength="200"
+          />
+        </div>
+        <textarea
+          id="comment-content"
+          class="comment-textarea"
+          placeholder="Write a comment..."
+          rows="4"
+          maxlength="2000"
+        ></textarea>
+        <div class="comment-form-footer">
+          <div class="comment-form-info" id="comment-form-info">
+            ${this.renderSignerInfo()}
+          </div>
+          <button id="comment-submit-btn" class="btn-primary">Post</button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Check if the host has email capability.
+   *
+   * @returns true if email notifications are supported
+   * @private
+   */
+  private checkEmailCapability(): boolean {
+    // Check for moss.host or configured email capability
+    // This could be set in the embedded config data
+    const config = this.data?.config || {};
+    return config.email_notifications === true;
+  }
+
+  /**
+   * Render signer info in the form footer.
+   *
+   * Shows identity status (logged in, local key, etc.)
+   *
+   * @returns HTML string for signer info
+   * @private
+   */
+  private renderSignerInfo(): string {
+    if (this.userPubkey) {
+      // User is logged in
+      const shortPubkey = this.userPubkey.slice(0, 8) + "...";
+      return `<span class="signer-status logged-in">Connected: ${shortPubkey}</span>`;
+    }
+    // Not logged in yet - will resolve signer on first post
+    return `<span class="signer-status">Identity will be created on first post</span>`;
+  }
+
+  /**
    * Render the reply form (hidden until login).
    *
    * @returns HTML string for reply form
+   * @deprecated Use renderCommentForm instead
    *
    * @private
    */
@@ -348,13 +452,40 @@ class NostrSocialManager {
    * @private
    */
   private attachEventListeners(): void {
-    // Login button
+    // Comment submit button
+    const commentSubmitBtn = document.getElementById("comment-submit-btn");
+    if (commentSubmitBtn) {
+      commentSubmitBtn.addEventListener("click", () => this.handleCommentSubmit());
+    }
+
+    // Save user info on input change (debounced)
+    const nameInput = document.getElementById("comment-name") as HTMLInputElement;
+    const emailInput = document.getElementById("comment-email") as HTMLInputElement;
+    const websiteInput = document.getElementById("comment-website") as HTMLInputElement;
+
+    if (nameInput) {
+      nameInput.addEventListener("change", () => {
+        localStorage.setItem("moss_comment_name", nameInput.value);
+      });
+    }
+    if (emailInput) {
+      emailInput.addEventListener("change", () => {
+        localStorage.setItem("moss_comment_email", emailInput.value);
+      });
+    }
+    if (websiteInput) {
+      websiteInput.addEventListener("change", () => {
+        localStorage.setItem("moss_comment_website", websiteInput.value);
+      });
+    }
+
+    // Legacy: Login button (if present)
     const loginBtn = document.getElementById("nostr-login-btn");
     if (loginBtn) {
       loginBtn.addEventListener("click", () => this.handleLogin());
     }
 
-    // Reply submit button
+    // Legacy: Reply submit button
     const submitBtn = document.getElementById("nostr-submit-reply");
     if (submitBtn) {
       submitBtn.addEventListener("click", () => this.handleReply());
@@ -365,6 +496,293 @@ class NostrSocialManager {
     if (zapBtn) {
       zapBtn.addEventListener("click", () => this.handleZap());
     }
+  }
+
+  /**
+   * Handle comment form submission.
+   *
+   * 1. Resolve signer (NIP-07 → moss-host → local)
+   * 2. Create kind:1 event
+   * 3. Sign and publish to relays
+   * 4. Update UI
+   *
+   * @private
+   */
+  private async handleCommentSubmit(): Promise<void> {
+    const contentInput = document.getElementById("comment-content") as HTMLTextAreaElement;
+    const nameInput = document.getElementById("comment-name") as HTMLInputElement;
+    const emailInput = document.getElementById("comment-email") as HTMLInputElement;
+    const websiteInput = document.getElementById("comment-website") as HTMLInputElement;
+    const submitBtn = document.getElementById("comment-submit-btn") as HTMLButtonElement;
+
+    const content = contentInput?.value?.trim();
+    if (!content) {
+      alert("Please write a comment.");
+      return;
+    }
+
+    // Disable button while posting
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Posting...";
+    }
+
+    try {
+      // Resolve signer if not already done
+      if (!this.userPubkey) {
+        await this.resolveSigner();
+      }
+
+      // Get user info
+      const name = nameInput?.value?.trim() || "";
+      const email = emailInput?.value?.trim() || "";
+      const website = websiteInput?.value?.trim() || "";
+
+      // Get article URL from current page
+      const articleUrl = window.location.href;
+
+      // Get relays from config
+      const relays = (this.data?.config?.relays as string[]) || [
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+      ];
+
+      // Create and publish comment
+      await this.publishComment(content, articleUrl, relays, { name, email, website });
+
+      // Clear content input on success
+      contentInput.value = "";
+
+      // Show success message
+      this.showTemporaryMessage("Comment posted! It may take a moment to appear.");
+
+      // Trigger refresh to show the new comment
+      setTimeout(() => this.refresh(), 2000);
+    } catch (e) {
+      console.error("[Nostr Social] Failed to post comment:", e);
+      alert(`Failed to post comment: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      // Re-enable button
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Post";
+      }
+    }
+  }
+
+  /**
+   * Resolve the best available signer.
+   *
+   * Priority: NIP-07 → moss-host iframe → local key
+   *
+   * @private
+   */
+  private async resolveSigner(): Promise<void> {
+    const win = window as WindowWithNostr;
+
+    // Priority 1: NIP-07 browser extension
+    if (win.nostr) {
+      try {
+        this.userPubkey = await win.nostr.getPublicKey();
+        this.signerType = "nip07";
+        this.updateSignerInfo();
+        console.log("[Nostr Social] Using NIP-07 signer:", this.userPubkey.slice(0, 8) + "...");
+        return;
+      } catch (e) {
+        console.warn("[Nostr Social] NIP-07 failed, trying fallback:", e);
+      }
+    }
+
+    // Priority 2: moss-host iframe signer (TODO: implement)
+    // const mossHostAvailable = await this.checkMossHostSigner();
+    // if (mossHostAvailable) { ... }
+
+    // Priority 3: Local key from IndexedDB or generate new
+    const localKey = await this.getOrCreateLocalKey();
+    this.localPrivateKey = localKey.key;
+    this.userPubkey = this.getPublicKeyFromPrivate(localKey.key);
+    this.signerType = "local";
+    this.updateSignerInfo();
+    console.log(
+      "[Nostr Social] Using local signer:",
+      this.userPubkey.slice(0, 8) + "...",
+      localKey.isNew ? "(new)" : "(existing)"
+    );
+  }
+
+  /**
+   * Get or create a local private key.
+   *
+   * Stores in localStorage for persistence (IndexedDB would be better for security).
+   *
+   * @private
+   */
+  private async getOrCreateLocalKey(): Promise<{ key: Uint8Array; isNew: boolean }> {
+    const stored = localStorage.getItem("moss_local_nsec");
+    if (stored) {
+      // Decode hex string to Uint8Array
+      const key = new Uint8Array(stored.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)));
+      return { key, isNew: false };
+    }
+
+    // Generate new key
+    const key = crypto.getRandomValues(new Uint8Array(32));
+    // Store as hex string
+    const hex = Array.from(key)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    localStorage.setItem("moss_local_nsec", hex);
+    return { key, isNew: true };
+  }
+
+  /**
+   * Derive public key from private key.
+   *
+   * Uses secp256k1 schnorr. For browser, we use a simple implementation.
+   *
+   * @private
+   */
+  private getPublicKeyFromPrivate(privateKey: Uint8Array): string {
+    // This is a placeholder - in production, use nostr-tools or noble-secp256k1
+    // For now, we'll use a hash as a placeholder (NOT cryptographically correct)
+    // TODO: Bundle proper secp256k1 for browser
+    const hash = Array.from(privateKey)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return hash; // Placeholder - should derive actual pubkey
+  }
+
+  /**
+   * Update signer info display in the form.
+   *
+   * @private
+   */
+  private updateSignerInfo(): void {
+    const infoEl = document.getElementById("comment-form-info");
+    if (infoEl) {
+      infoEl.innerHTML = this.renderSignerInfo();
+    }
+  }
+
+  /**
+   * Show a temporary message to the user.
+   *
+   * @param message - Message to display
+   * @private
+   */
+  private showTemporaryMessage(message: string): void {
+    const infoEl = document.getElementById("comment-form-info");
+    if (infoEl) {
+      const originalContent = infoEl.innerHTML;
+      infoEl.innerHTML = `<span class="success-message">${this.escapeHtml(message)}</span>`;
+      setTimeout(() => {
+        infoEl.innerHTML = originalContent;
+      }, 5000);
+    }
+  }
+
+  /**
+   * Publish a comment to Nostr relays.
+   *
+   * @param content - Comment text
+   * @param articleUrl - URL of the article
+   * @param relays - Relay URLs to publish to
+   * @param metadata - Optional name, email, website
+   * @private
+   */
+  private async publishComment(
+    content: string,
+    articleUrl: string,
+    relays: string[],
+    metadata: { name?: string; email?: string; website?: string }
+  ): Promise<void> {
+    const win = window as WindowWithNostr;
+
+    // Build tags
+    const tags: string[][] = [["r", articleUrl]];
+    if (metadata.name) tags.push(["name", metadata.name]);
+    if (metadata.website) tags.push(["website", metadata.website]);
+    // Note: email is NOT included in public event - it's stored separately for notifications
+
+    // Create unsigned event
+    const unsignedEvent = {
+      kind: 1,
+      content,
+      tags,
+      created_at: Math.floor(Date.now() / 1000),
+    };
+
+    let signedEvent: object;
+
+    if (this.signerType === "nip07" && win.nostr) {
+      // Sign with NIP-07 extension
+      signedEvent = await win.nostr.signEvent(unsignedEvent);
+    } else if (this.signerType === "local" && this.localPrivateKey) {
+      // Sign locally (TODO: implement proper signing)
+      // For now, this is a placeholder
+      signedEvent = {
+        ...unsignedEvent,
+        id: "placeholder-id",
+        pubkey: this.userPubkey,
+        sig: "placeholder-sig",
+      };
+      console.warn("[Nostr Social] Local signing not fully implemented yet");
+    } else {
+      throw new Error("No signer available");
+    }
+
+    // Publish to relays
+    await this.publishToRelays(signedEvent, relays);
+
+    // If email provided, register for notifications (if moss-host available)
+    if (metadata.email) {
+      await this.registerForNotifications(signedEvent, metadata.email);
+    }
+  }
+
+  /**
+   * Publish a signed event to Nostr relays.
+   *
+   * @param event - Signed Nostr event
+   * @param relays - Relay URLs
+   * @private
+   */
+  private async publishToRelays(event: object, relays: string[]): Promise<void> {
+    const promises = relays.map(async (relayUrl) => {
+      try {
+        const ws = new WebSocket(relayUrl);
+        await new Promise<void>((resolve, reject) => {
+          ws.onopen = () => {
+            ws.send(JSON.stringify(["EVENT", event]));
+            // Wait a bit for the relay to process
+            setTimeout(() => {
+              ws.close();
+              resolve();
+            }, 1000);
+          };
+          ws.onerror = reject;
+          setTimeout(() => reject(new Error("Timeout")), 5000);
+        });
+        console.log(`[Nostr Social] Published to ${relayUrl}`);
+      } catch (e) {
+        console.warn(`[Nostr Social] Failed to publish to ${relayUrl}:`, e);
+      }
+    });
+
+    await Promise.allSettled(promises);
+  }
+
+  /**
+   * Register for email notifications (moss-host only).
+   *
+   * @param event - The comment event
+   * @param email - User's email address
+   * @private
+   */
+  private async registerForNotifications(event: object, email: string): Promise<void> {
+    // TODO: Implement notification registration with moss-host
+    // This would encrypt the email and send to moss-host's notification service
+    console.log("[Nostr Social] Notification registration not yet implemented");
   }
 
   /**

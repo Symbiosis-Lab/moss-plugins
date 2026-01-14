@@ -22,6 +22,7 @@ vi.mock("../utils", () => ({
 
 // Import after mocking
 import { on_deploy } from "../main";
+import { reportProgress } from "../utils";
 
 /**
  * Create a mock OnDeployContext for testing
@@ -1928,6 +1929,97 @@ describe("on_deploy integration", () => {
 
       // Should still succeed (fallback to worktree approach)
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe("Progress Visibility", () => {
+    it("reports granular progress during worktree deployment", async () => {
+      // Setup: gh-pages exists, changes detected, full deployment flow
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+
+      // gh-pages EXISTS
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+
+      // Early change detection returns "has changes"
+      ctx.binaryConfig.setResult("git ls-tree -r gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "100644 blob oldhash\tindex.html",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git hash-object", {
+        success: true,
+        exitCode: 0,
+        stdout: "newhash", // Different = has changes
+        stderr: "",
+      });
+
+      // Default success for all git commands
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "M  index.html",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "index.html",
+        stderr: "",
+      });
+
+      const result = await on_deploy(createMockContext({
+        site_files: ["index.html"],
+      }));
+
+      expect(result.success).toBe(true);
+
+      // Verify granular progress was reported during deployment
+      const progressCalls = vi.mocked(reportProgress).mock.calls;
+      const progressMessages = progressCalls.map(call => call[3]); // 4th arg is message
+
+      // Should include worktree-specific progress messages
+      expect(progressMessages).toContainEqual(expect.stringMatching(/worktree|preparing|copying/i));
     });
   });
 });

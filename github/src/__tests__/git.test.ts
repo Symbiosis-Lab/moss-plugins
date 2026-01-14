@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -107,5 +107,45 @@ describe("extractGitHubPagesUrl", () => {
     expect(() => {
       extractGitHubPagesUrl("not-a-url");
     }).toThrow("Could not parse GitHub URL from remote");
+  });
+});
+
+describe("parseStaleWorktreePath", () => {
+  describe("Bug 24 fix: handles different Git version error messages", () => {
+    it("parses 'already checked out at' error (older Git format)", () => {
+      const errorMsg = "fatal: 'gh-pages' is already checked out at '/tmp/moss-gh-pages-123'";
+      const result = parseStaleWorktreePath(errorMsg);
+      expect(result).toBe("/tmp/moss-gh-pages-123");
+    });
+
+    it("parses 'already used by worktree at' error (newer Git format)", () => {
+      // This is the error message format from Git 2.42+ that was causing Bug 24 to resurface
+      const errorMsg = "fatal: 'gh-pages' is already used by worktree at '/private/tmp/moss-gh-pages-1768321101925-6p0m1h'";
+      const result = parseStaleWorktreePath(errorMsg);
+      expect(result).toBe("/private/tmp/moss-gh-pages-1768321101925-6p0m1h");
+    });
+
+    it("handles error with /private/tmp prefix (macOS symlink resolution)", () => {
+      const errorMsg = "fatal: 'gh-pages' is already used by worktree at '/private/tmp/moss-gh-pages-stale'";
+      const result = parseStaleWorktreePath(errorMsg);
+      expect(result).toBe("/private/tmp/moss-gh-pages-stale");
+    });
+
+    it("returns null for unrelated git errors", () => {
+      const errorMsg = "fatal: not a git repository (or any of the parent directories): .git";
+      const result = parseStaleWorktreePath(errorMsg);
+      expect(result).toBeNull();
+    });
+
+    it("returns null for empty error message", () => {
+      const result = parseStaleWorktreePath("");
+      expect(result).toBeNull();
+    });
+
+    it("handles error message with extra text", () => {
+      const errorMsg = "Preparing worktree (checking out 'gh-pages')\nfatal: 'gh-pages' is already used by worktree at '/tmp/test'";
+      const result = parseStaleWorktreePath(errorMsg);
+      expect(result).toBe("/tmp/test");
+    });
   });
 });

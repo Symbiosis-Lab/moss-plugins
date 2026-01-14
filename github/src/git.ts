@@ -5,7 +5,7 @@
  */
 
 import { executeBinary } from "@symbiosis-lab/moss-api";
-import { log } from "./utils";
+import { log, reportProgress, reportError } from "./utils";
 
 /**
  * Run a git command and return the output
@@ -403,6 +403,24 @@ export function extractGitHubPagesUrl(remoteUrl: string): string {
   return `https://${parsed.owner}.github.io/${parsed.repo}`;
 }
 
+/**
+ * Parse the stale worktree path from a git worktree add error message.
+ *
+ * Bug 24 fix: Different Git versions use different error messages:
+ * - Older: "fatal: 'gh-pages' is already checked out at '/path/to/stale'"
+ * - Newer (2.42+): "fatal: 'gh-pages' is already used by worktree at '/path/to/stale'"
+ *
+ * @param errorMsg - The error message from git worktree add
+ * @returns The stale worktree path, or null if this is not a stale worktree error
+ */
+export function parseStaleWorktreePath(errorMsg: string): string | null {
+  // Match both error message formats:
+  // - "already checked out at '/path'"
+  // - "already used by worktree at '/path'"
+  const match = errorMsg.match(/already (?:checked out|used by worktree) at '([^']+)'/);
+  return match ? match[1] : null;
+}
+
 // ============================================================================
 // Early Change Detection
 // Compare site content with gh-pages without creating worktree
@@ -588,13 +606,13 @@ async function addWorktreeWithRecovery(worktreePath: string, branch: string): Pr
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // Check if this is the "already checked out" error
-    // Error format: "fatal: 'gh-pages' is already checked out at '/path/to/stale'"
-    const alreadyCheckedOutMatch = errorMsg.match(/already checked out at '([^']+)'/);
+    // Check if this is a stale worktree error (handles both Git version formats)
+    const stalePath = parseStaleWorktreePath(errorMsg);
 
-    if (alreadyCheckedOutMatch) {
-      const stalePath = alreadyCheckedOutMatch[1];
+    if (stalePath) {
       await log("log", `   Found stale worktree at ${stalePath}, cleaning up...`);
+      // Report recovery status to toast so user knows what's happening
+      await reportError("Recovering from stale worktree...", "deploy", false);
 
       // Try to remove the stale worktree
       try {
@@ -653,6 +671,7 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     // Bug 24 fix: If a previous deployment crashed, a stale worktree entry may still
     // reference gh-pages, causing "already checked out" errors. Prune removes entries
     // for worktrees whose directories no longer exist.
+    await reportProgress("deploying", 1, 5, "Preparing worktree...");
     await log("log", "   Preparing gh-pages worktree...");
     try {
       await runGit(["worktree", "prune"]);
@@ -675,6 +694,7 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     }
 
     // Step 1: Create or add gh-pages worktree
+    await reportProgress("deploying", 2, 5, "Creating worktree...");
     await log("log", "   Creating gh-pages worktree...");
     const ghPagesExists = await branchExists("gh-pages");
 
@@ -705,10 +725,12 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     await runShell(["sh", "-c", `find ${worktreePath} -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +`]);
 
     // Step 3: Copy site files to worktree
+    await reportProgress("deploying", 3, 5, "Copying site files...");
     await log("log", "   Copying site files to gh-pages...");
     await runShell(["cp", "-r", `${siteDir}/.`, worktreePath]);
 
     // Step 4: Commit in worktree (uses git -C to run in different directory)
+    await reportProgress("deploying", 4, 5, "Committing changes...");
     await log("log", "   Committing to gh-pages...");
     await runGit(["-C", worktreePath, "add", "-A"]);
 
@@ -729,6 +751,7 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
     const sha = await runGit(["-C", worktreePath, "rev-parse", "HEAD"]);
 
     // Step 5: Push gh-pages
+    await reportProgress("deploying", 5, 5, "Pushing to GitHub...");
     await log("log", "   Pushing gh-pages to GitHub...");
     await runGit(["-C", worktreePath, "push", "--force", "origin", "gh-pages"]);
 

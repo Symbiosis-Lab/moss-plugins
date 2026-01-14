@@ -95,6 +95,22 @@ interface InteractionData {
 
   /** Configuration from plugin settings */
   config: Record<string, unknown>;
+
+  /** Build timestamp (Unix seconds) - used for polling new comments */
+  buildTime?: number;
+}
+
+/**
+ * Nostr event structure for relay responses.
+ */
+interface NostrEvent {
+  id: string;
+  pubkey: string;
+  created_at: number;
+  kind: number;
+  tags: string[][];
+  content: string;
+  sig: string;
 }
 
 /**
@@ -152,6 +168,18 @@ class NostrSocialManager {
   /** Local private key (if using local signer) */
   private localPrivateKey: Uint8Array | null = null;
 
+  /** Timestamp of last known interaction (for polling new ones) */
+  private lastKnownTimestamp: number = 0;
+
+  /** Active WebSocket connections to relays */
+  private activeRelays: Map<string, WebSocket> = new Map();
+
+  /** Whether initial poll has completed */
+  private initialPollDone: boolean = false;
+
+  /** Set of already-known event IDs (to avoid duplicates) */
+  private knownEventIds: Set<string> = new Set();
+
   /**
    * Create a new NostrSocialManager.
    *
@@ -159,7 +187,10 @@ class NostrSocialManager {
    * and parsing embedded data.
    */
   constructor() {
-    this.container = document.getElementById("nostr-interactions");
+    // Try both old and new container IDs for compatibility
+    this.container =
+      document.getElementById("moss-comments") ||
+      document.getElementById("nostr-interactions");
     this.init();
   }
 
@@ -172,8 +203,9 @@ class NostrSocialManager {
    *
    * 1. Finds the container element
    * 2. Parses embedded JSON data
-   * 3. Renders the interactive UI
-   * 4. Schedules periodic refresh
+   * 3. Tracks known event IDs to avoid duplicates
+   * 4. Renders the interactive UI
+   * 5. Starts polling for new comments
    *
    * @private
    */
@@ -184,7 +216,10 @@ class NostrSocialManager {
     }
 
     // Parse embedded data from the JSON script tag
-    const dataEl = document.getElementById("interactions-data");
+    // Support both old and new element IDs
+    const dataEl =
+      document.getElementById("moss-comments-data") ||
+      document.getElementById("interactions-data");
     if (dataEl) {
       try {
         this.data = JSON.parse(dataEl.textContent || "{}");
@@ -194,11 +229,30 @@ class NostrSocialManager {
       }
     }
 
+    // Track already-known event IDs to avoid duplicates when polling
+    if (this.data?.interactions) {
+      for (const interaction of this.data.interactions) {
+        this.knownEventIds.add(interaction.id);
+        // Track the latest timestamp for incremental polling
+        if (interaction.published_at) {
+          const ts = Math.floor(new Date(interaction.published_at).getTime() / 1000);
+          if (ts > this.lastKnownTimestamp) {
+            this.lastKnownTimestamp = ts;
+          }
+        }
+      }
+    }
+
+    // Use build time as minimum timestamp if no interactions exist
+    if (this.lastKnownTimestamp === 0 && this.data?.buildTime) {
+      this.lastKnownTimestamp = this.data.buildTime;
+    }
+
     // Render the interactive UI
     this.render();
 
-    // Schedule periodic refresh from relays
-    this.scheduleRefresh();
+    // Start polling for new comments from relays
+    this.startPolling();
   }
 
   // --------------------------------------------------------------------------
@@ -874,38 +928,243 @@ class NostrSocialManager {
   }
 
   // --------------------------------------------------------------------------
-  // Refresh
+  // Polling for New Comments
   // --------------------------------------------------------------------------
 
   /**
-   * Schedule periodic refresh of interactions.
+   * Start polling for new comments from relays.
    *
-   * Refreshes every 5 minutes to show new interactions.
+   * Immediately fetches new comments since build time, then
+   * polls periodically for updates.
    *
    * @private
    */
-  private scheduleRefresh(): void {
-    // Refresh every 5 minutes
-    setTimeout(() => this.refresh(), 5 * 60 * 1000);
+  private startPolling(): void {
+    // Get article URL for filtering
+    const articleUrl = window.location.href.split("#")[0].split("?")[0];
+
+    // Get relays from config
+    const relays = (this.data?.config?.relays as string[]) || [
+      "wss://relay.damus.io",
+      "wss://nos.lol",
+    ];
+
+    // Initial poll - get comments since last known timestamp
+    this.pollRelays(relays, articleUrl, this.lastKnownTimestamp);
+
+    // Schedule periodic polling (every 30 seconds for responsiveness)
+    setInterval(() => {
+      this.pollRelays(relays, articleUrl, this.lastKnownTimestamp);
+    }, 30 * 1000);
   }
 
   /**
-   * Fetch fresh interactions from Nostr relays.
+   * Poll relays for new comments referencing the article.
    *
-   * TODO: Implement actual relay fetching.
+   * Uses NIP-01 REQ with filters for:
+   * - kind:1 (text notes)
+   * - "r" tag matching the article URL
+   * - since: last known timestamp
+   *
+   * @param relays - Relay URLs to query
+   * @param articleUrl - Article URL to filter by
+   * @param since - Unix timestamp to fetch events after
+   * @private
+   */
+  private pollRelays(relays: string[], articleUrl: string, since: number): void {
+    // Create subscription ID
+    const subId = `poll-${Date.now()}`;
+
+    // NIP-01 filter for comments referencing this article
+    const filter = {
+      kinds: [1], // Text notes
+      "#r": [articleUrl], // Events with "r" tag = article URL
+      since: since + 1, // Only events after last known
+      limit: 50,
+    };
+
+    const newEvents: NostrEvent[] = [];
+    let completedRelays = 0;
+
+    for (const relayUrl of relays) {
+      this.queryRelay(relayUrl, subId, filter)
+        .then((events) => {
+          newEvents.push(...events);
+        })
+        .catch((e) => {
+          console.warn(`[Nostr Social] Poll failed for ${relayUrl}:`, e);
+        })
+        .finally(() => {
+          completedRelays++;
+          // When all relays have responded, process new events
+          if (completedRelays === relays.length) {
+            this.processNewEvents(newEvents);
+          }
+        });
+    }
+  }
+
+  /**
+   * Query a single relay for events matching the filter.
+   *
+   * @param relayUrl - WebSocket URL of the relay
+   * @param subId - Subscription ID
+   * @param filter - NIP-01 filter object
+   * @returns Promise resolving to array of events
+   * @private
+   */
+  private queryRelay(
+    relayUrl: string,
+    subId: string,
+    filter: object
+  ): Promise<NostrEvent[]> {
+    return new Promise((resolve, reject) => {
+      const events: NostrEvent[] = [];
+      const ws = new WebSocket(relayUrl);
+      const timeout = setTimeout(() => {
+        ws.close();
+        resolve(events); // Return whatever we got
+      }, 10000);
+
+      ws.onopen = () => {
+        // Send REQ message per NIP-01
+        ws.send(JSON.stringify(["REQ", subId, filter]));
+      };
+
+      ws.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (Array.isArray(data)) {
+            if (data[0] === "EVENT" && data[1] === subId && data[2]) {
+              events.push(data[2] as NostrEvent);
+            } else if (data[0] === "EOSE" && data[1] === subId) {
+              // End of stored events - close connection
+              clearTimeout(timeout);
+              ws.send(JSON.stringify(["CLOSE", subId]));
+              ws.close();
+              resolve(events);
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error(`WebSocket error for ${relayUrl}`));
+      };
+
+      ws.onclose = () => {
+        clearTimeout(timeout);
+        resolve(events);
+      };
+    });
+  }
+
+  /**
+   * Process newly fetched events and add them to the UI.
+   *
+   * - Deduplicates against known events
+   * - Converts to Interaction format
+   * - Merges into existing data
+   * - Re-renders the comments list
+   *
+   * @param events - New Nostr events from relays
+   * @private
+   */
+  private processNewEvents(events: NostrEvent[]): void {
+    // Deduplicate
+    const newUniqueEvents = events.filter((e) => !this.knownEventIds.has(e.id));
+
+    if (newUniqueEvents.length === 0) {
+      if (!this.initialPollDone) {
+        this.initialPollDone = true;
+        console.log("[Nostr Social] Initial poll complete, no new comments");
+      }
+      return;
+    }
+
+    console.log(`[Nostr Social] Found ${newUniqueEvents.length} new comment(s)`);
+
+    // Convert to Interaction format
+    const newInteractions: Interaction[] = newUniqueEvents.map((event) => {
+      // Extract metadata from tags
+      const nameTag = event.tags.find((t) => t[0] === "name");
+      const websiteTag = event.tags.find((t) => t[0] === "website");
+      const rTag = event.tags.find((t) => t[0] === "r");
+
+      return {
+        id: event.id,
+        source: "nostr",
+        interaction_type: "comment",
+        author: {
+          name: nameTag?.[1] || undefined,
+          profile_url: websiteTag?.[1] || undefined,
+          identifier: event.pubkey,
+        },
+        content: event.content,
+        published_at: new Date(event.created_at * 1000).toISOString(),
+        target_url: rTag?.[1] || window.location.href,
+        meta: {
+          pubkey: event.pubkey,
+        },
+      };
+    });
+
+    // Add to known IDs
+    for (const event of newUniqueEvents) {
+      this.knownEventIds.add(event.id);
+      if (event.created_at > this.lastKnownTimestamp) {
+        this.lastKnownTimestamp = event.created_at;
+      }
+    }
+
+    // Merge with existing interactions
+    if (this.data) {
+      this.data.interactions = [...this.data.interactions, ...newInteractions];
+      // Sort by date (newest last for natural reading order)
+      this.data.interactions.sort((a, b) => {
+        const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
+        const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
+        return dateA - dateB;
+      });
+    }
+
+    // Re-render the UI
+    this.render();
+
+    // Show notification for new comments (after initial poll)
+    if (this.initialPollDone) {
+      this.showNewCommentNotification(newInteractions.length);
+    }
+
+    this.initialPollDone = true;
+  }
+
+  /**
+   * Show notification that new comments were found.
+   *
+   * @param count - Number of new comments
+   * @private
+   */
+  private showNewCommentNotification(count: number): void {
+    const message = count === 1 ? "1 new comment" : `${count} new comments`;
+    this.showTemporaryMessage(`${message} loaded!`);
+  }
+
+  /**
+   * Manual refresh trigger (e.g., after posting).
    *
    * @private
    */
   private async refresh(): Promise<void> {
-    // TODO: Implement relay fetching
-    // 1. Connect to relays from config
-    // 2. Subscribe to events referencing this article
-    // 3. Merge with existing interactions
-    // 4. Re-render if new interactions found
-    console.log("[Nostr Social] Refreshing interactions...");
-
-    // Schedule next refresh
-    this.scheduleRefresh();
+    const articleUrl = window.location.href.split("#")[0].split("?")[0];
+    const relays = (this.data?.config?.relays as string[]) || [
+      "wss://relay.damus.io",
+      "wss://nos.lol",
+    ];
+    this.pollRelays(relays, articleUrl, this.lastKnownTimestamp);
   }
 
   // --------------------------------------------------------------------------

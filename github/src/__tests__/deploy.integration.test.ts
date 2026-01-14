@@ -1723,19 +1723,19 @@ describe("on_deploy integration", () => {
         stderr: "",
       });
 
-      // Local file has same hash
-      ctx.binaryConfig.setResult("git hash-object", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123hash", // Same hash = no changes
-        stderr: "",
-      });
-
       // Mock find command for listing local files
       ctx.binaryConfig.setResult("sh", {
         success: true,
         exitCode: 0,
         stdout: "index.html", // Same file list
+        stderr: "",
+      });
+
+      // Local file has same hash (batch hash-object via stdin)
+      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123hash", // Same hash = no changes
         stderr: "",
       });
 
@@ -1806,19 +1806,19 @@ describe("on_deploy integration", () => {
         stderr: "",
       });
 
-      // Local file has DIFFERENT hash
-      ctx.binaryConfig.setResult("git hash-object", {
-        success: true,
-        exitCode: 0,
-        stdout: "newhash456", // Different hash = has changes
-        stderr: "",
-      });
-
       // Mock find command
       ctx.binaryConfig.setResult("sh", {
         success: true,
         exitCode: 0,
         stdout: "index.html",
+        stderr: "",
+      });
+
+      // Local file has DIFFERENT hash (batch hash-object via stdin)
+      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
+        success: true,
+        exitCode: 0,
+        stdout: "newhash456", // Different hash = has changes
         stderr: "",
       });
 
@@ -1978,7 +1978,14 @@ describe("on_deploy integration", () => {
         stderr: "",
       });
 
-      ctx.binaryConfig.setResult("git hash-object", {
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "index.html",
+        stderr: "",
+      });
+
+      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
         success: true,
         exitCode: 0,
         stdout: "newhash", // Different = has changes
@@ -2004,13 +2011,6 @@ describe("on_deploy integration", () => {
         success: true,
         exitCode: 0,
         stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "index.html",
         stderr: "",
       });
 

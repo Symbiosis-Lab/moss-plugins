@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath, buildFindFilesCommand } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath, buildFindFilesCommand, fingerprintsMatch } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -170,5 +170,77 @@ describe("buildFindFilesCommand", () => {
     const cmd = buildFindFilesCommand("path with spaces");
     // Path should be quoted
     expect(cmd).toContain('"path with spaces"');
+  });
+});
+
+describe("fingerprintsMatch", () => {
+  describe("map-based comparison for sort-independent matching", () => {
+    it("returns true when maps have identical entries", () => {
+      const local = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "def456"],
+      ]);
+      const remote = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "def456"],
+      ]);
+      expect(fingerprintsMatch(local, remote)).toBe(true);
+    });
+
+    it("returns true when maps have same entries in different insertion order", () => {
+      // This is the key test - demonstrates sort-independence
+      const local = new Map([
+        ["文章/test.html", "abc123"],  // Chinese filename first
+        ["assets/img.png", "def456"],
+        ["index.html", "ghi789"],
+      ]);
+      const remote = new Map([
+        ["index.html", "ghi789"],       // Different insertion order
+        ["assets/img.png", "def456"],
+        ["文章/test.html", "abc123"],
+      ]);
+      expect(fingerprintsMatch(local, remote)).toBe(true);
+    });
+
+    it("returns false when file counts differ", () => {
+      const local = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "def456"],
+      ]);
+      const remote = new Map([
+        ["index.html", "abc123"],
+      ]);
+      expect(fingerprintsMatch(local, remote)).toBe(false);
+    });
+
+    it("returns false when a file hash differs", () => {
+      const local = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "def456"],
+      ]);
+      const remote = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "DIFFERENT"],
+      ]);
+      expect(fingerprintsMatch(local, remote)).toBe(false);
+    });
+
+    it("returns false when a file is missing in remote", () => {
+      const local = new Map([
+        ["index.html", "abc123"],
+        ["style.css", "def456"],
+      ]);
+      const remote = new Map([
+        ["index.html", "abc123"],
+        ["other.css", "def456"],  // Different filename
+      ]);
+      expect(fingerprintsMatch(local, remote)).toBe(false);
+    });
+
+    it("returns true for empty maps", () => {
+      const local = new Map<string, string>();
+      const remote = new Map<string, string>();
+      expect(fingerprintsMatch(local, remote)).toBe(true);
+    });
   });
 });

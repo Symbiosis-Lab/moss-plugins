@@ -448,29 +448,32 @@ async function runShellSilent(args: string[]): Promise<string> {
 
 /**
  * Get content fingerprint of gh-pages branch.
- * Returns list of files with their git blob hashes, sorted for comparison.
+ * Returns a Map of filename -> git blob hash.
+ *
+ * Using Map instead of string comparison solves the sort order issue
+ * where git ls-tree and find|sort produce different orderings for
+ * Chinese filenames due to locale differences.
  */
-export async function getGhPagesFingerprint(): Promise<string> {
+export async function getGhPagesFingerprint(): Promise<Fingerprint | null> {
   try {
     // Get list of files and their blob hashes from gh-pages
     const result = await runGit(["ls-tree", "-r", "gh-pages"]);
 
     // Format: <mode> <type> <hash>\t<filename>
-    // Extract hash and filename, sort for consistent comparison
+    // Extract hash and filename into a Map
     const lines = result.split("\n").filter(Boolean);
-    const fingerprint = lines
-      .map(line => {
-        const parts = line.split(/\s+/);
-        const hash = parts[2];
-        const filename = parts.slice(3).join(" "); // Handle filenames with spaces
-        return `${hash}  ${filename}`;
-      })
-      .sort()
-      .join("\n");
+    const fingerprint: Fingerprint = new Map();
 
-    return fingerprint || "empty";
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      const hash = parts[2];
+      const filename = parts.slice(3).join(" "); // Handle filenames with spaces
+      fingerprint.set(filename, hash);
+    }
+
+    return fingerprint;
   } catch {
-    return ""; // Return empty on error
+    return null; // Return null on error
   }
 }
 
@@ -492,10 +495,46 @@ export function buildFindFilesCommand(siteDir: string): string {
 }
 
 /**
- * Get content fingerprint of local site directory.
- * Uses git hash-object to compute blob hashes for each file.
+ * Type alias for fingerprint data structure.
+ * Maps filename to its git blob hash.
  */
-export async function getLocalSiteFingerprint(siteDir: string): Promise<string> {
+export type Fingerprint = Map<string, string>;
+
+/**
+ * Compare two fingerprints for equality.
+ * Uses Map-based comparison which is sort-independent.
+ *
+ * This solves the problem where git ls-tree and find|sort produce
+ * different orderings for Chinese filenames due to locale differences.
+ *
+ * @param local - Local site fingerprint (filename -> hash)
+ * @param remote - Remote gh-pages fingerprint (filename -> hash)
+ * @returns true if fingerprints match (same files with same hashes)
+ */
+export function fingerprintsMatch(local: Fingerprint, remote: Fingerprint): boolean {
+  // Quick size check
+  if (local.size !== remote.size) {
+    return false;
+  }
+
+  // Check that every local file exists in remote with same hash
+  for (const [file, hash] of local) {
+    if (remote.get(file) !== hash) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Get content fingerprint of local site directory.
+ * Returns a Map of filename -> git blob hash.
+ *
+ * Uses batch hashing via `git hash-object --stdin-paths` for efficiency.
+ * This reduces 172+ process spawns to just 2 (find + hash-object).
+ */
+export async function getLocalSiteFingerprint(siteDir: string): Promise<Fingerprint | null> {
   try {
     // Get list of files in site directory
     const filesResult = await runShellSilent([
@@ -505,20 +544,35 @@ export async function getLocalSiteFingerprint(siteDir: string): Promise<string> 
 
     const files = filesResult.split("\n").filter(Boolean);
     if (files.length === 0) {
-      return "empty";
+      return new Map();
     }
 
-    // Compute git blob hash for each file
-    const fingerprints: string[] = [];
-    for (const file of files) {
-      const filePath = `${siteDir}/${file}`;
-      const hash = await runGit(["hash-object", filePath]);
-      fingerprints.push(`${hash}  ${file}`);
+    // Build full paths for hash-object
+    const fullPaths = files.map(f => `${siteDir}/${f}`);
+
+    // Batch hash all files in one call using --stdin-paths
+    const hashResult = await executeBinary({
+      binaryPath: "git",
+      args: ["hash-object", "--stdin-paths"],
+      stdin: fullPaths.join("\n"),
+      timeoutMs: 60000,
+    });
+
+    if (!hashResult.success) {
+      return null;
     }
 
-    return fingerprints.sort().join("\n");
+    // Parse hashes and build fingerprint map
+    const hashes = hashResult.stdout.trim().split("\n");
+    const fingerprint: Fingerprint = new Map();
+
+    for (let i = 0; i < files.length; i++) {
+      fingerprint.set(files[i], hashes[i]);
+    }
+
+    return fingerprint;
   } catch {
-    return ""; // Return empty on error
+    return null; // Return null on error
   }
 }
 
@@ -526,10 +580,12 @@ export async function getLocalSiteFingerprint(siteDir: string): Promise<string> 
  * Quick check if site content has changed from gh-pages.
  * This is an optimization to skip expensive worktree operations when there are no changes.
  *
- * Uses git blob hashes for comparison (same as git would use internally).
+ * Uses Map-based comparison which is sort-independent, solving the problem
+ * where git ls-tree and find|sort produce different orderings for Chinese
+ * filenames due to locale differences.
  *
  * @param siteDir - Path to site directory (e.g., ".moss/site")
- * @returns Object with hasChanges boolean and optionally the URL
+ * @returns Object with hasChanges boolean and optionally the reason
  */
 export async function checkForChanges(siteDir: string = ".moss/site"): Promise<{
   hasChanges: boolean;
@@ -550,8 +606,8 @@ export async function checkForChanges(siteDir: string = ".moss/site"): Promise<{
       return { hasChanges: true, reason: "Could not read site directory" };
     }
 
-    // Compare fingerprints
-    const hasChanges = localFingerprint !== ghPagesFingerprint;
+    // Compare fingerprints using Map-based comparison (sort-independent)
+    const hasChanges = !fingerprintsMatch(localFingerprint, ghPagesFingerprint);
     if (!hasChanges) {
       await log("log", "   No changes detected (skipping worktree)");
     }

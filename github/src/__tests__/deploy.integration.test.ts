@@ -1756,6 +1756,12 @@ describe("on_deploy integration", () => {
       expect(result.message).toContain("No changes to deploy");
       expect(result.deployment?.metadata?.commit_sha).toBe("");
 
+      // Toast should be included with site URL
+      expect(result.toast).toBeDefined();
+      expect(result.toast?.outcome).toBe("info");
+      expect(result.toast?.title).toBe("No changes to deploy");
+      expect(result.toast?.url).toContain("github.io");
+
       // Worktree operations should NOT have been called
       // (We can't easily verify this without more sophisticated mocking,
       // but the success with empty commit_sha indicates early exit)

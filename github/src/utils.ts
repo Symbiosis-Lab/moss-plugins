@@ -9,9 +9,15 @@ import {
   sendMessage as sdkSendMessage,
   reportProgress as sdkReportProgress,
   reportError as sdkReportError,
+  showToast as sdkShowToast,
+  dismissToast as sdkDismissToast,
   type PluginMessage,
+  type ToastOptions,
 } from "@symbiosis-lab/moss-api";
 import type { HookResult } from "./types";
+
+// Re-export ToastOptions type for convenience
+export type { ToastOptions };
 
 // ============================================================================
 // Plugin Configuration
@@ -116,6 +122,35 @@ export async function reportComplete(result: HookResult): Promise<void> {
     error: result.success ? undefined : result.message,
     result,
   } as any); // Cast needed because PluginMessage type may be outdated
+}
+
+// ============================================================================
+// Toast Utilities
+// ============================================================================
+
+/**
+ * Show a toast notification in the main Moss UI
+ *
+ * @example
+ * ```typescript
+ * // Success toast with clickable action
+ * await showToast({
+ *   message: "Deployed!",
+ *   variant: "success",
+ *   actions: [{ label: "View site", url: "https://..." }],
+ *   duration: 8000
+ * });
+ * ```
+ */
+export async function showToast(options: ToastOptions | string): Promise<void> {
+  await sdkShowToast(options);
+}
+
+/**
+ * Dismiss a toast by ID
+ */
+export async function dismissToast(id: string): Promise<void> {
+  await sdkDismissToast(id);
 }
 
 // ============================================================================

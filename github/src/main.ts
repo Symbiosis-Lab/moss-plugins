@@ -11,7 +11,7 @@
  */
 
 import type { OnDeployContext, HookResult, DnsTarget } from "./types";
-import { log, reportProgress, reportError, reportComplete, setCurrentHookName } from "./utils";
+import { log, reportProgress, reportError, reportComplete, setCurrentHookName, showToast } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
@@ -233,11 +233,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         const noChangesResult: HookResult = {
           success: true,
           message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
-          toast: {
-            outcome: "info",
-            title: "No changes to deploy",
-            url: pagesUrl,
-          },
           deployment: {
             method: "github-pages",
             url: pagesUrl,
@@ -254,6 +249,14 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
         // Signal completion to moss (no cleanup needed - worktree was never created)
         await reportComplete(noChangesResult);
+
+        // Show toast with clickable URL (8s duration for clickable link)
+        await showToast({
+          message: "No changes to deploy",
+          variant: "info",
+          actions: [{ label: "View site", url: pagesUrl }],
+          duration: 8000,
+        });
 
         return noChangesResult;
       }
@@ -298,10 +301,10 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Build result message based on scenario
     // Bug 16: Zero-config deployment - no manual steps needed
-    // Determine toast message and outcome based on scenario
+    // Determine toast message based on scenario
     let message: string;
-    let toastTitle: string;
-    let toastOutcome: "success" | "info" | "error";
+    let toastMessage: string;
+    let toastVariant: "success" | "info" | "error";
 
     if (wasFirstSetup && commitSha) {
       // Scenario 1: First-time deployment (gh-pages branch created)
@@ -310,8 +313,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         `Your site will be available at: ${pagesUrl}\n\n` +
         `GitHub Pages is automatically enabled for the gh-pages branch.\n` +
         `It may take a few minutes for your site to appear.`;
-      toastTitle = "🟢 Deploy configured!";
-      toastOutcome = "success";
+      toastMessage = "Deploy configured!";
+      toastVariant = "success";
     } else if (commitSha) {
       // Scenario 2: Subsequent deploy with changes pushed
       message =
@@ -319,16 +322,16 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         `Your site: ${pagesUrl}\n\n` +
         `Changes have been pushed to gh-pages branch.`;
       // Use is_live to determine if site is confirmed live
-      toastTitle = isLive ? "🟢 Live!" : "🟡 Deploying...";
-      toastOutcome = "success";
+      toastMessage = isLive ? "Site is live!" : "Deploying...";
+      toastVariant = "success";
     } else {
       // Scenario 3: No changes to push
       message =
         `No changes to deploy.\n\n` +
         `Your site: ${pagesUrl}\n\n` +
         `Your local site is already up to date.`;
-      toastTitle = "No changes to deploy";
-      toastOutcome = "info";
+      toastMessage = "No changes to deploy";
+      toastVariant = "info";
     }
 
     // Final progress message based on scenario
@@ -346,15 +349,10 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         : "No changes";
     await log("log", `GitHub Deployer: ${logMsg}`);
 
-    // Build the final result
+    // Build the final result (without toast - we'll call showToast separately)
     const result: HookResult = {
       success: true,
       message,
-      toast: {
-        outcome: toastOutcome,
-        title: toastTitle,
-        url: pagesUrl,
-      },
       deployment: {
         method: "github-pages",
         url: pagesUrl,
@@ -369,9 +367,17 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       },
     };
 
-    // Signal completion to moss FIRST - this shows the toast immediately
+    // Signal completion to moss FIRST
     // See utils.ts reportComplete() for design documentation
     await reportComplete(result);
+
+    // Show toast with clickable URL (8s duration for clickable link)
+    await showToast({
+      message: toastMessage,
+      variant: toastVariant,
+      actions: [{ label: "View site", url: pagesUrl }],
+      duration: 8000,
+    });
 
     // THEN cleanup worktree - can take as long as needed now
     // Cleanup runs after moss has received the result
@@ -387,30 +393,33 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Categorize error for toast display
     const lowerError = errorMessage.toLowerCase();
-    let toastTitle: string;
+    let toastMessage: string;
     if (lowerError.includes("authentication") || lowerError.includes("auth") || lowerError.includes("token")) {
-      toastTitle = "Authentication failed";
+      toastMessage = "Authentication failed";
     } else if (lowerError.includes("network") || lowerError.includes("connection") || lowerError.includes("timeout")) {
-      toastTitle = "Network error";
+      toastMessage = "Network error";
     } else if (lowerError.includes("not a git repository") || lowerError.includes("no remote")) {
-      toastTitle = "Git not configured";
+      toastMessage = "Git not configured";
     } else if (errorMessage.length > 50) {
-      toastTitle = errorMessage.slice(0, 50) + "...";
+      toastMessage = errorMessage.slice(0, 50) + "...";
     } else {
-      toastTitle = errorMessage;
+      toastMessage = errorMessage;
     }
 
     const errorResult: HookResult = {
       success: false,
       message: errorMessage,
-      toast: {
-        outcome: "error",
-        title: toastTitle,
-      },
     };
 
     // Signal error completion to moss
     await reportComplete(errorResult);
+
+    // Show error toast (5s duration, no actions needed for errors)
+    await showToast({
+      message: toastMessage,
+      variant: "error",
+      duration: 5000,
+    });
 
     return errorResult;
   }

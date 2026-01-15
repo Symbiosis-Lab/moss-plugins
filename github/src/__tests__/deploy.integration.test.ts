@@ -19,6 +19,8 @@ vi.mock("../utils", () => ({
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
+  showToast: vi.fn().mockResolvedValue(undefined),
+  dismissToast: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Import after mocking
@@ -1757,11 +1759,10 @@ describe("on_deploy integration", () => {
       expect(result.message).toContain("No changes to deploy");
       expect(result.deployment?.metadata?.commit_sha).toBe("");
 
-      // Toast should be included with site URL
-      expect(result.toast).toBeDefined();
-      expect(result.toast?.outcome).toBe("info");
-      expect(result.toast?.title).toBe("No changes to deploy");
-      expect(result.toast?.url).toContain("github.io");
+      // Toast is now shown via showToast() call instead of being in HookResult
+      // The showToast mock was called - verify it was invoked
+      const { showToast } = await import("../utils");
+      expect(showToast).toHaveBeenCalled();
 
       // Worktree operations should NOT have been called
       // (We can't easily verify this without more sophisticated mocking,

@@ -22,6 +22,8 @@ vi.mock("../../src/utils", () => ({
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
+  showToast: vi.fn().mockResolvedValue(undefined),
+  dismissToast: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Import after mocking

@@ -11,7 +11,7 @@
  */
 
 import type { OnDeployContext, HookResult, DnsTarget } from "./types";
-import { log, reportProgress, reportError, setCurrentHookName } from "./utils";
+import { log, reportProgress, reportError, reportComplete, setCurrentHookName } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
@@ -230,7 +230,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
           cname_target: pagesHostname,
         };
 
-        return {
+        const noChangesResult: HookResult = {
           success: true,
           message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
           toast: {
@@ -251,13 +251,19 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
             dns_target: dnsTarget,
           },
         };
+
+        // Signal completion to moss (no cleanup needed - worktree was never created)
+        await reportComplete(noChangesResult);
+
+        return noChangesResult;
       }
     }
 
     // Phase 4 & 5: Deploy to gh-pages branch using worktree (zero-config approach)
     // Bug 16 fix: Use git worktree to deploy without switching current branch
     await reportProgress("deploying", 4, 5, "Deploying to gh-pages...");
-    commitSha = await deployToGhPages();
+    const deployResult = await deployToGhPages();
+    commitSha = deployResult.commitSha;
 
     // Generate pages URL for logging and response
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);
@@ -340,7 +346,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         : "No changes";
     await log("log", `GitHub Deployer: ${logMsg}`);
 
-    return {
+    // Build the final result
+    const result: HookResult = {
       success: true,
       message,
       toast: {
@@ -361,6 +368,18 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         dns_target: dnsTarget,
       },
     };
+
+    // Signal completion to moss FIRST - this shows the toast immediately
+    // See utils.ts reportComplete() for design documentation
+    await reportComplete(result);
+
+    // THEN cleanup worktree - can take as long as needed now
+    // Cleanup runs after moss has received the result
+    await deployResult.cleanup().catch(() => {
+      // Silent cleanup failure is OK - temp directory will be cleaned up eventually
+    });
+
+    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await reportError(errorMessage, "deploy", true);
@@ -381,7 +400,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       toastTitle = errorMessage;
     }
 
-    return {
+    const errorResult: HookResult = {
       success: false,
       message: errorMessage,
       toast: {
@@ -389,6 +408,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         title: toastTitle,
       },
     };
+
+    // Signal error completion to moss
+    await reportComplete(errorResult);
+
+    return errorResult;
   }
 }
 

@@ -11,6 +11,7 @@ import {
   reportError as sdkReportError,
   type PluginMessage,
 } from "@symbiosis-lab/moss-api";
+import type { HookResult } from "./types";
 
 // ============================================================================
 // Plugin Configuration
@@ -73,6 +74,48 @@ export async function reportError(
   fatal = false
 ): Promise<void> {
   await sdkReportError(error, context, fatal);
+}
+
+/**
+ * Signal hook completion to moss with the result.
+ *
+ * ## Design: Explicit Completion Signaling (Option A)
+ *
+ * This function implements explicit completion signaling where the plugin
+ * actively notifies moss when it's done, rather than relying on return values.
+ *
+ * **Why this design:**
+ * - Completion is a deliberate action, not an implicit side effect of returning
+ * - Plugin can signal completion, then perform cleanup (like worktree removal)
+ * - No race condition between plugin returning and async cleanup timing out
+ * - Moss shows toast immediately when completion is signaled
+ *
+ * **Usage pattern:**
+ * ```typescript
+ * async function deploy(context): Promise<void> {
+ *   const result = await doDeployment();
+ *
+ *   // Signal completion FIRST - moss shows toast immediately
+ *   await reportComplete(result);
+ *
+ *   // Then cleanup (non-blocking, can take as long as needed)
+ *   await cleanupWorktree(worktreePath);
+ *
+ *   // Function returns void - moss already has the result
+ * }
+ * ```
+ *
+ * @param result - The HookResult to send to moss (contains success, toast, deployment info)
+ */
+export async function reportComplete(result: HookResult): Promise<void> {
+  // Send complete message directly (SDK's reportComplete has wrong signature)
+  // Rust expects: { type: "complete", success, error, result }
+  await sdkSendMessage({
+    type: "complete",
+    success: result.success,
+    error: result.success ? undefined : result.message,
+    result,
+  } as any); // Cast needed because PluginMessage type may be outdated
 }
 
 // ============================================================================

@@ -20,6 +20,7 @@ vi.mock("../../src/utils", () => ({
   log: vi.fn().mockResolvedValue(undefined),
   reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
+  reportComplete: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
 }));
 

@@ -852,8 +852,9 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<s
 async function cleanupWorktree(worktreePath: string): Promise<void> {
   await log("log", "   Cleaning up worktree...");
 
-  // Use shorter timeout for cleanup (5 seconds instead of 60)
-  const cleanupTimeout = 5000;
+  // Use 30 second timeout for cleanup (was 5 seconds, too short)
+  // Bug fix: 5 seconds was causing stale worktrees on every deploy
+  const cleanupTimeout = 30000;
 
   try {
     // Try git worktree remove with timeout

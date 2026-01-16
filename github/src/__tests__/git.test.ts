@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath, buildFindFilesCommand, fingerprintsMatch } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, parseStaleWorktreePath, buildFindFilesCommand, fingerprintsMatch, parseLsTreeOutput, compareFingerprints } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -242,5 +242,184 @@ describe("fingerprintsMatch", () => {
       const remote = new Map<string, string>();
       expect(fingerprintsMatch(local, remote)).toBe(true);
     });
+  });
+});
+
+describe("parseLsTreeOutput", () => {
+  it("parses standard git ls-tree output", () => {
+    const output = `100644 blob abc123def456\tindex.html
+100644 blob def789ghi012\tassets/style.css`;
+
+    const result = parseLsTreeOutput(output);
+
+    expect(result.size).toBe(2);
+    expect(result.get("index.html")).toBe("abc123def456");
+    expect(result.get("assets/style.css")).toBe("def789ghi012");
+  });
+
+  it("handles Chinese filenames (non-ASCII)", () => {
+    const output = `100644 blob abc123\t文章/测试文件.html
+100644 blob def456\tassets/图片.png`;
+
+    const result = parseLsTreeOutput(output);
+
+    expect(result.size).toBe(2);
+    expect(result.get("文章/测试文件.html")).toBe("abc123");
+    expect(result.get("assets/图片.png")).toBe("def456");
+  });
+
+  it("handles empty output", () => {
+    const result = parseLsTreeOutput("");
+    expect(result.size).toBe(0);
+  });
+
+  it("handles output with only whitespace lines", () => {
+    const output = `
+
+    `;
+    const result = parseLsTreeOutput(output);
+    expect(result.size).toBe(0);
+  });
+
+  it("skips malformed lines without tab separator", () => {
+    const output = `100644 blob abc123\tvalid.html
+malformed line without tab
+100644 blob def456\tother.html`;
+
+    const result = parseLsTreeOutput(output);
+
+    expect(result.size).toBe(2);
+    expect(result.get("valid.html")).toBe("abc123");
+    expect(result.get("other.html")).toBe("def456");
+  });
+
+  it("handles filenames with spaces", () => {
+    const output = `100644 blob abc123\tpath/to/file with spaces.html`;
+
+    const result = parseLsTreeOutput(output);
+
+    expect(result.size).toBe(1);
+    expect(result.get("path/to/file with spaces.html")).toBe("abc123");
+  });
+});
+
+describe("compareFingerprints", () => {
+  it("detects no changes when fingerprints match", () => {
+    const local = new Map([
+      ["index.html", "abc123"],
+      ["style.css", "def456"],
+    ]);
+    const remote = new Map([
+      ["index.html", "abc123"],
+      ["style.css", "def456"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(false);
+    expect(result.modified).toBe(0);
+    expect(result.added).toBe(0);
+    expect(result.deleted).toBe(0);
+  });
+
+  it("detects added files", () => {
+    const local = new Map([
+      ["index.html", "abc123"],
+      ["new-file.html", "xyz789"],
+    ]);
+    const remote = new Map([
+      ["index.html", "abc123"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(true);
+    expect(result.added).toBe(1);
+    expect(result.addedFiles).toContain("new-file.html");
+    expect(result.modified).toBe(0);
+    expect(result.deleted).toBe(0);
+  });
+
+  it("detects deleted files", () => {
+    const local = new Map([
+      ["index.html", "abc123"],
+    ]);
+    const remote = new Map([
+      ["index.html", "abc123"],
+      ["old-file.html", "def456"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(true);
+    expect(result.deleted).toBe(1);
+    expect(result.deletedFiles).toContain("old-file.html");
+    expect(result.added).toBe(0);
+    expect(result.modified).toBe(0);
+  });
+
+  it("detects modified files", () => {
+    const local = new Map([
+      ["index.html", "abc123"],
+      ["style.css", "MODIFIED_HASH"],
+    ]);
+    const remote = new Map([
+      ["index.html", "abc123"],
+      ["style.css", "def456"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(true);
+    expect(result.modified).toBe(1);
+    expect(result.modifiedFiles).toContain("style.css");
+    expect(result.added).toBe(0);
+    expect(result.deleted).toBe(0);
+  });
+
+  it("detects multiple types of changes", () => {
+    const local = new Map([
+      ["index.html", "MODIFIED"],
+      ["new.html", "new123"],
+    ]);
+    const remote = new Map([
+      ["index.html", "abc123"],
+      ["deleted.html", "del456"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(true);
+    expect(result.modified).toBe(1);
+    expect(result.added).toBe(1);
+    expect(result.deleted).toBe(1);
+  });
+
+  it("handles Chinese filenames correctly", () => {
+    const local = new Map([
+      ["文章/测试.html", "abc123"],
+      ["文章/新文件.html", "new456"],
+    ]);
+    const remote = new Map([
+      ["文章/测试.html", "abc123"],
+      ["文章/旧文件.html", "old789"],
+    ]);
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(true);
+    expect(result.added).toBe(1);
+    expect(result.addedFiles).toContain("文章/新文件.html");
+    expect(result.deleted).toBe(1);
+    expect(result.deletedFiles).toContain("文章/旧文件.html");
+  });
+
+  it("handles empty fingerprints", () => {
+    const local = new Map<string, string>();
+    const remote = new Map<string, string>();
+
+    const result = compareFingerprints(local, remote);
+
+    expect(result.hasChanges).toBe(false);
   });
 });

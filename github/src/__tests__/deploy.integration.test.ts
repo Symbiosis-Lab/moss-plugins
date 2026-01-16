@@ -1973,24 +1973,27 @@ describe("on_deploy integration", () => {
       });
 
       // Early change detection returns "has changes"
-      ctx.binaryConfig.setResult("git ls-tree -r gh-pages", {
+      // Uses git -c core.quotepath=false ls-tree -r gh-pages
+      ctx.binaryConfig.setResult("git -c core.quotepath=false ls-tree -r gh-pages", {
         success: true,
         exitCode: 0,
         stdout: "100644 blob oldhash\tindex.html",
         stderr: "",
       });
 
-      ctx.binaryConfig.setResult("sh", {
+      // find lists local files
+      ctx.binaryConfig.setResult("find", {
         success: true,
         exitCode: 0,
-        stdout: "index.html",
+        stdout: ".moss/site/index.html",
         stderr: "",
       });
 
-      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
+      // git hash-object computes hash for each local file
+      ctx.binaryConfig.setResult("git hash-object .moss/site/index.html", {
         success: true,
         exitCode: 0,
-        stdout: "newhash", // Different = has changes
+        stdout: "newhash", // Different from oldhash = has changes
         stderr: "",
       });
 

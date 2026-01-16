@@ -427,6 +427,94 @@ export function parseStaleWorktreePath(errorMsg: string): string | null {
 // ============================================================================
 
 /**
+ * Parse git ls-tree output into a Map of filename -> hash
+ *
+ * Git ls-tree format: "mode type hash\tfilename"
+ * Example: "100644 blob abc123def456\tpath/to/file.txt"
+ *
+ * @param lsTreeOutput - Raw output from `git ls-tree -r <branch>`
+ * @returns Map of relative file paths to their git blob hashes
+ */
+export function parseLsTreeOutput(lsTreeOutput: string): Map<string, string> {
+  const files = new Map<string, string>();
+
+  for (const line of lsTreeOutput.split("\n")) {
+    if (!line.trim()) continue;
+
+    // Format: "mode type hash\tfilename"
+    // The tab separates metadata from filename
+    const tabIndex = line.indexOf("\t");
+    if (tabIndex === -1) continue;
+
+    const metadata = line.substring(0, tabIndex);
+    const filename = line.substring(tabIndex + 1);
+
+    // metadata is "mode type hash" separated by spaces
+    const parts = metadata.split(" ");
+    if (parts.length < 3) continue;
+
+    const hash = parts[2];
+    files.set(filename, hash);
+  }
+
+  return files;
+}
+
+/**
+ * Compare two file fingerprints (Map<filename, hash>) and return change details
+ *
+ * @param localFiles - Map of local file paths to their hashes
+ * @param remoteFiles - Map of remote file paths to their hashes (will be mutated)
+ * @returns Object with change counts and whether there are any changes
+ */
+export function compareFingerprints(
+  localFiles: Map<string, string>,
+  remoteFiles: Map<string, string>
+): {
+  hasChanges: boolean;
+  modified: number;
+  added: number;
+  deleted: number;
+  addedFiles: string[];
+  modifiedFiles: string[];
+  deletedFiles: string[];
+} {
+  let modified = 0;
+  let added = 0;
+  const addedFiles: string[] = [];
+  const modifiedFiles: string[] = [];
+
+  // Create a copy of remoteFiles to track deletions
+  const remainingRemote = new Map(remoteFiles);
+
+  for (const [filename, localHash] of localFiles) {
+    const remoteHash = remainingRemote.get(filename);
+
+    if (!remoteHash) {
+      // File exists locally but not in remote = added
+      added++;
+      addedFiles.push(filename);
+    } else if (localHash !== remoteHash) {
+      // File exists in both but hash differs = modified
+      modified++;
+      modifiedFiles.push(filename);
+      remainingRemote.delete(filename);
+    } else {
+      // File matches - remove from remaining
+      remainingRemote.delete(filename);
+    }
+  }
+
+  // Files remaining in remainingRemote are deleted (exist in remote but not locally)
+  const deleted = remainingRemote.size;
+  const deletedFiles = Array.from(remainingRemote.keys());
+
+  const hasChanges = modified > 0 || added > 0 || deleted > 0;
+
+  return { hasChanges, modified, added, deleted, addedFiles, modifiedFiles, deletedFiles };
+}
+
+/**
  * Run a shell command silently (no logging)
  * Used for file operations during early change detection
  */
@@ -460,14 +548,22 @@ export async function getGhPagesFingerprint(): Promise<Fingerprint | null> {
     const result = await runGit(["ls-tree", "-r", "gh-pages"]);
 
     // Format: <mode> <type> <hash>\t<filename>
-    // Extract hash and filename into a Map
+    // The filename is separated by a TAB, not space
     const lines = result.split("\n").filter(Boolean);
     const fingerprint: Fingerprint = new Map();
 
     for (const line of lines) {
-      const parts = line.split(/\s+/);
+      // Split on tab to separate metadata from filename
+      const tabIndex = line.indexOf("\t");
+      if (tabIndex === -1) continue;
+
+      const metadata = line.substring(0, tabIndex);
+      const filename = line.substring(tabIndex + 1);
+
+      // metadata is "<mode> <type> <hash>"
+      const parts = metadata.split(" ");
       const hash = parts[2];
-      const filename = parts.slice(3).join(" "); // Handle filenames with spaces
+
       fingerprint.set(filename, hash);
     }
 
@@ -580,9 +676,8 @@ export async function getLocalSiteFingerprint(siteDir: string): Promise<Fingerpr
  * Quick check if site content has changed from gh-pages.
  * This is an optimization to skip expensive worktree operations when there are no changes.
  *
- * Uses Map-based comparison which is sort-independent, solving the problem
- * where git ls-tree and find|sort produce different orderings for Chinese
- * filenames due to locale differences.
+ * Uses git's native comparison by creating a temporary tree object from the local
+ * site directory and comparing it to gh-pages using `git diff-tree`.
  *
  * @param siteDir - Path to site directory (e.g., ".moss/site")
  * @returns Object with hasChanges boolean and optionally the reason
@@ -592,29 +687,88 @@ export async function checkForChanges(siteDir: string = ".moss/site"): Promise<{
   reason?: string;
 }> {
   try {
-    await log("log", "   Checking for changes...");
+    console.log("   Checking for changes against gh-pages...");
 
-    // Get fingerprint of gh-pages content
-    const ghPagesFingerprint = await getGhPagesFingerprint();
-    if (!ghPagesFingerprint) {
-      return { hasChanges: true, reason: "Could not read gh-pages" };
+    // Get gh-pages file hashes using git ls-tree
+    // Use -c core.quotepath=false to get unescaped non-ASCII filenames (e.g., Chinese)
+    const lsTreeResult = await executeBinary({
+      binaryPath: "git",
+      args: ["-c", "core.quotepath=false", "ls-tree", "-r", "gh-pages"],
+      timeoutMs: 30000,
+    });
+
+    if (!lsTreeResult.success) {
+      console.log("   Could not read gh-pages tree, assuming changes");
+      return { hasChanges: true, reason: "Failed to read gh-pages" };
     }
 
-    // Get fingerprint of local site
-    const localFingerprint = await getLocalSiteFingerprint(siteDir);
-    if (!localFingerprint) {
-      return { hasChanges: true, reason: "Could not read site directory" };
+    // Parse gh-pages tree using pure function
+    const ghPagesFiles = parseLsTreeOutput(lsTreeResult.stdout);
+    console.log(`   gh-pages: ${ghPagesFiles.size} files`);
+
+    // Get local site files using find
+    const findResult = await executeBinary({
+      binaryPath: "find",
+      args: [siteDir, "-type", "f"],
+      timeoutMs: 30000,
+    });
+
+    if (!findResult.success) {
+      console.log("   Could not list local files, assuming changes");
+      return { hasChanges: true, reason: "Failed to list local files" };
     }
 
-    // Compare fingerprints using Map-based comparison (sort-independent)
-    const hasChanges = !fingerprintsMatch(localFingerprint, ghPagesFingerprint);
-    if (!hasChanges) {
-      await log("log", "   No changes detected (skipping worktree)");
+    const localFilePaths = findResult.stdout.trim().split("\n").filter(f => f);
+    console.log(`   Local site: ${localFilePaths.length} files`);
+
+    // Build local file fingerprint by computing git hashes
+    const siteDirPrefix = siteDir.endsWith("/") ? siteDir : siteDir + "/";
+    const localFiles = new Map<string, string>();
+
+    for (const fullPath of localFilePaths) {
+      // Get relative path (strip siteDir prefix)
+      const relativePath = fullPath.startsWith(siteDirPrefix)
+        ? fullPath.substring(siteDirPrefix.length)
+        : fullPath;
+
+      // Compute git blob hash for local file
+      const hashResult = await executeBinary({
+        binaryPath: "git",
+        args: ["hash-object", fullPath],
+        timeoutMs: 5000,
+      });
+
+      if (hashResult.success) {
+        localFiles.set(relativePath, hashResult.stdout.trim());
+      } else {
+        // Can't hash file - mark with empty hash to force "changed"
+        localFiles.set(relativePath, "");
+      }
     }
 
-    return { hasChanges };
+    // Compare using pure function
+    const comparison = compareFingerprints(localFiles, ghPagesFiles);
+
+    // Log changes (up to 3 of each type)
+    for (const file of comparison.addedFiles.slice(0, 3)) {
+      console.log(`   + ${file} (new file)`);
+    }
+    for (const file of comparison.modifiedFiles.slice(0, 3)) {
+      console.log(`   ~ ${file} (modified)`);
+    }
+    for (const file of comparison.deletedFiles.slice(0, 3)) {
+      console.log(`   - ${file} (deleted)`);
+    }
+
+    if (comparison.hasChanges) {
+      console.log(`   Changes: ${comparison.modified} modified, ${comparison.added} added, ${comparison.deleted} deleted`);
+    } else {
+      console.log("   No changes detected (skipping worktree)");
+    }
+
+    return { hasChanges: comparison.hasChanges };
   } catch (error) {
-    await log("warn", `   Early change detection failed: ${error}`);
+    console.warn(`   Early change detection failed: ${error}`);
     return { hasChanges: true, reason: "Detection error" };
   }
 }
@@ -756,6 +910,7 @@ export interface DeployResult {
  */
 export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<DeployResult> {
   const worktreePath = getWorktreePath();
+  console.log(`   Worktree path will be: ${worktreePath}`);
 
   try {
     // Step 0: Clean up stale worktrees from previous crashed deployments
@@ -763,25 +918,40 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<D
     // reference gh-pages, causing "already checked out" errors. Prune removes entries
     // for worktrees whose directories no longer exist.
     await reportProgress("deploying", 1, 5, "Preparing worktree...");
-    await log("log", "   Preparing gh-pages worktree...");
+    console.log("   Step 0: Cleaning up stale worktrees...");
+
+    // First, list existing worktrees for diagnostics
     try {
+      const worktreeList = await runGit(["worktree", "list"]);
+      console.log("   Current worktrees:\n" + worktreeList);
+    } catch (e) {
+      console.warn("   Could not list worktrees:", e instanceof Error ? e.message : String(e));
+    }
+
+    try {
+      console.log("   Running: git worktree prune");
       await runGit(["worktree", "prune"]);
-    } catch {
-      // Prune failed, continue anyway - might still work
+      console.log("   Prune completed");
+    } catch (e) {
+      console.warn("   Prune failed (continuing anyway):", e instanceof Error ? e.message : String(e));
     }
 
     // Also try to remove the specific worktree path if it exists
     try {
+      console.log(`   Running: git worktree remove ${worktreePath} --force`);
       await runGit(["worktree", "remove", worktreePath, "--force"]);
-    } catch {
-      // Worktree doesn't exist, that's fine
+      console.log("   Worktree removed");
+    } catch (e) {
+      console.log("   Worktree remove skipped (not found or error):", e instanceof Error ? e.message : String(e));
     }
 
     // Clean up the directory if it exists
     try {
+      console.log(`   Running: rm -rf ${worktreePath}`);
       await runShell(["rm", "-rf", worktreePath]);
-    } catch {
-      // Directory doesn't exist, that's fine
+      console.log("   Directory cleanup completed");
+    } catch (e) {
+      console.log("   Directory cleanup skipped:", e instanceof Error ? e.message : String(e));
     }
 
     // Step 1: Create or add gh-pages worktree
@@ -870,7 +1040,7 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<D
  * Bug 19 fix: Prevents hanging after successful deployment
  */
 async function cleanupWorktree(worktreePath: string): Promise<void> {
-  await log("log", "   Cleaning up worktree...");
+  console.log(`   Cleaning up worktree at ${worktreePath}...`);
 
   // Use 30 second timeout for cleanup (was 5 seconds, too short)
   // Bug fix: 5 seconds was causing stale worktrees on every deploy
@@ -878,23 +1048,38 @@ async function cleanupWorktree(worktreePath: string): Promise<void> {
 
   try {
     // Try git worktree remove with timeout
+    console.log("   Running: git worktree remove --force");
     await Promise.race([
       runGit(["worktree", "remove", worktreePath, "--force"]),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Cleanup timeout")), cleanupTimeout)
       ),
     ]);
-  } catch {
+    console.log("   Worktree removed successfully via git");
+  } catch (error) {
+    console.warn("   git worktree remove failed:", error instanceof Error ? error.message : String(error));
     // Fallback: force remove directory directly
     try {
+      console.log("   Fallback: rm -rf worktree directory");
       await Promise.race([
         runShell(["rm", "-rf", worktreePath]),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("rm timeout")), cleanupTimeout)
         ),
       ]);
-    } catch {
+      console.log("   Directory removed successfully via rm -rf");
+    } catch (rmError) {
+      console.error("   rm -rf also failed:", rmError instanceof Error ? rmError.message : String(rmError));
       // Best effort - don't block, temp directory will be cleaned up eventually
     }
+  }
+
+  // Also prune any stale worktree entries from git
+  try {
+    console.log("   Running: git worktree prune");
+    await runGit(["worktree", "prune"]);
+    console.log("   Worktree prune completed");
+  } catch (pruneError) {
+    console.warn("   git worktree prune failed:", pruneError instanceof Error ? pruneError.message : String(pruneError));
   }
 }

@@ -47,62 +47,49 @@ describe("utils", () => {
   });
 
   describe("log", () => {
-    it("logs to console and sends message for log level", async () => {
+    // Note: log() is deprecated. It now only calls console.* directly.
+    // Plugin runtime auto-forwards all console.* calls to Rust.
+    it("logs to console for log level (deprecated function)", async () => {
       const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       await log("log", "test message");
 
       expect(consoleSpy).toHaveBeenCalledWith("test message");
-      expect(mossApi.sendMessage).toHaveBeenCalledWith({
-        type: "log",
-        level: "log",
-        message: "test message",
-      });
+      // No longer sends via SDK - runtime auto-forwards console.*
+      expect(mossApi.sendMessage).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
 
-    it("logs to console and sends message for error level", async () => {
+    it("logs to console for error level (deprecated function)", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       await log("error", "error message");
 
       expect(consoleSpy).toHaveBeenCalledWith("error message");
-      expect(mossApi.sendMessage).toHaveBeenCalledWith({
-        type: "log",
-        level: "error",
-        message: "error message",
-      });
+      expect(mossApi.sendMessage).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
 
-    it("logs to console and sends message for warn level", async () => {
+    it("logs to console for warn level (deprecated function)", async () => {
       const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       await log("warn", "warning message");
 
       expect(consoleSpy).toHaveBeenCalledWith("warning message");
-      expect(mossApi.sendMessage).toHaveBeenCalledWith({
-        type: "log",
-        level: "warn",
-        message: "warning message",
-      });
+      expect(mossApi.sendMessage).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
 
-    it("maps info level to log for SDK compatibility", async () => {
+    it("logs to console for info level (deprecated function)", async () => {
       const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
       await log("info", "info message");
 
       expect(consoleSpy).toHaveBeenCalledWith("info message");
-      expect(mossApi.sendMessage).toHaveBeenCalledWith({
-        type: "log",
-        level: "log", // info mapped to log for SDK
-        message: "info message",
-      });
+      expect(mossApi.sendMessage).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });

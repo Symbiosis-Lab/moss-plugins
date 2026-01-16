@@ -14,7 +14,6 @@ import {
   type PluginMessage,
   type ToastOptions,
 } from "@symbiosis-lab/moss-api";
-import type { HookResult } from "./types";
 
 // Re-export ToastOptions type for convenience
 export type { ToastOptions };
@@ -47,16 +46,22 @@ export async function sendMessage(message: PluginMessage): Promise<void> {
 }
 
 /**
- * Log a message to both console and moss terminal
+ * Log a message to moss terminal
+ *
+ * @deprecated Use console.log/warn/error directly instead.
+ * Plugin runtime now auto-forwards all console.* calls to Rust.
+ * This function will be removed in a future version.
+ *
+ * Migration example:
+ *   // Before: await log("log", "Starting...");
+ *   // After:  console.log("Starting...");
  */
 export async function log(
   level: "log" | "error" | "warn" | "info",
   message: string
 ): Promise<void> {
+  // Just call console directly - runtime auto-forwards to Rust
   console[level](message);
-  // Map 'info' to 'log' for SDK compatibility
-  const sdkLevel = level === "info" ? "log" : level;
-  await sdkSendMessage({ type: "log", level: sdkLevel, message });
 }
 
 /**
@@ -80,48 +85,6 @@ export async function reportError(
   fatal = false
 ): Promise<void> {
   await sdkReportError(error, context, fatal);
-}
-
-/**
- * Signal hook completion to moss with the result.
- *
- * ## Design: Explicit Completion Signaling (Option A)
- *
- * This function implements explicit completion signaling where the plugin
- * actively notifies moss when it's done, rather than relying on return values.
- *
- * **Why this design:**
- * - Completion is a deliberate action, not an implicit side effect of returning
- * - Plugin can signal completion, then perform cleanup (like worktree removal)
- * - No race condition between plugin returning and async cleanup timing out
- * - Moss shows toast immediately when completion is signaled
- *
- * **Usage pattern:**
- * ```typescript
- * async function deploy(context): Promise<void> {
- *   const result = await doDeployment();
- *
- *   // Signal completion FIRST - moss shows toast immediately
- *   await reportComplete(result);
- *
- *   // Then cleanup (non-blocking, can take as long as needed)
- *   await cleanupWorktree(worktreePath);
- *
- *   // Function returns void - moss already has the result
- * }
- * ```
- *
- * @param result - The HookResult to send to moss (contains success, toast, deployment info)
- */
-export async function reportComplete(result: HookResult): Promise<void> {
-  // Send complete message directly (SDK's reportComplete has wrong signature)
-  // Rust expects: { type: "complete", success, error, result }
-  await sdkSendMessage({
-    type: "complete",
-    success: result.success,
-    error: result.success ? undefined : result.message,
-    result,
-  } as any); // Cast needed because PluginMessage type may be outdated
 }
 
 // ============================================================================

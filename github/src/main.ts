@@ -10,8 +10,8 @@
  * - Stores tokens in git credential helper for persistence
  */
 
-import type { OnDeployContext, HookResult, DnsTarget } from "./types";
-import { log, reportProgress, reportError, reportComplete, setCurrentHookName, showToast } from "./utils";
+import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
+import { log, reportProgress, reportError, setCurrentHookName, showToast } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
@@ -35,6 +35,31 @@ const GITHUB_PAGES_IPS = [
   "185.199.110.153",
   "185.199.111.153",
 ];
+
+/**
+ * Generate DNS records for GitHub Pages custom domain configuration
+ *
+ * @param owner - GitHub username (for CNAME target)
+ * @returns DnsTarget with A records for apex and CNAME for www
+ */
+function generateDnsTarget(owner: string): DnsTarget {
+  const records: DnsRecord[] = [
+    // A records for apex domain (@)
+    ...GITHUB_PAGES_IPS.map(ip => ({
+      record_type: "A",
+      name: "@",
+      value: ip,
+    })),
+    // CNAME for www subdomain
+    {
+      record_type: "CNAME",
+      name: "www",
+      value: `${owner}.github.io`,
+    },
+  ];
+
+  return { records };
+}
 
 // ============================================================================
 // Pages Status Polling
@@ -120,10 +145,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     if (!context.site_files || context.site_files.length === 0) {
       const msg = "Site directory is empty. Please compile your site first.";
       await reportError(msg, "validation", true);
-      return {
-        success: false,
-        message: msg,
-      };
+      return { success: false, message: msg };
     }
     await log("log", `   Site files: ${context.site_files.length} files ready`);
 
@@ -141,10 +163,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       // Check if git CLI is available
       if (!await isGitAvailable()) {
         await reportError("Git is not installed. Please install git to continue.", "validation", true);
-        return {
-          success: false,
-          message: "Git is not installed. Please install git first.",
-        };
+        return { success: false, message: "Git is not installed. Please install git first." };
       }
 
       // Feature 20: Smart repo setup - auto-create or show UI
@@ -153,10 +172,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
       if (!repoInfo) {
         // User cancelled or error
-        return {
-          success: false,
-          message: "Repository setup cancelled.",
-        };
+        return { success: false, message: "Repository setup cancelled." };
       }
 
       // Initialize git if needed
@@ -222,15 +238,19 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         await log("log", `   🌐 Site URL: ${pagesUrl}`);
 
         const parsed = parseGitHubUrl(remoteUrl);
-        const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
 
-        const dnsTarget: DnsTarget = {
-          type: "github-pages",
-          a_records: GITHUB_PAGES_IPS,
-          cname_target: pagesHostname,
-        };
+        const dnsTarget = parsed ? generateDnsTarget(parsed.owner) : { records: [] };
 
-        const noChangesResult: HookResult = {
+        // Show toast with clickable URL (8s duration for clickable link)
+        await showToast({
+          message: "No changes to deploy",
+          variant: "info",
+          actions: [{ label: "View site", url: pagesUrl }],
+          duration: 8000,
+        });
+
+        // Return result - runtime handles completion
+        return {
           success: true,
           message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
           deployment: {
@@ -246,19 +266,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
             dns_target: dnsTarget,
           },
         };
-
-        // Signal completion to moss (no cleanup needed - worktree was never created)
-        await reportComplete(noChangesResult);
-
-        // Show toast with clickable URL (8s duration for clickable link)
-        await showToast({
-          message: "No changes to deploy",
-          variant: "info",
-          actions: [{ label: "View site", url: pagesUrl }],
-          duration: 8000,
-        });
-
-        return noChangesResult;
       }
     }
 
@@ -281,9 +288,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
     const parsed = parseGitHubUrl(remoteUrl);
 
-    // Extract the GitHub Pages hostname for CNAME (e.g., "user.github.io")
-    const pagesHostname = parsed ? `${parsed.owner}.github.io` : "";
-
     // Feature 21: Check if deployment is live (only if we pushed changes)
     let isLive = false;
     if (commitSha && parsed) {
@@ -293,11 +297,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
 
     // Build DNS target for custom domain configuration
-    const dnsTarget: DnsTarget = {
-      type: "github-pages",
-      a_records: GITHUB_PAGES_IPS,
-      cname_target: pagesHostname,
-    };
+    const dnsTarget = parsed ? generateDnsTarget(parsed.owner) : { records: [] };
 
     // Build result message based on scenario
     // Bug 16: Zero-config deployment - no manual steps needed
@@ -349,8 +349,21 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         : "No changes";
     await log("log", `GitHub Deployer: ${logMsg}`);
 
-    // Build the final result (without toast - we'll call showToast separately)
-    const result: HookResult = {
+    // Show toast with clickable URL (8s duration for clickable link)
+    await showToast({
+      message: toastMessage,
+      variant: toastVariant,
+      actions: [{ label: "View site", url: pagesUrl }],
+      duration: 8000,
+    });
+
+    // Cleanup worktree before returning
+    await deployResult.cleanup().catch(() => {
+      // Silent cleanup failure is OK - temp directory will be cleaned up eventually
+    });
+
+    // Return result - runtime handles completion
+    return {
       success: true,
       message,
       deployment: {
@@ -366,26 +379,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         dns_target: dnsTarget,
       },
     };
-
-    // Signal completion to moss FIRST
-    // See utils.ts reportComplete() for design documentation
-    await reportComplete(result);
-
-    // Show toast with clickable URL (8s duration for clickable link)
-    await showToast({
-      message: toastMessage,
-      variant: toastVariant,
-      actions: [{ label: "View site", url: pagesUrl }],
-      duration: 8000,
-    });
-
-    // THEN cleanup worktree - can take as long as needed now
-    // Cleanup runs after moss has received the result
-    await deployResult.cleanup().catch(() => {
-      // Silent cleanup failure is OK - temp directory will be cleaned up eventually
-    });
-
-    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await reportError(errorMessage, "deploy", true);
@@ -406,14 +399,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       toastMessage = errorMessage;
     }
 
-    const errorResult: HookResult = {
-      success: false,
-      message: errorMessage,
-    };
-
-    // Signal error completion to moss
-    await reportComplete(errorResult);
-
     // Show error toast (5s duration, no actions needed for errors)
     await showToast({
       message: toastMessage,
@@ -421,7 +406,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       duration: 5000,
     });
 
-    return errorResult;
+    // Return result - runtime handles completion
+    return { success: false, message: errorMessage };
   }
 }
 

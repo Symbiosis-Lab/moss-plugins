@@ -58,6 +58,18 @@ export async function getRemoteUrl(): Promise<string> {
 }
 
 /**
+ * Try to get the origin remote URL, returning null if not configured
+ * This avoids duplicate git calls when checking if remote exists
+ */
+export async function tryGetRemoteUrl(): Promise<string | null> {
+  try {
+    return await runGit(["remote", "get-url", "origin"]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Detect the default branch (main or master)
  */
 export async function detectBranch(): Promise<string> {

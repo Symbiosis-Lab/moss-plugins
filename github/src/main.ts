@@ -12,8 +12,8 @@
 
 import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast } from "./utils";
-import { validateAll, isSSHRemote, isGitRepository, hasRemote, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
+import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
+import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
 // For existing HTTPS remotes, git handles push auth via credential helper
 import { ensureGitHubRepo } from "./repo-setup";
@@ -156,8 +156,10 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     let wasFirstSetup = false;
 
     // Check if we need to set up a repository
+    // Use tryGetRemoteUrl to check and get URL in one call (avoids duplicate git calls)
     const needsGitInit = !await isGitRepository();
-    const needsRemote = !needsGitInit && !await hasRemote();
+    const existingRemoteUrl = needsGitInit ? null : await tryGetRemoteUrl();
+    const needsRemote = !needsGitInit && !existingRemoteUrl;
 
     if (needsGitInit || needsRemote) {
       // Check if git CLI is available
@@ -191,11 +193,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       remoteUrl = repoInfo.sshUrl;
       wasFirstSetup = true;
     } else {
-      try {
-        remoteUrl = await getRemoteUrl();
-      } catch {
-        remoteUrl = "";
-      }
+      // Use the URL we already fetched
+      remoteUrl = existingRemoteUrl || "";
     }
 
     const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;

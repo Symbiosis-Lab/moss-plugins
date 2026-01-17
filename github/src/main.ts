@@ -13,7 +13,7 @@
 import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, getRemoteUrl, tryGetRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
+import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
 // For existing HTTPS remotes, git handles push auth via credential helper
 import { ensureGitHubRepo } from "./repo-setup";

@@ -41,34 +41,115 @@ import type {
   SyncResult,
   SyncResultWithMap,
 } from "./types";
+import type { MattersPluginConfig } from "./config";
 import { slugify, reportProgress, reportError } from "./utils";
 import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
-import { readFile, writeFile } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, listFiles } from "@symbiosis-lab/moss-api";
+
+// ============================================================================
+// Exported Functions for Folder Detection
+// ============================================================================
+
+/**
+ * Get default folder names (no longer language-based).
+ * Always returns "posts" for articles and "_drafts" for drafts.
+ */
+export function getDefaultFolderNames(): {
+  article: string;
+  drafts: string;
+} {
+  return { article: "posts", drafts: "_drafts" };
+}
+
+/**
+ * Check if drafts should be synced based on config.
+ * Default is FALSE - user must explicitly enable draft sync.
+ */
+export function shouldSyncDrafts(config: MattersPluginConfig): boolean {
+  return config.sync_drafts ?? false;
+}
+
+/**
+ * Detect the article folder by scanning for files with Matters syndication URLs.
+ * Returns the folder name if found, or null if no existing articles.
+ *
+ * Scans all markdown files and looks for those with a `syndicated` field
+ * containing a matters.town URL. Returns the top-level folder name.
+ */
+export async function detectArticleFolder(): Promise<string | null> {
+  try {
+    // Get all files in the project
+    const allFiles = await listFiles();
+
+    // Filter to markdown files and group by top-level folder
+    const mdFiles = allFiles.filter((f) => f.endsWith(".md"));
+
+    for (const filePath of mdFiles) {
+      // Get top-level folder (first path segment)
+      const segments = filePath.split("/");
+      if (segments.length < 2) continue; // Skip root-level files
+
+      const topFolder = segments[0];
+
+      // Skip hidden and underscore folders
+      if (topFolder.startsWith(".") || topFolder.startsWith("_")) continue;
+
+      // Check if this file has Matters syndication
+      try {
+        const content = await readFile(filePath);
+        const parsed = parseFrontmatter(content);
+
+        if (
+          parsed?.frontmatter?.syndicated &&
+          Array.isArray(parsed.frontmatter.syndicated) &&
+          parsed.frontmatter.syndicated.some((url: string) =>
+            url.includes("matters.town")
+          )
+        ) {
+          return topFolder;
+        }
+      } catch {
+        // Skip files that can't be read
+        continue;
+      }
+    }
+
+    return null;
+  } catch {
+    // On any error (e.g., listFiles not available), return null
+    return null;
+  }
+}
+
+/**
+ * Get the article folder name to use for syncing.
+ *
+ * Priority:
+ * 1. Explicit config (articleFolder) - user override
+ * 2. Auto-detected from existing content - finds folder with Matters-synced files
+ * 3. Default "posts" - for new projects
+ */
+export async function getArticleFolderName(
+  config: MattersPluginConfig
+): Promise<string> {
+  // 1. Check if explicitly configured
+  if (config.articleFolder) {
+    return config.articleFolder;
+  }
+
+  // 2. Auto-detect from existing content
+  const detected = await detectArticleFolder();
+  if (detected) {
+    return detected;
+  }
+
+  // 3. Fall back to default
+  return "posts";
+}
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Get localized folder names based on user's Matters.town language preference.
- *
- * Language Detection:
- * - zh_hans (Simplified Chinese) or zh_hant (Traditional Chinese) → Chinese folder names
- * - All other values (en, null, undefined) → English folder names
- *
- * Folder Naming Conventions:
- * - article/文章: Main content folder containing all articles and collections
- * - _drafts/_草稿: Underscore prefix indicates hidden/unpublished content
- */
-function getLocalizedFolderNames(language?: string): {
-  article: string;
-  drafts: string;
-} {
-  const isChinese = language === "zh_hans" || language === "zh_hant";
-  return isChinese
-    ? { article: "文章", drafts: "_草稿" }
-    : { article: "article", drafts: "_drafts" };
-}
 
 /**
  * Check if any article belongs to multiple collections
@@ -157,8 +238,12 @@ export async function syncToLocalFiles(
   // Map for internal link rewriting: Matters URL/shortHash → local file path
   const articlePathMap = new Map<string, string>();
 
-  // Get localized folder names based on user's language preference
-  const folders = getLocalizedFolderNames(profile.language);
+  // Get folder names - auto-detect existing folder or use defaults
+  const articleFolder = await getArticleFolderName(config);
+  const folders = {
+    article: articleFolder,
+    drafts: getDefaultFolderNames().drafts,
+  };
 
   const totalItems = articles.length + drafts.length + collections.length + 1; // +1 for homepage
   let processedItems = 0;
@@ -404,9 +489,8 @@ export async function syncToLocalFiles(
     }
   }
 
-  // Process drafts
-  const syncDrafts = config.sync_drafts ?? true;
-  if (syncDrafts) {
+  // Process drafts (disabled by default - must be explicitly enabled)
+  if (shouldSyncDrafts(config)) {
     for (const draft of drafts) {
       processedItems++;
       const draftTitle = draft.title || "Untitled";

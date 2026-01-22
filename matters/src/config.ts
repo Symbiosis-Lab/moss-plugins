@@ -26,6 +26,10 @@ export interface MattersPluginConfig {
   language?: string;
   /** ISO timestamp of last successful sync completion (for incremental sync) */
   lastSyncedAt?: string;
+  /** Whether to sync drafts (default: false) */
+  sync_drafts?: boolean;
+  /** Explicit article folder name override (auto-detected if not set) */
+  articleFolder?: string;
 }
 
 // ============================================================================

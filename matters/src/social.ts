@@ -94,11 +94,22 @@ export async function loadSocialData(): Promise<MattersSocialData> {
 
 /**
  * Save social data to .moss/social/matters.json
+ *
+ * Creates the .moss/social/ directory if it doesn't exist (handled by writeFile).
+ *
+ * @throws Error if the file cannot be written (permissions, disk full, etc.)
  */
 export async function saveSocialData(data: MattersSocialData): Promise<void> {
   data.updatedAt = new Date().toISOString();
   const content = JSON.stringify(data, null, 2);
-  await writeFile(SOCIAL_FILE_PATH, content);
+
+  try {
+    await writeFile(SOCIAL_FILE_PATH, content);
+  } catch (error) {
+    // Log the error with context for debugging
+    console.error(`[matters] Failed to save social data to ${SOCIAL_FILE_PATH}:`, error);
+    throw error; // Re-throw to propagate to caller
+  }
 }
 
 // ============================================================================

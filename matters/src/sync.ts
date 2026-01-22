@@ -97,12 +97,12 @@ export async function detectArticleFolder(): Promise<string | null> {
       // Check if this file has Matters syndication
       try {
         const content = await readFile(filePath);
-        const { frontmatter } = parseFrontmatter(content);
+        const parsed = parseFrontmatter(content);
 
         if (
-          frontmatter.syndicated &&
-          Array.isArray(frontmatter.syndicated) &&
-          frontmatter.syndicated.some((url: string) =>
+          parsed?.frontmatter?.syndicated &&
+          Array.isArray(parsed.frontmatter.syndicated) &&
+          parsed.frontmatter.syndicated.some((url: string) =>
             url.includes("matters.town")
           )
         ) {

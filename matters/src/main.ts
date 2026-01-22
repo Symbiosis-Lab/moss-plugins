@@ -337,9 +337,15 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         }
       }
 
-      await saveSocialData(socialData);
-      socialSummary = `, ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`;
-      await log("log", `✅ Social data saved: ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`);
+      try {
+        await saveSocialData(socialData);
+        socialSummary = `, ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`;
+        await log("log", `✅ Social data saved: ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`);
+      } catch (error) {
+        // Log but don't fail the entire sync if social data save fails
+        await log("error", `❌ Failed to save social data: ${error}`);
+        await log("warn", "   Social data was collected but could not be saved to .moss/social/matters.json");
+      }
     }
 
     // Phase 9: Update lastSyncedAt timestamp

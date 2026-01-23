@@ -38,7 +38,7 @@ import type {
   UserProfileQuery,
 } from "./__generated__/types";
 import { log } from "./utils";
-import { getPluginCookie } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, httpPost } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Configuration
@@ -480,20 +480,22 @@ export async function graphqlQuery<T>(
     throw new Error("No access token available. Please login first.");
   }
 
-  const response = await fetch(apiConfig.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-access-token": token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  const response = await httpPost(
+    apiConfig.endpoint,
+    { query, variables },
+    {
+      headers: {
+        "x-access-token": token,
+      },
+      timeoutMs: 30000,
+    }
+  );
 
   if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+    throw new Error(`GraphQL request failed: ${response.status}`);
   }
 
-  const result = await response.json();
+  const result = JSON.parse(response.text());
   if (result.errors && result.errors.length > 0) {
     throw new Error(result.errors[0]?.message || "GraphQL error");
   }
@@ -508,21 +510,27 @@ export async function graphqlQueryPublic<T>(
   query: string,
   variables?: Record<string, unknown>
 ): Promise<T> {
-  const response = await fetch(apiConfig.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "MattersPlugin/1.0",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  console.log(`[matters] graphqlQueryPublic: fetching with vars:`, JSON.stringify(variables));
+
+  const response = await httpPost(
+    apiConfig.endpoint,
+    { query, variables },
+    {
+      headers: {
+        "User-Agent": "MattersPlugin/1.0",
+        Accept: "application/json",
+      },
+      timeoutMs: 30000,
+    }
+  );
+
+  console.log(`[matters] graphqlQueryPublic: response status ${response.status}`);
 
   if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+    throw new Error(`GraphQL request failed: ${response.status}`);
   }
 
-  const result = await response.json();
+  const result = JSON.parse(response.text());
   if (result.errors && result.errors.length > 0) {
     throw new Error(result.errors[0]?.message || "GraphQL error");
   }

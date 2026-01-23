@@ -103,11 +103,15 @@ export async function saveSocialData(data: MattersSocialData): Promise<void> {
   data.updatedAt = new Date().toISOString();
   const content = JSON.stringify(data, null, 2);
 
+  console.log(`[matters] saveSocialData: Writing ${content.length} bytes to ${SOCIAL_FILE_PATH}`);
+  console.log(`[matters] saveSocialData: ${Object.keys(data.articles).length} articles in data`);
+
   try {
-    await writeFile(SOCIAL_FILE_PATH, content);
+    const result = await writeFile(SOCIAL_FILE_PATH, content);
+    console.log(`[matters] saveSocialData: writeFile returned:`, result);
   } catch (error) {
     // Log the error with context for debugging
-    console.error(`[matters] Failed to save social data to ${SOCIAL_FILE_PATH}:`, error);
+    console.error(`[matters] saveSocialData: FAILED to write to ${SOCIAL_FILE_PATH}:`, error);
     throw error; // Re-throw to propagate to caller
   }
 }

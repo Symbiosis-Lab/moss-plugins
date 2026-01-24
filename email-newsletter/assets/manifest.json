@@ -1,0 +1,16 @@
+{
+  "name": "email-newsletter",
+  "version": "1.0.0",
+  "description": "Syndicate articles to email subscribers via Buttondown",
+  "author": "moss team",
+  "entry": "main.bundle.js",
+  "capabilities": ["syndicate"],
+  "global_name": "EmailNewsletter",
+  "config": {
+    "send_as_draft": true
+  },
+  "config_schema": {
+    "api_key": "string",
+    "send_as_draft": "boolean"
+  }
+}

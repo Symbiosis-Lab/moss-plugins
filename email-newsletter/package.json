@@ -1,0 +1,37 @@
+{
+  "name": "email-newsletter",
+  "version": "1.0.0",
+  "description": "Syndicate articles to email subscribers via Buttondown",
+  "main": "dist/main.bundle.js",
+  "scripts": {
+    "build": "npm run clean && npm run bundle && npm run copy-assets",
+    "dev": "npm run clean && npm run copy-assets && concurrently \"esbuild src/main.ts --bundle --format=iife --global-name=EmailNewsletter --outfile=dist/main.bundle.js --watch\" \"npm run watch-assets\"",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=EmailNewsletter --outfile=dist/main.bundle.js",
+    "clean": "rm -rf dist && mkdir -p dist",
+    "copy-assets": "cp assets/* dist/",
+    "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "moss",
+    "plugin",
+    "buttondown",
+    "email",
+    "newsletter",
+    "syndication"
+  ],
+  "author": "Symbiosis Lab",
+  "license": "MIT",
+  "devDependencies": {
+    "@symbiosis-lab/moss-api": "^0.7.6",
+    "@tauri-apps/api": "^2.9.1",
+    "@types/node": "^20.0.0",
+    "chokidar-cli": "^3.0.0",
+    "concurrently": "^8.2.0",
+    "esbuild": "^0.27.0",
+    "happy-dom": "^20.3.7",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  }
+}

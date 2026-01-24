@@ -26,8 +26,6 @@ import {
   fetchAllCollections,
   fetchUserProfile,
   fetchArticleComments,
-  fetchArticleDonations,
-  fetchArticleAppreciations,
   createDraft,
   fetchDraft,
   apiConfig,
@@ -300,16 +298,15 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         ? `, ${linkResult.linksRewritten} internal links rewritten`
         : "";
 
-    // Phase 8: Fetch social data (comments, donations, appreciations) for synced articles
+    // Phase 8: Fetch social data (comments only) for synced articles
+    // Save incrementally after each article to avoid losing data if a fetch hangs
     let socialSummary = "";
     if (articles.length > 0) {
       await reportProgress("fetching_social", 0, articles.length, "Fetching social data...");
-      await log("log", "📊 Fetching social data (comments, donations, appreciations)...");
+      await log("log", "📊 Fetching social data (comments)...");
 
       const socialData = await loadSocialData();
       let totalComments = 0;
-      let totalDonations = 0;
-      let totalAppreciations = 0;
 
       for (let i = 0; i < articles.length; i++) {
         const article = articles[i];
@@ -321,31 +318,21 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         );
 
         try {
-          const [comments, donations, appreciations] = await Promise.all([
-            fetchArticleComments(article.shortHash),
-            fetchArticleDonations(article.shortHash),
-            fetchArticleAppreciations(article.shortHash),
-          ]);
+          const comments = await fetchArticleComments(article.shortHash);
 
-          mergeSocialData(socialData, article.shortHash, comments, donations, appreciations);
+          mergeSocialData(socialData, article.shortHash, comments, [], []);
 
           totalComments += comments.length;
-          totalDonations += donations.length;
-          totalAppreciations += appreciations.length;
+
+          // Save after each article to avoid losing data if later fetches hang
+          await saveSocialData(socialData);
         } catch (error) {
           await log("warn", `   Failed to fetch social data for ${article.title}: ${error}`);
         }
       }
 
-      try {
-        await saveSocialData(socialData);
-        socialSummary = `, ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`;
-        await log("log", `✅ Social data saved: ${totalComments} comments, ${totalDonations} donations, ${totalAppreciations} appreciations`);
-      } catch (error) {
-        // Log but don't fail the entire sync if social data save fails
-        await log("error", `❌ Failed to save social data: ${error}`);
-        await log("warn", "   Social data was collected but could not be saved to .moss/social/matters.json");
-      }
+      socialSummary = `, ${totalComments} comments`;
+      await log("log", `✅ Social data saved: ${totalComments} comments`);
     }
 
     // Phase 9: Update lastSyncedAt timestamp
@@ -363,9 +350,11 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
     await reportProgress("complete", 1, 1, `Complete: ${summary}${mediaSummary}${linkSummary}${socialSummary}`);
 
-    const allErrors = [...syncResult.errors, ...mediaResult.errors, ...linkResult.errors];
+    // Only core sync errors are critical; media/link errors are non-critical (nice-to-have)
+    // This allows partial success (e.g., all articles synced but some images failed to download)
+    const criticalErrors = syncResult.errors;
     return {
-      success: allErrors.length === 0,
+      success: criticalErrors.length === 0,
       message: `Synced from Matters: ${summary}${mediaSummary}${linkSummary}${socialSummary}`,
     };
   } catch (error) {
@@ -420,16 +409,16 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
     console.log(`📅 Deployed at: ${deployed_at}`);
 
     // Show starting toast
-    await showToast("Starting Matters syndication...", "info", 3000);
+    await showToast({ message: "Starting Matters syndication...", variant: "info", duration: 3000 });
 
     // Check authentication
     const isAuthenticated = await checkAuthentication();
     if (!isAuthenticated) {
       console.log("🔐 Not authenticated, prompting login...");
-      await showToast("Matters login required", "info", 5000);
+      await showToast({ message: "Matters login required", variant: "info", duration: 5000 });
       const loginSuccess = await promptLogin();
       if (!loginSuccess) {
-        await showToast("Login cancelled", "warning", 3000);
+        await showToast({ message: "Login cancelled", variant: "warning", duration: 3000 });
         return {
           success: false,
           message: "Login required for syndication",
@@ -523,7 +512,7 @@ async function syndicateArticle(
   console.log(`  → Syndicating: ${article.title}`);
 
   // Show creating draft toast
-  await showToast(`Creating draft: ${article.title}`, "info", 5000);
+  await showToast({ message: `Creating draft: ${article.title}`, variant: "info", duration: 5000 });
 
   const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
@@ -543,7 +532,7 @@ async function syndicateArticle(
   console.log(`    📝 Draft created with ID: ${draft.id}`);
 
   // Show draft ready toast
-  await showToast("Draft created! Opening for review...", "success", 3000);
+  await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
   // Step 2: Open draft in browser for user review
   const draftUrl = `https://matters.town/me/drafts/${draft.id}`;
@@ -559,7 +548,7 @@ async function syndicateArticle(
     console.log(`    ✅ Published: ${publishedUrl}`);
 
     // Show success toast
-    await showToast(`Published to Matters!`, "success", 5000);
+    await showToast({ message: "Published to Matters!", variant: "success", duration: 5000 });
 
     // Update the local markdown file's frontmatter
     if (article.source_path) {
@@ -572,7 +561,7 @@ async function syndicateArticle(
 
   // Step 5: Timeout - draft left for later
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
-  await showToast("Draft saved - publish when ready", "info", 5000);
+  await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
   return { draftId: draft.id };
 }
 

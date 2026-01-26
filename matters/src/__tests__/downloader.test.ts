@@ -486,4 +486,63 @@ Some text
     // None should have remote URLs
     expect(updatedContent).not.toContain("https://assets.matters.news");
   });
+
+  it("should NOT write file when all references are already local paths", async () => {
+    // This is the key test for Issue #5: Media download writes files unnecessarily
+    // If all image references are already local, the file should NOT be written
+    const uuid = "12345678-1234-1234-1234-123456789abc";
+
+    // Markdown file with ALREADY LOCAL references (no remote URLs at all)
+    const markdownContent = `---
+title: "Already Localized Article"
+cover: "assets/${uuid}.jpg"
+---
+
+![](assets/${uuid}.jpg)
+
+Already using local path.
+`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/article.md`, markdownContent);
+
+    // Asset exists on disk
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid}.jpg`, "[binary image data]");
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate();
+
+    // No downloads (no remote URLs to download)
+    expect(result.imagesDownloaded).toBe(0);
+    // No files should be skipped (no remote URLs to check)
+    expect(result.imagesSkipped).toBe(0);
+    // File should NOT be processed (no changes needed)
+    expect(result.filesProcessed).toBe(0);
+  });
+
+  it("should not write file if replacement results in identical content", async () => {
+    // This tests the scenario where:
+    // 1. File still has remote URL
+    // 2. Asset exists on disk
+    // 3. Replacement would result in same content (edge case)
+    const uuid = "87654321-4321-4321-4321-987654321abc";
+
+    // File with remote URL, but the "replacement" local path is identical to what's there
+    // This is a contrived case but tests the comparison logic
+    const markdownContent = `---
+title: "Article"
+cover: "../../assets/${uuid}.jpg"
+---
+
+![](../../assets/${uuid}.jpg)
+`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/nested/dir/article.md`, markdownContent);
+
+    // Asset exists on disk
+    ctx.filesystem.setFile(`${ctx.projectPath}/assets/${uuid}.jpg`, "[binary image data]");
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate();
+
+    // File should NOT be processed (content unchanged after any attempted replacements)
+    expect(result.filesProcessed).toBe(0);
+  });
 });

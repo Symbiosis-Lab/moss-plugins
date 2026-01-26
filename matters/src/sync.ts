@@ -271,10 +271,28 @@ export async function syncToLocalFiles(
     });
     const homepageContent = homepageFrontmatter + "\n\n" + (profile.description || "");
 
-    await writeFile("index.md", homepageContent);
+    // Check if homepage already exists with same content
+    let existingHomepage: string | null = null;
+    try {
+      existingHomepage = await readFile("index.md");
+    } catch {
+      // File doesn't exist
+    }
 
-    console.log(`   ✅ Created homepage: index.md`);
-    result.created++;
+    if (existingHomepage && existingHomepage.trim() === homepageContent.trim()) {
+      console.log(`   ⏭️  Skipping homepage (unchanged): index.md`);
+      result.skipped++;
+    } else {
+      await writeFile("index.md", homepageContent);
+
+      if (existingHomepage) {
+        console.log(`   ✏️  Updated homepage: index.md`);
+        result.updated++;
+      } else {
+        console.log(`   ✅ Created homepage: index.md`);
+        result.created++;
+      }
+    }
   } catch (error) {
     const errorMsg = `Failed to create homepage: ${error}`;
     await reportError(errorMsg, "syncing_homepage", false);
@@ -357,6 +375,13 @@ export async function syncToLocalFiles(
       });
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
+
+      // Check if content is unchanged
+      if (existingContent && existingContent.trim() === fullContent.trim()) {
+        console.log(`   ⏭️  Skipping collection (unchanged): ${collectionPath}`);
+        result.skipped++;
+        continue;
+      }
 
       await writeFile(collectionPath, fullContent);
 

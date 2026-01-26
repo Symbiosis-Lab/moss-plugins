@@ -288,10 +288,21 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     const mediaResult = await downloadMediaAndUpdate();
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
 
-    const mediaSummary =
-      mediaResult.imagesDownloaded > 0 || mediaResult.imagesSkipped > 0
-        ? `, ${mediaResult.imagesDownloaded} images downloaded, ${mediaResult.imagesSkipped} failed`
-        : "";
+    // Build media summary with correct labels:
+    // - imagesDownloaded: successfully downloaded
+    // - imagesSkipped: already existed locally (not failures!)
+    // - errors.length: actual failures
+    const mediaParts: string[] = [];
+    if (mediaResult.imagesDownloaded > 0) {
+      mediaParts.push(`${mediaResult.imagesDownloaded} downloaded`);
+    }
+    if (mediaResult.imagesSkipped > 0) {
+      mediaParts.push(`${mediaResult.imagesSkipped} skipped`);
+    }
+    if (mediaResult.errors.length > 0) {
+      mediaParts.push(`${mediaResult.errors.length} failed`);
+    }
+    const mediaSummary = mediaParts.length > 0 ? `, images: ${mediaParts.join(", ")}` : "";
 
     const linkSummary =
       linkResult.linksRewritten > 0

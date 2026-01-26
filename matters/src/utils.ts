@@ -55,14 +55,16 @@ export async function sendMessage(message: PluginMessage): Promise<void> {
 }
 
 /**
- * Log a message to both console and moss terminal
+ * Log a message to moss terminal
  * Non-blocking: fires message to Rust without waiting for response
+ *
+ * Note: We only send to Rust (no console output) to avoid duplicate logs.
+ * Rust side handles logging to the terminal with proper formatting.
  */
 export function log(
   level: "log" | "error" | "warn" | "info",
   message: string
 ): void {
-  console[level](message);
   // Map 'info' to 'log' for SDK compatibility
   const sdkLevel = level === "info" ? "log" : level;
   // Fire-and-forget: don't await to avoid blocking worker pool

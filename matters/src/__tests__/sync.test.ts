@@ -79,9 +79,141 @@ describe("syncToLocalFiles", () => {
   });
 });
 
-// Note: Full integration tests for syncToLocalFiles would require mocking:
-// 1. window.__TAURI__ for file operations
-// 2. downloadAsset and downloadAndRewriteMedia functions
-// 3. The various converter functions
-//
-// These are better suited for integration tests with a proper test harness.
+// ============================================================================
+// Integration Tests with Mock Tauri
+// ============================================================================
+
+import { vi, beforeEach, afterEach } from "vitest";
+import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";
+
+describe("syncToLocalFiles - skip unchanged content", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should skip homepage when content is unchanged", async () => {
+    // Setup: Create existing homepage with same content that would be generated
+    // The generateFrontmatter function creates frontmatter in a specific format
+    const existingHomepage = `---
+title: "Test User"
+---
+
+Test bio`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/index.md`, existingHomepage);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [], // no collections
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "Test bio" }
+    );
+
+    // Homepage should be skipped, not created
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.result.created).toBe(0);
+  });
+
+  it("should update homepage when content has changed", async () => {
+    // Setup: Create existing homepage with DIFFERENT content
+    const existingHomepage = `---
+title: "Old Name"
+---
+
+Old bio`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/index.md`, existingHomepage);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [], // no collections
+      "testuser",
+      {},
+      { displayName: "New Name", userName: "testuser", description: "New bio" }
+    );
+
+    // Homepage should be updated
+    expect(result.result.updated).toBeGreaterThanOrEqual(1);
+
+    // Verify content was updated
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(updatedContent).toContain("New Name");
+    expect(updatedContent).toContain("New bio");
+  });
+
+  it("should skip collection when content is unchanged", async () => {
+    // Setup: Create existing collection with same content that sync would generate
+    const existingCollection = `---
+title: "Test Collection"
+is_collection: true
+description: "Collection description"
+---
+
+Collection description`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-collection/index.md`, existingCollection);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [{
+        id: "1",
+        title: "Test Collection",
+        description: "Collection description",
+        articles: [],
+        cover: null
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "" }
+    );
+
+    // Collection should be skipped if content matches
+    // result.skipped should include the collection
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should update collection when content has changed", async () => {
+    // Setup: Create existing collection with DIFFERENT content
+    const existingCollection = `---
+title: "Old Collection Name"
+is_collection: true
+---
+
+Old description`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-collection/index.md`, existingCollection);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [{
+        id: "1",
+        title: "Test Collection",
+        description: "New description",
+        articles: [],
+        cover: null
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "" }
+    );
+
+    // Collection should be updated
+    expect(result.result.updated).toBeGreaterThanOrEqual(1);
+
+    // Verify content was updated
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/posts/test-collection/index.md`)?.content;
+    expect(updatedContent).toContain("Test Collection");
+    expect(updatedContent).toContain("New description");
+  });
+});

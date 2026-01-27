@@ -29,6 +29,7 @@ import {
   fileExists,
   createSymlink,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 
 /**
  * Project information from moss's folder scan.
@@ -145,6 +146,54 @@ export async function createHugoStructure(
   for (const file of assetFiles) {
     // Use symlink for all asset files (preserves binary files correctly)
     await createSymlink(file, `${staticDir}/${file}`);
+  }
+}
+
+/**
+ * Translates a PageNode tree into Hugo's content directory structure.
+ *
+ * - Folder nodes get `_index.md` (Hugo's section index convention)
+ * - Leaf nodes get symlinked
+ * - Draft nodes are skipped entirely
+ *
+ * @param node - Root PageNode of the tree
+ * @param contentDir - Path to Hugo's content directory (e.g., "runtime/content")
+ */
+export async function translatePageTree(
+  node: PageNode,
+  contentDir: string
+): Promise<void> {
+  if (node.draft) return;
+
+  if (node.is_folder) {
+    // Determine the _index.md path
+    const folderPath = node.source_path
+      ? `${contentDir}/${node.source_path}`
+      : contentDir;
+    const indexPath = `${folderPath}/_index.md`;
+
+    // Build frontmatter
+    const frontmatterLines: string[] = [`title: "${node.title}"`];
+    if (node.nav_weight !== undefined) {
+      frontmatterLines.push(`weight: ${node.nav_weight}`);
+    }
+    if (node.nav) {
+      frontmatterLines.push(`nav: true`);
+    }
+    if (node.list_style && node.list_style !== "list") {
+      frontmatterLines.push(`list_style: "${node.list_style}"`);
+    }
+
+    const frontmatter = `---\n${frontmatterLines.join("\n")}\n---\n`;
+    const body = node.content_html || "";
+    await writeFile(indexPath, frontmatter + body);
+
+    for (const child of node.children) {
+      await translatePageTree(child, contentDir);
+    }
+  } else {
+    // Leaf node — symlink the source file
+    await createSymlink(node.source_path, `${contentDir}/${node.source_path}`);
   }
 }
 

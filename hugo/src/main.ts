@@ -61,13 +61,12 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
+import type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
 import {
   createHugoStructure,
+  translatePageTree,
   createHugoConfig,
   cleanupRuntime,
-  type ProjectInfo,
-  type SourceFiles,
-  type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
 import { HUGO_BINARY_CONFIG } from "./hugo-config";
@@ -81,42 +80,6 @@ interface PluginConfig {
 
   /** Additional build arguments for Hugo */
   build_args?: string[];
-}
-
-/**
- * Context provided by moss for the on_build hook.
- *
- * This is the complete context passed to generator plugins during the build phase.
- */
-interface OnBuildContext {
-  /** Absolute path to the project folder */
-  project_path: string;
-
-  /** Path to .moss directory */
-  moss_dir: string;
-
-  /** Output directory for generated site (typically .moss/site-stage/) */
-  output_dir: string;
-
-  /** Parsed project structure information */
-  project_info: ProjectInfo;
-
-  /** Categorized source files */
-  source_files: SourceFiles;
-
-  /** Site configuration from .moss/config.toml */
-  site_config: SiteConfig;
-
-  /** Plugin-specific configuration from [plugins.hugo-generator] */
-  config: PluginConfig;
-}
-
-/**
- * Result returned from hooks
- */
-interface HookResult {
-  success: boolean;
-  message?: string;
 }
 
 /**
@@ -139,7 +102,7 @@ interface HookResult {
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
  */
-export async function on_build(context: OnBuildContext): Promise<HookResult> {
+export async function on_build(context: OnBuildContext & { config: PluginConfig }): Promise<HookResult> {
   const buildArgs = context.config.build_args || ["--minify"];
 
   // Runtime directory under plugin's .moss location
@@ -190,14 +153,19 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
     // Step 2: Clean and prepare runtime directory
     await cleanupRuntime(runtimeDir);
 
-    // Step 3: Create Hugo structure from moss's parsed project info
+    // Step 3: Translate page tree (or fall back to legacy structure scan)
     reportProgress("scaffolding", 1, 4, "Creating Hugo structure...");
-    await createHugoStructure(
-      context.project_path,
-      context.project_info,
-      runtimeDir,
-      context.moss_dir
-    );
+    if (context.page_tree) {
+      const contentDir = `${runtimeDir}/content`;
+      await translatePageTree(context.page_tree, contentDir);
+    } else {
+      await createHugoStructure(
+        context.project_path,
+        context.project_info,
+        runtimeDir,
+        context.moss_dir
+      );
+    }
 
     // Step 4: Generate Hugo config
     await createHugoConfig(
@@ -255,4 +223,5 @@ const HugoGenerator = { on_build };
 export default HugoGenerator;
 
 // Re-export types for testing
-export type { OnBuildContext, HookResult, PluginConfig };
+export type { OnBuildContext, HookResult };
+export type { PluginConfig };

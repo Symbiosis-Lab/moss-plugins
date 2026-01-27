@@ -10,12 +10,12 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
+import type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
 import {
   createAstroStructure,
   createAstroConfig,
   cleanupRuntime,
-  type ProjectInfo,
-  type SourceFiles,
+  translatePageTree,
   type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
@@ -23,27 +23,13 @@ import { ASTRO_BINARY_CONFIG } from "./astro-config";
 
 interface PluginConfig {
   build_args?: string[];
-}
-
-interface OnBuildContext {
-  project_path: string;
-  moss_dir: string;
-  output_dir: string;
-  project_info: ProjectInfo;
-  source_files: SourceFiles;
-  site_config: SiteConfig;
-  config: PluginConfig;
-}
-
-interface HookResult {
-  success: boolean;
-  message?: string;
+  [key: string]: unknown;
 }
 
 /**
  * Build hook - runs Astro to generate the static site.
  */
-export async function on_build(context: OnBuildContext): Promise<HookResult> {
+export async function on_build(context: OnBuildContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: SiteConfig }): Promise<HookResult> {
   const buildArgs = context.config.build_args || [];
   const runtimeDir = `${context.moss_dir}/plugins/astro-generator/.runtime`;
 
@@ -85,12 +71,16 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
 
     // Step 3: Create Astro structure
     reportProgress("scaffolding", 1, 4, "Creating Astro structure...");
-    await createAstroStructure(
-      context.project_path,
-      context.project_info,
-      runtimeDir,
-      context.moss_dir
-    );
+    if (context.page_tree) {
+      await translatePageTree(context.page_tree, `${runtimeDir}/src/content`);
+    } else {
+      await createAstroStructure(
+        context.project_path,
+        context.project_info,
+        runtimeDir,
+        context.moss_dir
+      );
+    }
 
     // Step 4: Generate Astro config
     await createAstroConfig(
@@ -161,4 +151,5 @@ const AstroGenerator = { on_build };
 
 export default AstroGenerator;
 
-export type { OnBuildContext, HookResult, PluginConfig };
+export type { PluginConfig };
+export type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";

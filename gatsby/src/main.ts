@@ -10,12 +10,15 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
+import type {
+  OnBuildContext as BaseOnBuildContext,
+  HookResult,
+} from "@symbiosis-lab/moss-api";
 import {
   createGatsbyStructure,
   createGatsbyConfig,
   cleanupRuntime,
-  type ProjectInfo,
-  type SourceFiles,
+  translatePageTree,
   type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
@@ -23,21 +26,15 @@ import { GATSBY_BINARY_CONFIG } from "./gatsby-config";
 
 interface PluginConfig {
   build_args?: string[];
+  [key: string]: unknown;
 }
 
-interface OnBuildContext {
+interface OnBuildContext extends BaseOnBuildContext {
   project_path: string;
   moss_dir: string;
   output_dir: string;
-  project_info: ProjectInfo;
-  source_files: SourceFiles;
   site_config: SiteConfig;
   config: PluginConfig;
-}
-
-interface HookResult {
-  success: boolean;
-  message?: string;
 }
 
 /**
@@ -85,12 +82,17 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
 
     // Step 3: Create Gatsby structure
     reportProgress("scaffolding", 1, 4, "Creating Gatsby structure...");
-    await createGatsbyStructure(
-      context.project_path,
-      context.project_info,
-      runtimeDir,
-      context.moss_dir
-    );
+    const contentDir = `${runtimeDir}/src/content`;
+    if (context.page_tree) {
+      await translatePageTree(context.page_tree, contentDir);
+    } else {
+      await createGatsbyStructure(
+        context.project_path,
+        context.project_info,
+        runtimeDir,
+        context.moss_dir
+      );
+    }
 
     // Step 4: Generate Gatsby config
     await createGatsbyConfig(

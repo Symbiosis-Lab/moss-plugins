@@ -23,6 +23,7 @@ import {
   fileExists,
   createSymlink,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 
 export interface ProjectInfo {
   content_folders: string[];
@@ -201,6 +202,48 @@ module.exports = {
  */
 export async function cleanupRuntime(_runtimeDir: string): Promise<void> {
   // No-op: cleanup handled by moss core
+}
+
+/**
+ * Translates a PageNode tree into Gatsby content directory structure.
+ * Folder nodes get an index.md with YAML frontmatter.
+ * Leaf nodes get symlinked into the content directory.
+ * Draft nodes are skipped entirely.
+ */
+export async function translatePageTree(
+  node: PageNode,
+  contentDir: string
+): Promise<void> {
+  if (node.draft) return;
+
+  if (node.is_folder) {
+    // Build frontmatter
+    const fm: string[] = ["---"];
+    fm.push(`title: "${node.title}"`);
+    if (node.nav_weight !== undefined) {
+      fm.push(`weight: ${node.nav_weight}`);
+    }
+    if (node.date) {
+      fm.push(`date: "${node.date}"`);
+    }
+    fm.push("---");
+    fm.push("");
+
+    const indexPath =
+      node.source_path === ""
+        ? `${contentDir}/index.md`
+        : `${contentDir}/${node.source_path}/index.md`;
+
+    await writeFile(indexPath, fm.join("\n"));
+
+    // Recurse into children
+    for (const child of node.children) {
+      await translatePageTree(child, contentDir);
+    }
+  } else {
+    // Leaf node: symlink
+    await createSymlink(node.source_path, `${contentDir}/${node.source_path}`);
+  }
 }
 
 function getRelativePath(basePath: string, targetPath: string): string {

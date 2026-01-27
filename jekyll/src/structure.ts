@@ -29,6 +29,7 @@ import {
   fileExists,
   createSymlink,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 
 /**
  * Project information from moss's folder scan.
@@ -138,6 +139,66 @@ export async function createJekyllStructure(
     // Use symlink for all asset files (supports binary files correctly)
     await createSymlink(file, `${runtimeRelative}/${file}`);
   }
+}
+
+/**
+ * Translates a PageNode tree into Jekyll's directory structure.
+ *
+ * Jekyll conventions:
+ * - Folder index files are `index.md` (not `_index.md` like Hugo)
+ * - `posts/` folder maps to `_posts/` (Jekyll's blog convention)
+ * - nav_weight maps to `order` in frontmatter
+ * - Draft nodes are skipped entirely
+ *
+ * @param node - Root PageNode of the tree
+ * @param outputDir - Path to Jekyll's runtime directory
+ */
+export async function translatePageTree(
+  node: PageNode,
+  outputDir: string
+): Promise<void> {
+  if (node.draft) return;
+
+  if (node.is_folder) {
+    // Determine folder path, applying posts/ → _posts/ rename
+    const jekyllPath = node.source_path ? remapPostsPath(node.source_path) : "";
+    const folderPath = jekyllPath
+      ? `${outputDir}/${jekyllPath}`
+      : outputDir;
+    const indexPath = `${folderPath}/index.md`;
+
+    // Build frontmatter
+    const frontmatterLines: string[] = [`title: "${node.title}"`];
+    if (node.nav_weight !== undefined) {
+      frontmatterLines.push(`order: ${node.nav_weight}`);
+    }
+    if (node.nav) {
+      frontmatterLines.push(`nav: true`);
+    }
+    if (node.list_style && node.list_style !== "list") {
+      frontmatterLines.push(`list_style: "${node.list_style}"`);
+    }
+
+    const frontmatter = `---\n${frontmatterLines.join("\n")}\n---\n`;
+    const body = node.content_html || "";
+    await writeFile(indexPath, frontmatter + body);
+
+    for (const child of node.children) {
+      await translatePageTree(child, outputDir);
+    }
+  } else {
+    // Leaf node — symlink, remapping posts/ → _posts/ in path
+    const destPath = remapPostsPath(node.source_path);
+    await createSymlink(node.source_path, `${outputDir}/${destPath}`);
+  }
+}
+
+/** Remap posts/x.md → _posts/x.md for Jekyll */
+function remapPostsPath(sourcePath: string): string {
+  if (sourcePath.startsWith("posts/")) {
+    return "_posts/" + sourcePath.substring("posts/".length);
+  }
+  return sourcePath;
 }
 
 /**

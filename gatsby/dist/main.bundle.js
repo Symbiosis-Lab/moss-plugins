@@ -25,7 +25,7 @@ var Gatsby = (() => {
     on_build: () => on_build
   });
 
-  // ../../../moss-api/main/dist/index.mjs
+  // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
   function getTauriCore() {
     const w = window;
     if (!w.__TAURI__?.core) throw new Error("Tauri core not available");
@@ -34,9 +34,32 @@ var Gatsby = (() => {
   function isTauriAvailable() {
     return !!window.__TAURI__?.core;
   }
+  function getTauriEvent() {
+    const w = window;
+    if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
+    return w.__TAURI__.event;
+  }
+  function isEventApiAvailable() {
+    return !!window.__TAURI__?.event;
+  }
+  async function emitEvent(event, payload) {
+    await getTauriEvent().emit(event, payload);
+  }
   var currentPluginName = "";
   var currentHookName = "";
   async function sendMessage(message) {
+    if (message.type === "log" || message.type === "progress") {
+      if (!isEventApiAvailable()) return;
+      try {
+        await emitEvent("plugin-message", {
+          pluginName: currentPluginName,
+          hookName: currentHookName,
+          message
+        });
+      } catch {
+      }
+      return;
+    }
     if (!isTauriAvailable()) return;
     try {
       await getTauriCore().invoke("plugin_message", {
@@ -44,7 +67,8 @@ var Gatsby = (() => {
         hookName: currentHookName,
         message
       });
-    } catch {
+    } catch (error$1) {
+      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error$1);
     }
   }
   async function reportProgress(phase, current, total, message) {
@@ -129,8 +153,7 @@ var Gatsby = (() => {
       timeoutMs
     });
     const binaryString = atob(result.body_base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
     return {
       status: result.status,
       ok: result.ok,
@@ -665,6 +688,28 @@ module.exports = {
   }
   async function cleanupRuntime(_runtimeDir) {
   }
+  async function translatePageTree(node, contentDir) {
+    if (node.draft) return;
+    if (node.is_folder) {
+      const fm = ["---"];
+      fm.push(`title: "${node.title}"`);
+      if (node.nav_weight !== void 0) {
+        fm.push(`weight: ${node.nav_weight}`);
+      }
+      if (node.date) {
+        fm.push(`date: "${node.date}"`);
+      }
+      fm.push("---");
+      fm.push("");
+      const indexPath = node.source_path === "" ? `${contentDir}/index.md` : `${contentDir}/${node.source_path}/index.md`;
+      await writeFile(indexPath, fm.join("\n"));
+      for (const child of node.children) {
+        await translatePageTree(child, contentDir);
+      }
+    } else {
+      await createSymlink(node.source_path, `${contentDir}/${node.source_path}`);
+    }
+  }
   function getRelativePath(basePath, targetPath) {
     if (targetPath.startsWith(basePath)) {
       return targetPath.substring(basePath.length).replace(/^\//, "");
@@ -803,12 +848,17 @@ export default Layout
       }
       await cleanupRuntime(runtimeDir);
       reportProgress("scaffolding", 1, 4, "Creating Gatsby structure...");
-      await createGatsbyStructure(
-        context.project_path,
-        context.project_info,
-        runtimeDir,
-        context.moss_dir
-      );
+      const contentDir = `${runtimeDir}/src/content`;
+      if (context.page_tree) {
+        await translatePageTree(context.page_tree, contentDir);
+      } else {
+        await createGatsbyStructure(
+          context.project_path,
+          context.project_info,
+          runtimeDir,
+          context.moss_dir
+        );
+      }
       await createGatsbyConfig(
         context.site_config,
         runtimeDir,

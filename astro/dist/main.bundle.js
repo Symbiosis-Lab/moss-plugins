@@ -34,9 +34,32 @@ var Astro = (() => {
   function isTauriAvailable() {
     return !!window.__TAURI__?.core;
   }
+  function getTauriEvent() {
+    const w = window;
+    if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
+    return w.__TAURI__.event;
+  }
+  function isEventApiAvailable() {
+    return !!window.__TAURI__?.event;
+  }
+  async function emitEvent(event, payload) {
+    await getTauriEvent().emit(event, payload);
+  }
   var currentPluginName = "";
   var currentHookName = "";
   async function sendMessage(message) {
+    if (message.type === "log" || message.type === "progress") {
+      if (!isEventApiAvailable()) return;
+      try {
+        await emitEvent("plugin-message", {
+          pluginName: currentPluginName,
+          hookName: currentHookName,
+          message
+        });
+      } catch {
+      }
+      return;
+    }
     if (!isTauriAvailable()) return;
     try {
       await getTauriCore().invoke("plugin_message", {
@@ -44,7 +67,8 @@ var Astro = (() => {
         hookName: currentHookName,
         message
       });
-    } catch {
+    } catch (error$1) {
+      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error$1);
     }
   }
   async function reportProgress(phase, current, total, message) {
@@ -89,6 +113,14 @@ var Astro = (() => {
       return false;
     }
   }
+  async function createSymlink(targetPath, linkPath) {
+    const ctx = getInternalContext();
+    await getTauriCore().invoke("create_project_symlink", {
+      projectPath: ctx.project_path,
+      targetPath,
+      linkPath
+    });
+  }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
     return getTauriCore().invoke("read_plugin_file", {
@@ -121,8 +153,7 @@ var Astro = (() => {
       timeoutMs
     });
     const binaryString = atob(result.body_base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
     return {
       status: result.status,
       ok: result.ok,
@@ -135,13 +166,14 @@ var Astro = (() => {
   }
   async function executeBinary(options) {
     const ctx = getInternalContext();
-    const { binaryPath, args, timeoutMs = 6e4, env } = options;
+    const { binaryPath, args, timeoutMs = 6e4, env, stdin } = options;
     const result = await getTauriCore().invoke("execute_binary", {
       binaryPath,
       args,
       workingDir: ctx.project_path,
       timeoutMs,
-      env
+      env,
+      stdinData: stdin
     });
     return {
       success: result.success,
@@ -591,9 +623,8 @@ ${bodyContent.split("\n").map((line) => "    " + line).join("\n")}
         (f) => f.startsWith(`${folder}/`)
       );
       for (const file of folderFiles) {
-        const content = await readFile(file);
         const relativePath = file.substring(folder.length + 1);
-        await writeFile(`${runtimeRelative}/src/content/${folder}/${relativePath}`, content);
+        await createSymlink(file, `${runtimeRelative}/src/content/${folder}/${relativePath}`);
       }
     }
     const rootMarkdownFiles = markdownFiles.filter(
@@ -607,13 +638,7 @@ ${bodyContent.split("\n").map((line) => "    " + line).join("\n")}
     }
     const assetFiles = allFiles.filter((f) => f.startsWith("assets/"));
     for (const file of assetFiles) {
-      if (isTextFile(file)) {
-        try {
-          const content = await readFile(file);
-          await writeFile(`${runtimeRelative}/public/${file}`, content);
-        } catch {
-        }
-      }
+      await createSymlink(file, `${runtimeRelative}/public/${file}`);
     }
   }
   async function createAstroConfig(siteConfig, runtimeDir, projectPath) {
@@ -651,24 +676,26 @@ export default defineConfig({
     }
     return targetPath;
   }
-  function isTextFile(filePath) {
-    const textExtensions = [
-      ".md",
-      ".txt",
-      ".css",
-      ".js",
-      ".json",
-      ".html",
-      ".xml",
-      ".svg",
-      ".yaml",
-      ".yml",
-      ".toml",
-      ".mjs",
-      ".ts"
-    ];
-    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-    return textExtensions.includes(ext);
+  async function translatePageTree(node, contentDir) {
+    if (node.draft) return;
+    if (node.is_folder) {
+      const fm = { title: `"${node.title}"` };
+      if (node.nav_weight !== void 0) {
+        fm.weight = node.nav_weight;
+      }
+      const yamlLines = Object.entries(fm).map(([k, v]) => `${k}: ${v}`).join("\n");
+      const content = `---
+${yamlLines}
+---
+`;
+      const indexPath = node.source_path === "" ? `${contentDir}/index.md` : `${contentDir}/${node.source_path}/index.md`;
+      await writeFile(indexPath, content);
+      for (const child of node.children) {
+        await translatePageTree(child, contentDir);
+      }
+    } else {
+      await createSymlink(node.source_path, `${contentDir}/${node.source_path}`);
+    }
   }
 
   // src/templates.ts
@@ -798,12 +825,16 @@ const { title } = Astro.props;
       }
       await cleanupRuntime(runtimeDir);
       reportProgress("scaffolding", 1, 4, "Creating Astro structure...");
-      await createAstroStructure(
-        context.project_path,
-        context.project_info,
-        runtimeDir,
-        context.moss_dir
-      );
+      if (context.page_tree) {
+        await translatePageTree(context.page_tree, `${runtimeDir}/src/content`);
+      } else {
+        await createAstroStructure(
+          context.project_path,
+          context.project_info,
+          runtimeDir,
+          context.moss_dir
+        );
+      }
       await createAstroConfig(
         context.site_config,
         runtimeDir,

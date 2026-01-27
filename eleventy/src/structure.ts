@@ -21,6 +21,7 @@ import {
   fileExists,
   createSymlink,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 
 export interface ProjectInfo {
   content_folders: string[];
@@ -146,6 +147,40 @@ module.exports = function(eleventyConfig) {
  */
 export async function cleanupRuntime(_runtimeDir: string): Promise<void> {
   // No-op: cleanup handled by moss core
+}
+
+/**
+ * Translates a PageNode tree into Eleventy-compatible structure.
+ * Folder nodes get an index.md with frontmatter; leaf nodes are symlinked.
+ * Draft nodes are skipped entirely.
+ */
+export async function translatePageTree(
+  node: PageNode,
+  srcDir: string
+): Promise<void> {
+  if (node.draft) return;
+
+  if (node.is_folder) {
+    // Build frontmatter
+    const lines = ["---", `title: ${node.title}`];
+    if (node.nav_weight != null) {
+      lines.push(`order: ${node.nav_weight}`);
+    }
+    lines.push("---", "");
+
+    const indexPath =
+      node.source_path === ""
+        ? `${srcDir}/index.md`
+        : `${srcDir}/${node.source_path}/index.md`;
+
+    await writeFile(indexPath, lines.join("\n"));
+
+    for (const child of node.children) {
+      await translatePageTree(child, srcDir);
+    }
+  } else {
+    await createSymlink(node.source_path, `${srcDir}/${node.source_path}`);
+  }
 }
 
 function getRelativePath(basePath: string, targetPath: string): string {

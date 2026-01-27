@@ -34,9 +34,32 @@ var Jekyll = (() => {
   function isTauriAvailable() {
     return !!window.__TAURI__?.core;
   }
+  function getTauriEvent() {
+    const w = window;
+    if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
+    return w.__TAURI__.event;
+  }
+  function isEventApiAvailable() {
+    return !!window.__TAURI__?.event;
+  }
+  async function emitEvent(event, payload) {
+    await getTauriEvent().emit(event, payload);
+  }
   var currentPluginName = "";
   var currentHookName = "";
   async function sendMessage(message) {
+    if (message.type === "log" || message.type === "progress") {
+      if (!isEventApiAvailable()) return;
+      try {
+        await emitEvent("plugin-message", {
+          pluginName: currentPluginName,
+          hookName: currentHookName,
+          message
+        });
+      } catch {
+      }
+      return;
+    }
     if (!isTauriAvailable()) return;
     try {
       await getTauriCore().invoke("plugin_message", {
@@ -44,7 +67,8 @@ var Jekyll = (() => {
         hookName: currentHookName,
         message
       });
-    } catch {
+    } catch (error$1) {
+      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error$1);
     }
   }
   async function reportProgress(phase, current, total, message) {
@@ -89,6 +113,14 @@ var Jekyll = (() => {
       return false;
     }
   }
+  async function createSymlink(targetPath, linkPath) {
+    const ctx = getInternalContext();
+    await getTauriCore().invoke("create_project_symlink", {
+      projectPath: ctx.project_path,
+      targetPath,
+      linkPath
+    });
+  }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
     return getTauriCore().invoke("read_plugin_file", {
@@ -121,8 +153,7 @@ var Jekyll = (() => {
       timeoutMs
     });
     const binaryString = atob(result.body_base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
     return {
       status: result.status,
       ok: result.ok,
@@ -135,13 +166,14 @@ var Jekyll = (() => {
   }
   async function executeBinary(options) {
     const ctx = getInternalContext();
-    const { binaryPath, args, timeoutMs = 6e4, env } = options;
+    const { binaryPath, args, timeoutMs = 6e4, env, stdin } = options;
     const result = await getTauriCore().invoke("execute_binary", {
       binaryPath,
       args,
       workingDir: ctx.project_path,
       timeoutMs,
-      env
+      env,
+      stdinData: stdin
     });
     return {
       success: result.success,
@@ -556,8 +588,7 @@ Installation options:
     if (projectInfo.homepage_file) {
       const homepageExists = await fileExists(projectInfo.homepage_file);
       if (homepageExists) {
-        const content = await readFile(projectInfo.homepage_file);
-        await writeFile(`${runtimeRelative}/index.md`, content);
+        await createSymlink(projectInfo.homepage_file, `${runtimeRelative}/index.md`);
       }
     }
     const allFiles = await listFiles();
@@ -567,7 +598,6 @@ Installation options:
         (f) => f.startsWith(`${folder}/`)
       );
       for (const file of folderFiles) {
-        const content = await readFile(file);
         const relativePath = file.substring(folder.length + 1);
         let destPath;
         if (folder === "posts" || folder === "_posts") {
@@ -575,7 +605,7 @@ Installation options:
         } else {
           destPath = `${runtimeRelative}/${folder}/${relativePath}`;
         }
-        await writeFile(destPath, content);
+        await createSymlink(file, destPath);
       }
     }
     const rootMarkdownFiles = markdownFiles.filter(
@@ -583,19 +613,48 @@ Installation options:
       f !== projectInfo.homepage_file
     );
     for (const file of rootMarkdownFiles) {
-      const content = await readFile(file);
-      await writeFile(`${runtimeRelative}/${file}`, content);
+      await createSymlink(file, `${runtimeRelative}/${file}`);
     }
     const assetFiles = allFiles.filter((f) => f.startsWith("assets/"));
     for (const file of assetFiles) {
-      if (isTextFile(file)) {
-        try {
-          const content = await readFile(file);
-          await writeFile(`${runtimeRelative}/${file}`, content);
-        } catch {
-        }
-      }
+      await createSymlink(file, `${runtimeRelative}/${file}`);
     }
+  }
+  async function translatePageTree(node, outputDir) {
+    if (node.draft) return;
+    if (node.is_folder) {
+      const jekyllPath = node.source_path ? remapPostsPath(node.source_path) : "";
+      const folderPath = jekyllPath ? `${outputDir}/${jekyllPath}` : outputDir;
+      const indexPath = `${folderPath}/index.md`;
+      const frontmatterLines = [`title: "${node.title}"`];
+      if (node.nav_weight !== void 0) {
+        frontmatterLines.push(`order: ${node.nav_weight}`);
+      }
+      if (node.nav) {
+        frontmatterLines.push(`nav: true`);
+      }
+      if (node.list_style && node.list_style !== "list") {
+        frontmatterLines.push(`list_style: "${node.list_style}"`);
+      }
+      const frontmatter = `---
+${frontmatterLines.join("\n")}
+---
+`;
+      const body = node.content_html || "";
+      await writeFile(indexPath, frontmatter + body);
+      for (const child of node.children) {
+        await translatePageTree(child, outputDir);
+      }
+    } else {
+      const destPath = remapPostsPath(node.source_path);
+      await createSymlink(node.source_path, `${outputDir}/${destPath}`);
+    }
+  }
+  function remapPostsPath(sourcePath) {
+    if (sourcePath.startsWith("posts/")) {
+      return "_posts/" + sourcePath.substring("posts/".length);
+    }
+    return sourcePath;
   }
   async function createJekyllConfig(siteConfig, runtimeDir, projectPath) {
     const siteName = siteConfig.site_name || "Site";
@@ -641,23 +700,6 @@ kramdown:
       return targetPath;
     }
     return targetPath;
-  }
-  function isTextFile(filePath) {
-    const textExtensions = [
-      ".md",
-      ".txt",
-      ".css",
-      ".js",
-      ".json",
-      ".html",
-      ".xml",
-      ".svg",
-      ".yaml",
-      ".yml",
-      ".toml"
-    ];
-    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-    return textExtensions.includes(ext);
   }
 
   // src/templates.ts
@@ -818,12 +860,16 @@ layout: default
       }
       await cleanupRuntime(runtimeDir);
       reportProgress("scaffolding", 1, 4, "Creating Jekyll structure...");
-      await createJekyllStructure(
-        context.project_path,
-        context.project_info,
-        runtimeDir,
-        context.moss_dir
-      );
+      if (context.page_tree) {
+        await translatePageTree(context.page_tree, runtimeDir);
+      } else {
+        await createJekyllStructure(
+          context.project_path,
+          context.project_info,
+          runtimeDir,
+          context.moss_dir
+        );
+      }
       await createJekyllConfig(
         context.site_config,
         runtimeDir,

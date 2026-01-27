@@ -54,13 +54,12 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
+import type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
 import {
   createJekyllStructure,
+  translatePageTree,
   createJekyllConfig,
   cleanupRuntime,
-  type ProjectInfo,
-  type SourceFiles,
-  type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
 import { JEKYLL_BINARY_CONFIG } from "./jekyll-config";
@@ -74,42 +73,6 @@ interface PluginConfig {
 
   /** Additional build arguments for Jekyll */
   build_args?: string[];
-}
-
-/**
- * Context provided by moss for the on_build hook.
- *
- * This is the complete context passed to generator plugins during the build phase.
- */
-interface OnBuildContext {
-  /** Absolute path to the project folder */
-  project_path: string;
-
-  /** Path to .moss directory */
-  moss_dir: string;
-
-  /** Output directory for generated site (typically .moss/site-stage/) */
-  output_dir: string;
-
-  /** Parsed project structure information */
-  project_info: ProjectInfo;
-
-  /** Categorized source files */
-  source_files: SourceFiles;
-
-  /** Site configuration from .moss/config.toml */
-  site_config: SiteConfig;
-
-  /** Plugin-specific configuration from [plugins.jekyll-generator] */
-  config: PluginConfig;
-}
-
-/**
- * Result returned from hooks
- */
-interface HookResult {
-  success: boolean;
-  message?: string;
 }
 
 /**
@@ -132,7 +95,7 @@ interface HookResult {
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
  */
-export async function on_build(context: OnBuildContext): Promise<HookResult> {
+export async function on_build(context: OnBuildContext & { config: PluginConfig }): Promise<HookResult> {
   const buildArgs = context.config.build_args || [];
 
   // Runtime directory under plugin's .moss location
@@ -175,14 +138,18 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
     // Step 2: Clean and prepare runtime directory
     await cleanupRuntime(runtimeDir);
 
-    // Step 3: Create Jekyll structure from moss's parsed project info
+    // Step 3: Translate page tree (or fall back to legacy structure scan)
     reportProgress("scaffolding", 1, 4, "Creating Jekyll structure...");
-    await createJekyllStructure(
-      context.project_path,
-      context.project_info,
-      runtimeDir,
-      context.moss_dir
-    );
+    if (context.page_tree) {
+      await translatePageTree(context.page_tree, runtimeDir);
+    } else {
+      await createJekyllStructure(
+        context.project_path,
+        context.project_info,
+        runtimeDir,
+        context.moss_dir
+      );
+    }
 
     // Step 4: Generate Jekyll config
     await createJekyllConfig(
@@ -241,4 +208,5 @@ const JekyllGenerator = { on_build };
 export default JekyllGenerator;
 
 // Re-export types for testing
-export type { OnBuildContext, HookResult, PluginConfig };
+export type { OnBuildContext, HookResult };
+export type { PluginConfig };

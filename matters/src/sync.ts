@@ -215,8 +215,11 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
   const articles: Array<{ shortHash: string; path: string; title: string }> = [];
 
   try {
-    // List all markdown files in the project
-    const files = await listFiles(".", { pattern: "**/*.md", recursive: true });
+    // List all files in the project
+    const allFiles = await listFiles();
+
+    // Filter to markdown files only
+    const files = allFiles.filter((f) => f.endsWith(".md"));
 
     for (const file of files) {
       // Skip node_modules, .moss, and other non-content directories

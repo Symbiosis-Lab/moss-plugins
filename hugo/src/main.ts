@@ -102,7 +102,7 @@ interface PluginConfig {
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
  */
-export async function on_build(context: OnBuildContext & { config: PluginConfig }): Promise<HookResult> {
+export async function on_build(context: OnBuildContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: Record<string, unknown> }): Promise<HookResult> {
   const buildArgs = context.config.build_args || ["--minify"];
 
   // Runtime directory under plugin's .moss location

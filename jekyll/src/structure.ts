@@ -193,12 +193,6 @@ export async function translatePageTree(
   }
 }
 
-/** Get the top-level folder name from a source_path */
-function getFolderName(sourcePath: string): string {
-  const parts = sourcePath.split("/");
-  return parts[0] || "";
-}
-
 /** Remap posts/x.md → _posts/x.md for Jekyll */
 function remapPostsPath(sourcePath: string): string {
   if (sourcePath.startsWith("posts/")) {

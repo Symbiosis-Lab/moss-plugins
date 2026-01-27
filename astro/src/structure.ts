@@ -20,6 +20,7 @@ import {
   fileExists,
   createSymlink,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 
 export interface ProjectInfo {
   content_folders: string[];
@@ -179,5 +180,47 @@ function getRelativePath(basePath: string, targetPath: string): string {
     return targetPath;
   }
   return targetPath;
+}
+
+/**
+ * Translates a PageNode tree into Astro-compatible content structure.
+ *
+ * - Folder nodes: writes `index.md` with YAML frontmatter
+ * - Leaf nodes: creates symlink to source file
+ * - Draft nodes: skipped entirely (including children)
+ */
+export async function translatePageTree(
+  node: PageNode,
+  contentDir: string
+): Promise<void> {
+  if (node.draft) return;
+
+  if (node.is_folder) {
+    // Build frontmatter for folder index
+    const fm: Record<string, unknown> = { title: `"${node.title}"` };
+    if (node.nav_weight !== undefined) {
+      fm.weight = node.nav_weight;
+    }
+
+    const yamlLines = Object.entries(fm)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    const content = `---\n${yamlLines}\n---\n`;
+
+    const indexPath =
+      node.source_path === ""
+        ? `${contentDir}/index.md`
+        : `${contentDir}/${node.source_path}/index.md`;
+
+    await writeFile(indexPath, content);
+
+    // Process children
+    for (const child of node.children) {
+      await translatePageTree(child, contentDir);
+    }
+  } else {
+    // Leaf node: symlink
+    await createSymlink(node.source_path, `${contentDir}/${node.source_path}`);
+  }
 }
 

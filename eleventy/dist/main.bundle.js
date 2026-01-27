@@ -34,9 +34,32 @@ var Eleventy = (() => {
   function isTauriAvailable() {
     return !!window.__TAURI__?.core;
   }
+  function getTauriEvent() {
+    const w = window;
+    if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
+    return w.__TAURI__.event;
+  }
+  function isEventApiAvailable() {
+    return !!window.__TAURI__?.event;
+  }
+  async function emitEvent(event, payload) {
+    await getTauriEvent().emit(event, payload);
+  }
   var currentPluginName = "";
   var currentHookName = "";
   async function sendMessage(message) {
+    if (message.type === "log" || message.type === "progress") {
+      if (!isEventApiAvailable()) return;
+      try {
+        await emitEvent("plugin-message", {
+          pluginName: currentPluginName,
+          hookName: currentHookName,
+          message
+        });
+      } catch {
+      }
+      return;
+    }
     if (!isTauriAvailable()) return;
     try {
       await getTauriCore().invoke("plugin_message", {
@@ -44,7 +67,8 @@ var Eleventy = (() => {
         hookName: currentHookName,
         message
       });
-    } catch {
+    } catch (error$1) {
+      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error$1);
     }
   }
   async function reportProgress(phase, current, total, message) {
@@ -89,6 +113,14 @@ var Eleventy = (() => {
       return false;
     }
   }
+  async function createSymlink(targetPath, linkPath) {
+    const ctx = getInternalContext();
+    await getTauriCore().invoke("create_project_symlink", {
+      projectPath: ctx.project_path,
+      targetPath,
+      linkPath
+    });
+  }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
     return getTauriCore().invoke("read_plugin_file", {
@@ -121,8 +153,7 @@ var Eleventy = (() => {
       timeoutMs
     });
     const binaryString = atob(result.body_base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
     return {
       status: result.status,
       ok: result.ok,
@@ -135,13 +166,14 @@ var Eleventy = (() => {
   }
   async function executeBinary(options) {
     const ctx = getInternalContext();
-    const { binaryPath, args, timeoutMs = 6e4, env } = options;
+    const { binaryPath, args, timeoutMs = 6e4, env, stdin } = options;
     const result = await getTauriCore().invoke("execute_binary", {
       binaryPath,
       args,
       workingDir: ctx.project_path,
       timeoutMs,
-      env
+      env,
+      stdinData: stdin
     });
     return {
       success: result.success,
@@ -551,33 +583,12 @@ Installation options:
   }
 
   // src/structure.ts
-  function ensureLayoutInFrontmatter(content, layoutName = "base.njk") {
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (frontmatterMatch) {
-      const frontmatter = frontmatterMatch[1];
-      if (!/^layout:/m.test(frontmatter)) {
-        const newFrontmatter = `layout: ${layoutName}
-${frontmatter}`;
-        return `---
-${newFrontmatter}
----${content.substring(frontmatterMatch[0].length)}`;
-      }
-      return content;
-    }
-    return `---
-layout: ${layoutName}
----
-
-${content}`;
-  }
   async function createEleventyStructure(projectPath, projectInfo, runtimeDir, _mossDir) {
     const runtimeRelative = getRelativePath(projectPath, runtimeDir);
     if (projectInfo.homepage_file) {
       const homepageExists = await fileExists(projectInfo.homepage_file);
       if (homepageExists) {
-        const content = await readFile(projectInfo.homepage_file);
-        const eleventyContent = ensureLayoutInFrontmatter(content);
-        await writeFile(`${runtimeRelative}/src/index.md`, eleventyContent);
+        await createSymlink(projectInfo.homepage_file, `${runtimeRelative}/src/index.md`);
       }
     }
     const allFiles = await listFiles();
@@ -587,28 +598,18 @@ ${content}`;
         (f) => f.startsWith(`${folder}/`)
       );
       for (const file of folderFiles) {
-        const content = await readFile(file);
-        const eleventyContent = ensureLayoutInFrontmatter(content);
-        await writeFile(`${runtimeRelative}/src/${file}`, eleventyContent);
+        await createSymlink(file, `${runtimeRelative}/src/${file}`);
       }
     }
     const rootMarkdownFiles = markdownFiles.filter(
       (f) => !f.includes("/") && f !== projectInfo.homepage_file
     );
     for (const file of rootMarkdownFiles) {
-      const content = await readFile(file);
-      const eleventyContent = ensureLayoutInFrontmatter(content);
-      await writeFile(`${runtimeRelative}/src/${file}`, eleventyContent);
+      await createSymlink(file, `${runtimeRelative}/src/${file}`);
     }
     const assetFiles = allFiles.filter((f) => f.startsWith("assets/"));
     for (const file of assetFiles) {
-      if (isTextFile(file)) {
-        try {
-          const content = await readFile(file);
-          await writeFile(`${runtimeRelative}/src/${file}`, content);
-        } catch {
-        }
-      }
+      await createSymlink(file, `${runtimeRelative}/src/${file}`);
     }
   }
   async function createEleventyConfig(siteConfig, runtimeDir, projectPath) {
@@ -650,6 +651,23 @@ module.exports = function(eleventyConfig) {
   }
   async function cleanupRuntime(_runtimeDir) {
   }
+  async function translatePageTree(node, srcDir) {
+    if (node.draft) return;
+    if (node.is_folder) {
+      const lines = ["---", `title: ${node.title}`];
+      if (node.nav_weight != null) {
+        lines.push(`order: ${node.nav_weight}`);
+      }
+      lines.push("---", "");
+      const indexPath = node.source_path === "" ? `${srcDir}/index.md` : `${srcDir}/${node.source_path}/index.md`;
+      await writeFile(indexPath, lines.join("\n"));
+      for (const child of node.children) {
+        await translatePageTree(child, srcDir);
+      }
+    } else {
+      await createSymlink(node.source_path, `${srcDir}/${node.source_path}`);
+    }
+  }
   function getRelativePath(basePath, targetPath) {
     if (targetPath.startsWith(basePath)) {
       return targetPath.substring(basePath.length).replace(/^\//, "");
@@ -658,26 +676,6 @@ module.exports = function(eleventyConfig) {
       return targetPath;
     }
     return targetPath;
-  }
-  function isTextFile(filePath) {
-    const textExtensions = [
-      ".md",
-      ".txt",
-      ".css",
-      ".js",
-      ".json",
-      ".html",
-      ".xml",
-      ".svg",
-      ".yaml",
-      ".yml",
-      ".toml",
-      ".njk",
-      ".liquid",
-      ".ts"
-    ];
-    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-    return textExtensions.includes(ext);
   }
 
   // src/templates.ts
@@ -830,12 +828,16 @@ layout: base.njk
       }
       await cleanupRuntime(runtimeDir);
       reportProgress("scaffolding", 1, 4, "Creating Eleventy structure...");
-      await createEleventyStructure(
-        context.project_path,
-        context.project_info,
-        runtimeDir,
-        context.moss_dir
-      );
+      if (context.page_tree) {
+        await translatePageTree(context.page_tree, `${runtimeDir}/src`);
+      } else {
+        await createEleventyStructure(
+          context.project_path,
+          context.project_info,
+          runtimeDir,
+          context.moss_dir
+        );
+      }
       await createEleventyConfig(
         context.site_config,
         runtimeDir,

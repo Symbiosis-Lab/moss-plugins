@@ -10,10 +10,12 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
+import type { PageNode } from "@symbiosis-lab/moss-api";
 import {
   createEleventyStructure,
   createEleventyConfig,
   cleanupRuntime,
+  translatePageTree,
   type ProjectInfo,
   type SourceFiles,
   type SiteConfig,
@@ -33,6 +35,7 @@ interface OnBuildContext {
   source_files: SourceFiles;
   site_config: SiteConfig;
   config: PluginConfig;
+  page_tree?: PageNode;
 }
 
 interface HookResult {
@@ -85,12 +88,16 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
 
     // Step 3: Create Eleventy structure
     reportProgress("scaffolding", 1, 4, "Creating Eleventy structure...");
-    await createEleventyStructure(
-      context.project_path,
-      context.project_info,
-      runtimeDir,
-      context.moss_dir
-    );
+    if (context.page_tree) {
+      await translatePageTree(context.page_tree, `${runtimeDir}/src`);
+    } else {
+      await createEleventyStructure(
+        context.project_path,
+        context.project_info,
+        runtimeDir,
+        context.moss_dir
+      );
+    }
 
     // Step 4: Generate Eleventy config
     await createEleventyConfig(

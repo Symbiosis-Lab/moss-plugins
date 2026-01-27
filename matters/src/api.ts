@@ -988,10 +988,14 @@ export async function fetchArticleAppreciations(shortHash: string): Promise<Matt
 // ============================================================================
 
 /**
- * Fetch articles modified since a given timestamp
+ * Fetch articles created since a given timestamp
  *
  * Note: The Matters API doesn't support direct datetime filtering on viewer.articles,
- * so we fetch all articles and filter client-side by revisedAt/createdAt.
+ * so we fetch all articles and filter client-side by createdAt.
+ *
+ * We intentionally filter by createdAt only (not revisedAt) to implement a
+ * "download new content only" model. Remote edits are ignored to avoid
+ * overwriting local changes.
  *
  * @param since - ISO timestamp to filter articles (optional, fetches all if not provided)
  */
@@ -1008,11 +1012,12 @@ export async function fetchAllArticlesSince(since?: string): Promise<{
 
   const sinceDate = new Date(since);
   const filteredArticles = articles.filter((article) => {
-    const articleDate = new Date(article.revisedAt || article.createdAt);
+    // Filter by createdAt only - ignore revisedAt to avoid overwriting local edits
+    const articleDate = new Date(article.createdAt);
     return articleDate > sinceDate;
   });
 
-  console.log(`   📅 Filtered to ${filteredArticles.length} articles modified since ${since}`);
+  console.log(`   📅 Filtered to ${filteredArticles.length} new articles since ${since}`);
   return { articles: filteredArticles, userName };
 }
 

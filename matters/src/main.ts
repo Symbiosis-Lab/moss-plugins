@@ -30,7 +30,7 @@ import {
   fetchDraft,
   apiConfig,
 } from "./api";
-import { syncToLocalFiles } from "./sync";
+import { syncToLocalFiles, scanLocalArticles } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
@@ -309,22 +309,25 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         ? `, ${linkResult.linksRewritten} internal links rewritten`
         : "";
 
-    // Phase 8: Fetch social data (comments only) for synced articles
+    // Phase 8: Fetch social data (comments only) for ALL local articles
+    // This ensures we get new comments even for articles synced in previous runs
     // Save incrementally after each article to avoid losing data if a fetch hangs
     let socialSummary = "";
-    if (articles.length > 0) {
-      await reportProgress("fetching_social", 0, articles.length, "Fetching social data...");
-      await log("log", "📊 Fetching social data (comments)...");
+    const localArticles = await scanLocalArticles();
+
+    if (localArticles.length > 0) {
+      await reportProgress("fetching_social", 0, localArticles.length, "Fetching social data...");
+      await log("log", `📊 Fetching social data (comments) for ${localArticles.length} local articles...`);
 
       const socialData = await loadSocialData();
       let totalComments = 0;
 
-      for (let i = 0; i < articles.length; i++) {
-        const article = articles[i];
+      for (let i = 0; i < localArticles.length; i++) {
+        const article = localArticles[i];
         await reportProgress(
           "fetching_social",
           i + 1,
-          articles.length,
+          localArticles.length,
           `Social data: ${article.title}`
         );
 

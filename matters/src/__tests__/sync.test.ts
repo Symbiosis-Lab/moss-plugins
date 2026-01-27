@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRemoteNewer } from "../sync";
+import { isRemoteNewer, extractShortHash } from "../sync";
 
 describe("isRemoteNewer", () => {
   it("returns true when local is undefined", () => {
@@ -215,5 +215,131 @@ Old description`;
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/posts/test-collection/index.md`)?.content;
     expect(updatedContent).toContain("Test Collection");
     expect(updatedContent).toContain("New description");
+  });
+});
+
+// ============================================================================
+// extractShortHash Tests
+// ============================================================================
+
+describe("extractShortHash", () => {
+  it("extracts shortHash from standard Matters URL", () => {
+    const url = "https://matters.town/@testuser/test-article-abc123def";
+    expect(extractShortHash(url)).toBe("abc123def");
+  });
+
+  it("extracts shortHash from URL with multiple hyphens in slug", () => {
+    const url = "https://matters.town/@testuser/my-long-article-title-xyz789";
+    expect(extractShortHash(url)).toBe("xyz789");
+  });
+
+  it("extracts shortHash from Chinese article URL", () => {
+    const url = "https://matters.town/@testuser/测试文章-shortHash123";
+    expect(extractShortHash(url)).toBe("shortHash123");
+  });
+
+  it("returns null for invalid URL", () => {
+    expect(extractShortHash("not a url")).toBe(null);
+  });
+
+  it("returns null for URL without path segments", () => {
+    expect(extractShortHash("https://matters.town/")).toBe(null);
+  });
+
+  it("returns null for URL with only slug (no hyphen)", () => {
+    expect(extractShortHash("https://matters.town/@testuser/article")).toBe(null);
+  });
+});
+
+// ============================================================================
+// scanLocalArticles Tests
+// ============================================================================
+
+describe("scanLocalArticles", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("finds articles with Matters syndicated URLs", async () => {
+    const articleContent = `---
+title: "Test Article"
+syndicated:
+  - "https://matters.town/@testuser/test-article-abc123"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-article.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].shortHash).toBe("abc123");
+    expect(articles[0].title).toBe("Test Article");
+  });
+
+  it("ignores files without syndicated field", async () => {
+    const articleContent = `---
+title: "Local Only Article"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/local-article.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(0);
+  });
+
+  it("ignores files with non-Matters syndicated URLs", async () => {
+    const articleContent = `---
+title: "Cross-posted Article"
+syndicated:
+  - "https://dev.to/testuser/article"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/devto-article.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(0);
+  });
+
+  it("skips index.md and README.md", async () => {
+    const indexContent = `---
+title: "Homepage"
+syndicated:
+  - "https://matters.town/@testuser/home-abc123"
+---`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/index.md`, indexContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/README.md`, indexContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(0);
+  });
+
+  it("skips _drafts folder", async () => {
+    const draftContent = `---
+title: "Draft Article"
+syndicated:
+  - "https://matters.town/@testuser/draft-abc123"
+---`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/_drafts/draft.md`, draftContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(0);
   });
 });

@@ -188,6 +188,85 @@ export function isRemoteNewer(
 }
 
 /**
+ * Extract shortHash from a Matters URL
+ * URL format: https://matters.town/@userName/slug-shortHash
+ */
+export function extractShortHash(mattersUrl: string): string | null {
+  try {
+    const url = new URL(mattersUrl);
+    const path = url.pathname;
+    // Path format: /@userName/slug-shortHash
+    const lastSegment = path.split("/").pop();
+    if (!lastSegment) return null;
+    // shortHash is the last part after the final hyphen
+    const parts = lastSegment.split("-");
+    if (parts.length < 2) return null;
+    return parts[parts.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan local markdown files to find all synced Matters articles
+ * Returns array of { shortHash, path } for all articles with Matters syndicated URLs
+ */
+export async function scanLocalArticles(): Promise<Array<{ shortHash: string; path: string; title: string }>> {
+  const articles: Array<{ shortHash: string; path: string; title: string }> = [];
+
+  try {
+    // List all markdown files in the project
+    const files = await listFiles(".", { pattern: "**/*.md", recursive: true });
+
+    for (const file of files) {
+      // Skip node_modules, .moss, and other non-content directories
+      if (
+        file.startsWith("node_modules/") ||
+        file.startsWith(".moss/") ||
+        file.startsWith("_drafts/") ||
+        file.startsWith(".") ||
+        file === "index.md" ||
+        file === "README.md"
+      ) {
+        continue;
+      }
+
+      try {
+        const content = await readFile(file);
+        const parsed = parseFrontmatter(content);
+
+        if (
+          parsed?.frontmatter?.syndicated &&
+          Array.isArray(parsed.frontmatter.syndicated)
+        ) {
+          // Find Matters URL in syndicated array
+          const mattersUrl = parsed.frontmatter.syndicated.find(
+            (url: string) => typeof url === "string" && url.includes("matters.town")
+          );
+
+          if (mattersUrl) {
+            const shortHash = extractShortHash(mattersUrl);
+            if (shortHash) {
+              articles.push({
+                shortHash,
+                path: file,
+                title: (parsed.frontmatter.title as string) || file,
+              });
+            }
+          }
+        }
+      } catch {
+        // Skip files that can't be read or parsed
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to scan local articles: ${error}`);
+  }
+
+  return articles;
+}
+
+/**
  * Find an available filename by adding sequence numbers if needed
  */
 async function findAvailableFilename(
@@ -459,27 +538,21 @@ export async function syncToLocalFiles(
         }
       }
 
-      // Try to read existing file
-      let existingContent: string | null = null;
+      // Check if file already exists - never overwrite existing files
+      // This implements "download new content only" model
+      let fileExists = false;
       try {
-        existingContent = await readFile(filename);
+        await readFile(filename);
+        fileExists = true;
       } catch {
         // File doesn't exist
       }
 
-      // Check if we should update
-      if (existingContent) {
-        const parsed = parseFrontmatter(existingContent);
-        if (parsed) {
-          const localUpdated = (parsed.frontmatter.updated || parsed.frontmatter.date) as string | undefined;
-          const remoteUpdated = article.revisedAt || article.createdAt;
-
-          if (!isRemoteNewer(localUpdated, remoteUpdated)) {
-            console.log(`   ⏭️  Skipping (local is up to date): ${article.title}`);
-            result.skipped++;
-            continue;
-          }
-        }
+      if (fileExists) {
+        // Never overwrite existing files - protects local edits
+        console.log(`   ⏭️  Skipping (file exists): ${filename}`);
+        result.skipped++;
+        continue;
       }
 
       // Convert HTML to Markdown (keep remote URLs, will be downloaded in phase 2)
@@ -498,14 +571,8 @@ export async function syncToLocalFiles(
       const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
       await writeFile(filename, fullContent);
-
-      if (existingContent) {
-        console.log(`   ✏️  Updated: ${filename}`);
-        result.updated++;
-      } else {
-        console.log(`   ✅ Created: ${filename}`);
-        result.created++;
-      }
+      console.log(`   ✅ Created: ${filename}`);
+      result.created++;
     } catch (error) {
       const errorMsg = `Failed to sync article "${article.title}": ${error}`;
       await reportError(errorMsg, "syncing_articles", false);
@@ -530,25 +597,20 @@ export async function syncToLocalFiles(
         const slug = slugify(draft.title || "untitled");
         const filename = await findAvailableFilename(folders.drafts, slug);
 
-        let existingContent: string | null = null;
+        // Check if file already exists - never overwrite existing files
+        let fileExists = false;
         try {
-          existingContent = await readFile(filename);
+          await readFile(filename);
+          fileExists = true;
         } catch {
           // File doesn't exist
         }
 
-        if (existingContent) {
-          const parsed = parseFrontmatter(existingContent);
-          if (parsed) {
-            const localUpdated = (parsed.frontmatter.updated || parsed.frontmatter.date) as string | undefined;
-            const remoteUpdated = draft.updatedAt || draft.createdAt;
-
-            if (!isRemoteNewer(localUpdated, remoteUpdated)) {
-              console.log(`   ⏭️  Skipping draft (local is up to date): ${draft.title}`);
-              result.skipped++;
-              continue;
-            }
-          }
+        if (fileExists) {
+          // Never overwrite existing files - protects local edits
+          console.log(`   ⏭️  Skipping draft (file exists): ${filename}`);
+          result.skipped++;
+          continue;
         }
 
         // Convert HTML to Markdown (keep remote URLs, will be downloaded in phase 2)
@@ -566,14 +628,8 @@ export async function syncToLocalFiles(
         const fullContent = `${frontmatter}\n\n${markdownContent}`;
 
         await writeFile(filename, fullContent);
-
-        if (existingContent) {
-          console.log(`   ✏️  Updated draft: ${filename}`);
-          result.updated++;
-        } else {
-          console.log(`   ✅ Created draft: ${filename}`);
-          result.created++;
-        }
+        console.log(`   ✅ Created draft: ${filename}`);
+        result.created++;
       } catch (error) {
         const errorMsg = `Failed to sync draft "${draftTitle}": ${error}`;
         await reportError(errorMsg, "syncing_drafts", false);

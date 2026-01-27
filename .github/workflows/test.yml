@@ -254,7 +254,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -265,15 +265,8 @@ jobs:
           node-version: '20'
 
       - name: Install Hugo (macOS)
-        if: matrix.os == 'macos-latest'
         run: |
           brew install hugo
-          hugo version
-
-      - name: Install Hugo (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install hugo-extended -y
           hugo version
 
       - name: Install dependencies

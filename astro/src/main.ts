@@ -16,8 +16,6 @@ import {
   createAstroConfig,
   cleanupRuntime,
   translatePageTree,
-  type ProjectInfo,
-  type SourceFiles,
   type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";

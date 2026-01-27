@@ -19,8 +19,6 @@ import {
   createGatsbyConfig,
   cleanupRuntime,
   translatePageTree,
-  type ProjectInfo,
-  type SourceFiles,
   type SiteConfig,
 } from "./structure";
 import { createDefaultLayouts } from "./templates";
@@ -28,6 +26,7 @@ import { GATSBY_BINARY_CONFIG } from "./gatsby-config";
 
 interface PluginConfig {
   build_args?: string[];
+  [key: string]: unknown;
 }
 
 interface OnBuildContext extends BaseOnBuildContext {

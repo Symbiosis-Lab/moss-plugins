@@ -361,19 +361,13 @@ export async function syncToLocalFiles(
       // File doesn't exist
     }
 
-    if (existingHomepage && existingHomepage.trim() === homepageContent.trim()) {
-      console.log(`   ⏭️  Skipping homepage (unchanged): index.md`);
+    if (existingHomepage) {
+      console.log(`   ⏭️  Skipping homepage (already exists): index.md`);
       result.skipped++;
     } else {
       await writeFile("index.md", homepageContent);
-
-      if (existingHomepage) {
-        console.log(`   ✏️  Updated homepage: index.md`);
-        result.updated++;
-      } else {
-        console.log(`   ✅ Created homepage: index.md`);
-        result.created++;
-      }
+      console.log(`   ✅ Created homepage: index.md`);
+      result.created++;
     }
   } catch (error) {
     const errorMsg = `Failed to create homepage: ${error}`;
@@ -458,22 +452,15 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
 
-      // Check if content is unchanged
-      if (existingContent && existingContent.trim() === fullContent.trim()) {
-        console.log(`   ⏭️  Skipping collection (unchanged): ${collectionPath}`);
+      if (existingContent) {
+        console.log(`   ⏭️  Skipping collection (already exists): ${collectionPath}`);
         result.skipped++;
         continue;
       }
 
       await writeFile(collectionPath, fullContent);
-
-      if (existingContent) {
-        console.log(`   ✏️  Updated collection: ${collectionPath}`);
-        result.updated++;
-      } else {
-        console.log(`   ✅ Created collection: ${collectionPath}`);
-        result.created++;
-      }
+      console.log(`   ✅ Created collection: ${collectionPath}`);
+      result.created++;
     } catch (error) {
       const errorMsg = `Failed to sync collection "${collection.title}": ${error}`;
       await reportError(errorMsg, "syncing_collections", false);

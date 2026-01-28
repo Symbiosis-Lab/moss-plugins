@@ -122,7 +122,7 @@ Test bio`;
     expect(result.result.created).toBe(0);
   });
 
-  it("should update homepage when content has changed", async () => {
+  it("should skip homepage when local file already exists", async () => {
     // Setup: Create existing homepage with DIFFERENT content
     const existingHomepage = `---
 title: "Old Name"
@@ -141,13 +141,13 @@ Old bio`;
       { displayName: "New Name", userName: "testuser", description: "New bio" }
     );
 
-    // Homepage should be updated
-    expect(result.result.updated).toBeGreaterThanOrEqual(1);
+    // Homepage should be skipped (local file preserved)
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
 
-    // Verify content was updated
-    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
-    expect(updatedContent).toContain("New Name");
-    expect(updatedContent).toContain("New bio");
+    // Verify local content was NOT overwritten
+    const preservedContent = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(preservedContent).toContain("Old Name");
+    expect(preservedContent).toContain("Old bio");
   });
 
   it("should skip collection when content is unchanged", async () => {
@@ -182,7 +182,7 @@ Collection description`;
     expect(result.result.skipped).toBeGreaterThanOrEqual(1);
   });
 
-  it("should update collection when content has changed", async () => {
+  it("should skip collection when local file already exists", async () => {
     // Setup: Create existing collection with DIFFERENT content
     const existingCollection = `---
 title: "Old Collection Name"
@@ -208,13 +208,13 @@ Old description`;
       { displayName: "Test User", userName: "testuser", description: "" }
     );
 
-    // Collection should be updated
-    expect(result.result.updated).toBeGreaterThanOrEqual(1);
+    // Collection should be skipped (local file preserved)
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
 
-    // Verify content was updated
-    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/posts/test-collection/index.md`)?.content;
-    expect(updatedContent).toContain("Test Collection");
-    expect(updatedContent).toContain("New description");
+    // Verify local content was NOT overwritten
+    const preservedContent = ctx.filesystem.getFile(`${ctx.projectPath}/posts/test-collection/index.md`)?.content;
+    expect(preservedContent).toContain("Old Collection Name");
+    expect(preservedContent).toContain("Old description");
   });
 });
 

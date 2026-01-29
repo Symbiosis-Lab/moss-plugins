@@ -5,6 +5,9 @@ on:
     tags:
       - '*-v*'  # Matches: github-v1.0.0, matters-v2.1.0
 
+permissions:
+  contents: write
+
 jobs:
   # Parse the tag to extract plugin name and version
   parse-tag:

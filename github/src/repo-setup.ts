@@ -494,8 +494,11 @@ function createRepoSetupHtml(username: string, token: string): string {
     const { invoke } = window.__TAURI__.core;
     const token = '${token}';
 
-    // Get dialogId from query string (added by showPluginDialog)
-    const dialogId = new URLSearchParams(location.search).get('dialogId');
+    // Get dialogId - injected as global variable for data URLs, or via query param for regular URLs
+    const dialogId = window.__DIALOG_ID__ || new URLSearchParams(location.search).get('dialogId');
+    if (!dialogId) {
+      console.error('No dialogId found! Dialog submission will fail.');
+    }
 
     const input = document.getElementById('repo-name');
     const inputWrapper = document.getElementById('input-wrapper');

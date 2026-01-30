@@ -10,9 +10,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 
 // Mock moss-api
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  openBrowserWithHtml: vi.fn().mockResolvedValue(undefined),
-  closeBrowser: vi.fn().mockResolvedValue(undefined),
-  waitForEvent: vi.fn().mockResolvedValue({ type: "cancelled" }),
+  showPluginDialog: vi.fn().mockResolvedValue({ type: "cancelled" }),
   executeBinary: vi.fn().mockResolvedValue({ success: true, stdout: "", stderr: "" }),
 }));
 
@@ -55,7 +53,7 @@ vi.mock("../github-api", () => ({
 }));
 
 // Import mocked functions for assertions
-import { openBrowserWithHtml, waitForEvent, closeBrowser } from "@symbiosis-lab/moss-api";
+import { showPluginDialog } from "@symbiosis-lab/moss-api";
 
 describe("ensureGitHubRepo", () => {
   // Import will fail until we implement the function
@@ -150,7 +148,7 @@ describe("ensureGitHubRepo", () => {
       const result = await ensureGitHubRepo();
 
       // Should NOT show any UI
-      expect(openBrowserWithHtml).not.toHaveBeenCalled();
+      expect(showPluginDialog).not.toHaveBeenCalled();
 
       // Should create the root repo
       expect(mockCheckRepoExists).toHaveBeenCalledWith("testuser", "testuser.github.io", "test-token");
@@ -191,8 +189,8 @@ describe("ensureGitHubRepo", () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // User submits custom name via UI
-      (waitForEvent as Mock).mockResolvedValue({ type: "submitted", name: "my-website" });
+      // User submits custom name via dialog UI
+      (showPluginDialog as Mock).mockResolvedValue({ type: "submitted", value: { name: "my-website" } });
       mockCreateRepository.mockResolvedValue({
         name: "my-website",
         fullName: "testuser/my-website",
@@ -201,12 +199,16 @@ describe("ensureGitHubRepo", () => {
 
       const result = await ensureGitHubRepo();
 
-      // Should show UI
-      expect(openBrowserWithHtml).toHaveBeenCalled();
+      // Should show dialog UI (not browser)
+      expect(showPluginDialog).toHaveBeenCalled();
 
-      // UI HTML should explain why root is unavailable
-      const htmlArg = (openBrowserWithHtml as Mock).mock.calls[0][0];
-      expect(htmlArg).toContain("already");
+      // Should pass a data URL with HTML that explains why root is unavailable
+      const callArgs = (showPluginDialog as Mock).mock.calls[0][0];
+      expect(callArgs.url).toMatch(/^data:text\/html;base64,/);
+      // Decode and check content
+      const base64 = callArgs.url.replace("data:text/html;base64,", "");
+      const html = decodeURIComponent(escape(atob(base64)));
+      expect(html).toContain("already");
 
       // Should create custom repo
       expect(mockCreateRepository).toHaveBeenCalledWith("my-website", "test-token", expect.any(String));
@@ -222,13 +224,13 @@ describe("ensureGitHubRepo", () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // User cancels
-      (waitForEvent as Mock).mockResolvedValue({ type: "cancelled" });
+      // User cancels (dialog returns cancelled)
+      (showPluginDialog as Mock).mockResolvedValue({ type: "cancelled" });
 
       const result = await ensureGitHubRepo();
 
-      expect(openBrowserWithHtml).toHaveBeenCalled();
-      expect(closeBrowser).toHaveBeenCalled();
+      expect(showPluginDialog).toHaveBeenCalled();
+      // closeBrowser not needed with showPluginDialog - it auto-closes
       expect(result).toBeNull();
     });
 
@@ -237,13 +239,16 @@ describe("ensureGitHubRepo", () => {
       mockCheckRepoExists.mockResolvedValue(true);
 
       // Just trigger UI to inspect HTML
-      (waitForEvent as Mock).mockResolvedValue({ type: "cancelled" });
+      (showPluginDialog as Mock).mockResolvedValue({ type: "cancelled" });
 
       await ensureGitHubRepo();
 
-      const htmlArg = (openBrowserWithHtml as Mock).mock.calls[0][0];
+      const callArgs = (showPluginDialog as Mock).mock.calls[0][0];
+      // Decode the data URL to check HTML content
+      const base64 = callArgs.url.replace("data:text/html;base64,", "");
+      const html = decodeURIComponent(escape(atob(base64)));
       // UI should explain the URL difference
-      expect(htmlArg).toMatch(/github\.io.*\//i);
+      expect(html).toMatch(/github\.io.*\//i);
     });
   });
 

@@ -11,7 +11,7 @@
  * - repo-dialog.ts
  */
 
-import { openBrowserWithHtml, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
+import { showPluginDialog, type DialogResult } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
@@ -30,11 +30,10 @@ export interface RepoSetupResult {
 }
 
 /**
- * Event payload from the plugin browser HTML
+ * Value returned when user submits the dialog
  */
-interface RepoSetupEvent {
-  type: "submitted" | "cancelled";
-  name?: string;
+interface RepoSetupValue {
+  name: string;
 }
 
 /**
@@ -150,6 +149,14 @@ async function createRootRepo(
 }
 
 /**
+ * Encode HTML as a data URL for use with showPluginDialog
+ */
+function createDataUrl(html: string): string {
+  const base64 = btoa(unescape(encodeURIComponent(html)));
+  return `data:text/html;base64,${base64}`;
+}
+
+/**
  * Show UI for custom repo name (when root is taken)
  */
 async function showRepoNameUI(
@@ -159,28 +166,38 @@ async function showRepoNameUI(
   await log("log", "   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
-  await openBrowserWithHtml(html);
+  const dataUrl = createDataUrl(html);
 
-  // Wait for user input (5 minutes timeout)
-  let eventResult: RepoSetupEvent;
+  // Show dialog and wait for user response (auto-closes when done)
+  let dialogResult: DialogResult;
   try {
-    eventResult = await waitForEvent<RepoSetupEvent>("repo-setup-submit", 300000);
+    dialogResult = await showPluginDialog({
+      url: dataUrl,
+      title: "GitHub Repository Setup",
+      width: 440,
+      height: 420,
+      timeoutMs: 300000, // 5 minutes
+    });
   } catch {
-    await closeBrowser();
-    await log("warn", "   Repository setup timed out or was cancelled");
+    await log("warn", "   Repository setup timed out or failed");
     return null;
   }
 
-  await closeBrowser();
-
   // Check if user cancelled
-  if (eventResult.type === "cancelled" || !eventResult.name) {
+  if (dialogResult.type === "cancelled") {
     await log("log", "   User cancelled repository setup");
     return null;
   }
 
+  // Extract repo name from dialog result
+  const value = dialogResult.value as RepoSetupValue | undefined;
+  if (!value?.name) {
+    await log("log", "   No repository name provided");
+    return null;
+  }
+
   // Create the custom repo
-  const repoName = eventResult.name;
+  const repoName = value.name;
   await log("log", `   Creating repository: ${repoName}`);
 
   try {
@@ -474,8 +491,11 @@ function createRepoSetupHtml(username: string, token: string): string {
   </div>
 
   <script>
-    const { emit } = window.__TAURI__.event;
+    const { invoke } = window.__TAURI__.core;
     const token = '${token}';
+
+    // Get dialogId from query string (added by showPluginDialog)
+    const dialogId = new URLSearchParams(location.search).get('dialogId');
 
     const input = document.getElementById('repo-name');
     const inputWrapper = document.getElementById('input-wrapper');
@@ -581,7 +601,11 @@ function createRepoSetupHtml(username: string, token: string): string {
     });
 
     cancelBtn.addEventListener('click', async () => {
-      await emit('repo-setup-submit', { type: 'cancelled' });
+      // Submit cancellation via dialog result
+      await invoke('submit_dialog_result', {
+        dialogId: dialogId,
+        result: { type: 'cancelled' }
+      });
     });
 
     createBtn.addEventListener('click', async () => {
@@ -591,7 +615,11 @@ function createRepoSetupHtml(username: string, token: string): string {
       createBtn.disabled = true;
       btnText.innerHTML = '<span class="creating"><div class="spinner"></div>Creating...</span>';
 
-      await emit('repo-setup-submit', { type: 'submitted', name: name });
+      // Submit repo name via dialog result
+      await invoke('submit_dialog_result', {
+        dialogId: dialogId,
+        result: { type: 'submitted', value: { name: name } }
+      });
     });
 
     input.focus();

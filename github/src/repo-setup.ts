@@ -178,8 +178,9 @@ async function showRepoNameUI(
       height: 420,
       timeoutMs: 300000, // 5 minutes
     });
-  } catch {
-    await log("warn", "   Repository setup timed out or failed");
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    await log("error", `   Repository setup failed: ${errorMsg}`);
     return null;
   }
 

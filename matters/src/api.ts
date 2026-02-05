@@ -37,7 +37,6 @@ import type {
   UserCollectionsQuery,
   UserProfileQuery,
 } from "./__generated__/types";
-import { log } from "./utils";
 import { getPluginCookie, httpPost } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
@@ -431,35 +430,46 @@ export function clearTokenCache(): void {
  * Get access token from cookies (with caching)
  *
  * Uses the SDK's auto-detected plugin context - no need to pass plugin name or project path.
+ *
+ * @returns
+ *   - `string` - The access token if found
+ *   - `null` - No token found (but context was available)
+ *   - `undefined` - No plugin context (e.g., hook ended, window closed)
  */
-export async function getAccessToken(): Promise<string | null> {
+export async function getAccessToken(): Promise<string | null | undefined> {
   if (cachedAccessToken !== null) {
     return cachedAccessToken;
   }
 
   try {
-    await log("log", "Getting cookies from plugin context");
+    console.log("✅ Getting cookies from plugin context");
     const cookies = await getPluginCookie();
 
-    await log("log", `Received ${cookies?.length ?? 0} cookies`);
+    // null means "no plugin context" - signal caller to stop
+    if (cookies === null) {
+      console.log("⚠️ No plugin context - cannot get cookies");
+      return undefined;
+    }
 
-    if (cookies && cookies.length > 0) {
+    console.log(`Received ${cookies.length} cookies`);
+
+    if (cookies.length > 0) {
       const cookieNames = cookies.map((c) => c.name).join(", ");
-      await log("log", `Cookie names: ${cookieNames}`);
+      console.log(`Cookie names: ${cookieNames}`);
     }
 
     const tokenCookie = cookies.find((c) => c.name === "__access_token");
 
     if (tokenCookie) {
-      await log("log", `Found __access_token cookie (length: ${tokenCookie.value?.length ?? 0})`);
+      console.log(`Found __access_token cookie (length: ${tokenCookie.value?.length ?? 0})`);
       cachedAccessToken = tokenCookie.value;
     } else {
-      await log("warn", "__access_token cookie NOT found");
+      console.warn("__access_token cookie NOT found");
     }
 
     return cachedAccessToken;
   } catch (error) {
-    await log("error", `Failed to get access token: ${error}`);
+    console.error(`❌ Failed to get access token: ${error}`);
     return null;
   }
 }

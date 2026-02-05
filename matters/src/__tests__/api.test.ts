@@ -14,7 +14,19 @@ import {
   USER_PROFILE_QUERY,
   apiConfig,
   clearTokenCache,
+  getAccessToken,
 } from "../api";
+
+// Mock the SDK's getPluginCookie
+vi.mock("@symbiosis-lab/moss-api", async () => {
+  const actual = await vi.importActual("@symbiosis-lab/moss-api");
+  return {
+    ...actual,
+    getPluginCookie: vi.fn(),
+  };
+});
+
+import { getPluginCookie } from "@symbiosis-lab/moss-api";
 
 describe("API Constants", () => {
   it("has correct GraphQL endpoint", () => {
@@ -153,6 +165,89 @@ describe("User Queries (Public)", () => {
     expect(USER_PROFILE_QUERY).toContain("displayName");
     expect(USER_PROFILE_QUERY).toContain("avatar");
     expect(USER_PROFILE_QUERY).toContain("language");
+  });
+});
+
+describe("getAccessToken", () => {
+  const mockGetPluginCookie = vi.mocked(getPluginCookie);
+
+  beforeEach(() => {
+    clearTokenCache();
+    mockGetPluginCookie.mockReset();
+  });
+
+  it("returns undefined when getPluginCookie returns null (no context)", async () => {
+    // null means "no plugin context" - distinct from "no cookies found"
+    mockGetPluginCookie.mockResolvedValue(null);
+
+    const result = await getAccessToken();
+
+    expect(result).toBeUndefined();
+  });
+
+  it("returns null when cookies array is empty (no token found)", async () => {
+    mockGetPluginCookie.mockResolvedValue([]);
+
+    const result = await getAccessToken();
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when __access_token cookie is not present", async () => {
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "other_cookie", value: "some_value" },
+    ]);
+
+    const result = await getAccessToken();
+
+    expect(result).toBeNull();
+  });
+
+  it("returns token value when __access_token cookie is present", async () => {
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "my-secret-token" },
+    ]);
+
+    const result = await getAccessToken();
+
+    expect(result).toBe("my-secret-token");
+  });
+
+  it("caches the token after first successful retrieval", async () => {
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "cached-token" },
+    ]);
+
+    // First call
+    const result1 = await getAccessToken();
+    expect(result1).toBe("cached-token");
+
+    // Second call should use cache (won't call getPluginCookie again)
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "different-token" },
+    ]);
+    const result2 = await getAccessToken();
+
+    expect(result2).toBe("cached-token");
+    expect(mockGetPluginCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it("clearTokenCache allows fresh retrieval", async () => {
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "first-token" },
+    ]);
+
+    await getAccessToken();
+    clearTokenCache();
+
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "second-token" },
+    ]);
+
+    const result = await getAccessToken();
+
+    expect(result).toBe("second-token");
+    expect(mockGetPluginCookie).toHaveBeenCalledTimes(2);
   });
 });
 

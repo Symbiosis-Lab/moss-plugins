@@ -12,7 +12,6 @@ import type {
   ArticleInfo,
 } from "./types";
 import {
-  log,
   reportProgress,
   reportError,
   setCurrentHookName,
@@ -41,7 +40,11 @@ import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 // Browser Utilities (via SDK)
 // ============================================================================
 
-import { openBrowser, closeBrowser } from "@symbiosis-lab/moss-api";
+import {
+  openBrowser,
+  closeBrowser,
+  type BrowserHandle,
+} from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Authentication Helpers
@@ -51,41 +54,66 @@ import { openBrowser, closeBrowser } from "@symbiosis-lab/moss-api";
  * Check if user is authenticated with Matters.town
  */
 async function checkAuthentication(): Promise<boolean> {
-  await log("log", "🔍 Checking Matters.town authentication...");
+  console.log("🔍 Checking Matters.town authentication...");
 
   try {
     const token = await getAccessToken();
-    const isAuthenticated = token !== null;
-    await log(
-      "log",
+    // undefined = no context, null = no token, string = token found
+    const isAuthenticated = typeof token === "string";
+    console.log(
       `Authentication check result: ${isAuthenticated ? "AUTHENTICATED" : "NOT AUTHENTICATED"}`
     );
     return isAuthenticated;
   } catch (error) {
-    await log("error", `Failed to check authentication: ${error}`);
+    console.error(`Failed to check authentication: ${error}`);
     return false;
   }
 }
 
 /**
  * Wait for access token by polling for cookie
+ *
+ * @param browserHandle - Handle from openBrowser() to detect window closure
+ * @param initialDelayMs - Wait before first check (default: 20s)
+ * @param pollIntervalMs - Time between checks (default: 2s)
+ * @param maxWaitMs - Maximum total wait time (default: 5 minutes)
+ * @returns true if token found, false if window closed or timeout
  */
 async function waitForToken(
+  browserHandle: BrowserHandle,
   initialDelayMs = 20000,
   pollIntervalMs = 2000,
   maxWaitMs = 300000
 ): Promise<boolean> {
-  await log("log", `⏳ Waiting ${initialDelayMs / 1000}s before checking for token...`);
+  console.log(`⏳ Waiting ${initialDelayMs / 1000}s before checking for token...`);
   await sleep(initialDelayMs);
 
   const startTime = Date.now();
+  let windowClosed = false;
+
+  // Listen for window close
+  browserHandle.closed.then(() => {
+    windowClosed = true;
+  });
 
   while (Date.now() - startTime < maxWaitMs - initialDelayMs) {
+    // Exit immediately if window was closed
+    if (windowClosed) {
+      console.log("🚪 Browser window closed by user");
+      return false;
+    }
+
     clearTokenCache();
     const token = await getAccessToken();
 
+    // Exit if context was lost (SDK returns undefined)
+    if (token === undefined) {
+      console.log("⚠️ Plugin context lost, stopping auth check");
+      return false;
+    }
+
     if (token) {
-      await log("log", "🔑 Token found!");
+      console.log("🔑 Token found!");
       return true;
     }
 
@@ -99,18 +127,18 @@ async function waitForToken(
  * Prompt user to login to Matters.town
  */
 async function promptLogin(): Promise<boolean> {
-  await log("log", "🔐 Opening Matters.town login page...");
+  console.log("🔐 Opening Matters.town login page...");
 
   try {
-    await openBrowser("https://matters.town/login");
+    const browser = await openBrowser("https://matters.town/login");
 
-    await log("log", "🌐 Browser opened. Please log in to Matters.town.");
-    await log("log", "⏳ Will check for authentication after 20 seconds...");
+    console.log("🌐 Browser opened. Please log in to Matters.town.");
+    console.log("⏳ Will check for authentication after 20 seconds...");
 
-    const authenticated = await waitForToken(20000, 2000, 300000);
+    const authenticated = await waitForToken(browser, 20000, 2000, 300000);
 
     if (authenticated) {
-      await log("log", "✅ Login successful, closing browser...");
+      console.log("✅ Login successful, closing browser...");
       try {
         await closeBrowser();
       } catch {
@@ -118,7 +146,7 @@ async function promptLogin(): Promise<boolean> {
       }
       return true;
     } else {
-      await log("warn", "⏱️  Login timeout (5 minutes). Closing browser...");
+      console.warn("⏱️  Login timeout or window closed. Closing browser...");
       try {
         await closeBrowser();
       } catch {
@@ -127,7 +155,7 @@ async function promptLogin(): Promise<boolean> {
       return false;
     }
   } catch (error) {
-    await log("error", `❌ Login flow failed: ${error}`);
+    console.error(`❌ Login flow failed: ${error}`);
     try {
       await closeBrowser();
     } catch {
@@ -150,7 +178,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
   setCurrentHookName("process");
   clearTokenCache();
 
-  await log("log", "🔐 Matters: process hook started");
+  console.log("🔐 Matters: process hook started");
 
   try {
     // Phase 1: Authentication
@@ -164,8 +192,8 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
       if (config.userName) {
         // Use unauthenticated mode with saved userName
-        await log("log", `🔓 Not authenticated, using saved username: @${config.userName}`);
-        await log("log", "   Note: Drafts will not be available in unauthenticated mode");
+        console.log(`🔓 Not authenticated, using saved username: @${config.userName}`);
+        console.log("   Note: Drafts will not be available in unauthenticated mode");
 
         // Configure API to use public user queries
         apiConfig.queryMode = "user";
@@ -173,10 +201,10 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         usingUnauthenticatedMode = true;
 
         await reportProgress("authentication", 1, 1, `Using saved user: @${config.userName}`);
-        await log("log", `✅ Matters: Using unauthenticated mode for @${config.userName}`);
+        console.log(`✅ Matters: Using unauthenticated mode for @${config.userName}`);
       } else {
         // No saved username, prompt for login
-        await log("warn", "🔓 Not authenticated, will prompt login...");
+        console.warn("🔓 Not authenticated, will prompt login...");
         await reportProgress("authentication", 0, 1, "Waiting for login...");
 
         const loginSuccess = await promptLogin();
@@ -191,18 +219,18 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
         isAuthenticated = true;
         await reportProgress("authentication", 1, 1, "Authenticated");
-        await log("log", "✅ Matters: Authenticated");
+        console.log("✅ Matters: Authenticated");
       }
     } else {
-      await log("log", "✅ Already authenticated, skipping browser");
+      console.log("✅ Already authenticated, skipping browser");
       await reportProgress("authentication", 1, 1, "Authenticated");
-      await log("log", "✅ Matters: Authenticated");
+      console.log("✅ Matters: Authenticated");
     }
 
     // Check if sync is enabled
     const syncOnBuild = context.config?.sync_on_build ?? true;
     if (!syncOnBuild) {
-      await log("log", "ℹ️  Sync on build is disabled, skipping...");
+      console.log("ℹ️  Sync on build is disabled, skipping...");
       return {
         success: true,
         message: "Authenticated (sync disabled)",
@@ -213,34 +241,34 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     const pluginConfig = await getConfig();
     const lastSyncedAt = pluginConfig.lastSyncedAt;
     if (lastSyncedAt) {
-      await log("log", `📅 Last synced at: ${lastSyncedAt}`);
+      console.log(`📅 Last synced at: ${lastSyncedAt}`);
     } else {
-      await log("log", "📅 No previous sync - will fetch all articles");
+      console.log("📅 No previous sync - will fetch all articles");
     }
 
     // Phase 2: Fetch articles (with incremental sync)
     await reportProgress("fetching_articles", 0, 1, "Fetching articles from Matters.town...");
     const { articles, userName } = await fetchAllArticlesSince(lastSyncedAt);
     await reportProgress("fetching_articles", 1, 1, `Found ${articles.length} article(s) to sync`);
-    await log("log", `   Found ${articles.length} article(s) to sync`);
+    console.log(`   Found ${articles.length} article(s) to sync`);
 
     // Phase 3: Fetch drafts
     await reportProgress("fetching_drafts", 0, 1, "Fetching drafts from Matters.town...");
     const drafts = await fetchAllDrafts();
     await reportProgress("fetching_drafts", 1, 1, `Found ${drafts.length} draft(s)`);
-    await log("log", `   Found ${drafts.length} draft(s)`);
+    console.log(`   Found ${drafts.length} draft(s)`);
 
     // Phase 4: Fetch collections
     await reportProgress("fetching_collections", 0, 1, "Fetching collections from Matters.town...");
     const collections = await fetchAllCollections();
     await reportProgress("fetching_collections", 1, 1, `Found ${collections.length} collection(s)`);
-    await log("log", `   Found ${collections.length} collection(s)`);
+    console.log(`   Found ${collections.length} collection(s)`);
 
     // Phase 5: Fetch user profile (for homepage and language detection)
     await reportProgress("fetching_profile", 0, 1, "Fetching user profile...");
     const profile = await fetchUserProfile();
     await reportProgress("fetching_profile", 1, 1, `Profile: ${profile.displayName}`);
-    await log("log", `   Profile: ${profile.displayName} (language: ${profile.language || "default"})`);
+    console.log(`   Profile: ${profile.displayName} (language: ${profile.language || "default"})`);
 
     // Save userName to config for future unauthenticated fallback (only when authenticated)
     if (isAuthenticated && !usingUnauthenticatedMode) {
@@ -252,11 +280,11 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
             userName: profile.userName,
             language: profile.language,
           });
-          await log("log", `   Saved username @${profile.userName} to config for future unauthenticated access`);
+          console.log(`   Saved username @${profile.userName} to config for future unauthenticated access`);
         }
       } catch (error) {
         // Non-fatal: just log the error
-        await log("warn", `   Failed to save config: ${error}`);
+        console.warn(`   Failed to save config: ${error}`);
       }
     }
 
@@ -280,7 +308,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
     const summary = parts.length > 0 ? parts.join(", ") : "no changes";
     await reportProgress("syncing", 1, 1, `Sync complete: ${summary}`);
-    await log("log", `✅ Sync complete: ${summary}`);
+    console.log(`✅ Sync complete: ${summary}`);
 
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
     // Both operations read/write the same markdown files, so they must not run in parallel.
@@ -317,7 +345,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
     if (localArticles.length > 0) {
       await reportProgress("fetching_social", 0, localArticles.length, "Fetching social data...");
-      await log("log", `📊 Fetching social data (comments) for ${localArticles.length} local articles...`);
+      console.log(`📊 Fetching social data (comments) for ${localArticles.length} local articles...`);
 
       const socialData = await loadSocialData();
       let totalComments = 0;
@@ -341,12 +369,12 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
           // Save after each article to avoid losing data if later fetches hang
           await saveSocialData(socialData);
         } catch (error) {
-          await log("warn", `   Failed to fetch social data for ${article.title}: ${error}`);
+          console.warn(`   Failed to fetch social data for ${article.title}: ${error}`);
         }
       }
 
       socialSummary = `, ${totalComments} comments`;
-      await log("log", `✅ Social data saved: ${totalComments} comments`);
+      console.log(`✅ Social data saved: ${totalComments} comments`);
     }
 
     // Phase 9: Update lastSyncedAt timestamp
@@ -357,9 +385,9 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         ...currentConfig,
         lastSyncedAt: syncEndTime,
       });
-      await log("log", `📅 Updated lastSyncedAt to ${syncEndTime}`);
+      console.log(`📅 Updated lastSyncedAt to ${syncEndTime}`);
     } catch (error) {
-      await log("warn", `Failed to save lastSyncedAt: ${error}`);
+      console.warn(`Failed to save lastSyncedAt: ${error}`);
     }
 
     await reportProgress("complete", 1, 1, `Complete: ${summary}${mediaSummary}${linkSummary}${socialSummary}`);
@@ -373,7 +401,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     };
   } catch (error) {
     await reportError(`Sync failed: ${error}`, "process", true);
-    await log("error", `❌ Matters: Sync failed: ${error}`);
+    console.error(`❌ Matters: Sync failed: ${error}`);
     return {
       success: false,
       message: `Sync failed: ${error}`,

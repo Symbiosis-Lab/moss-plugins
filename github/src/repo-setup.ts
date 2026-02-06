@@ -11,7 +11,7 @@
  * - repo-dialog.ts
  */
 
-import { showPluginDialog, type DialogResult } from "@symbiosis-lab/moss-api";
+import { openBrowserWithHtml, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
@@ -149,14 +149,6 @@ async function createRootRepo(
 }
 
 /**
- * Encode HTML as a data URL for use with showPluginDialog
- */
-function createDataUrl(html: string): string {
-  const base64 = btoa(unescape(encodeURIComponent(html)));
-  return `data:text/html;base64,${base64}`;
-}
-
-/**
  * Show UI for custom repo name (when root is taken)
  */
 async function showRepoNameUI(
@@ -166,38 +158,32 @@ async function showRepoNameUI(
   await log("log", "   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
-  const dataUrl = createDataUrl(html);
 
-  // Show dialog and wait for user response (auto-closes when done)
-  let dialogResult: DialogResult;
+  // Open HTML in integrated plugin browser panel
+  await openBrowserWithHtml(html);
+
+  // Wait for user to submit or cancel via Tauri events
+  let result: RepoSetupValue | null;
   try {
-    dialogResult = await showPluginDialog({
-      url: dataUrl,
-      title: "GitHub Repository Setup",
-      width: 440,
-      height: 420,
-      timeoutMs: 300000, // 5 minutes
-    });
+    result = await Promise.race([
+      waitForEvent<RepoSetupValue>("repo-setup-submit", 300000),
+      waitForEvent<void>("repo-setup-cancel", 300000).then(() => null),
+    ]);
   } catch {
-    await log("warn", "   Repository setup timed out or failed");
+    await log("warn", "   Repository setup timed out");
+    await closeBrowser();
     return null;
   }
 
-  // Check if user cancelled
-  if (dialogResult.type === "cancelled") {
+  await closeBrowser();
+
+  if (!result) {
     await log("log", "   User cancelled repository setup");
     return null;
   }
 
-  // Extract repo name from dialog result
-  const value = dialogResult.value as RepoSetupValue | undefined;
-  if (!value?.name) {
-    await log("log", "   No repository name provided");
-    return null;
-  }
-
   // Create the custom repo
-  const repoName = value.name;
+  const repoName = result.name;
   await log("log", `   Creating repository: ${repoName}`);
 
   try {
@@ -491,14 +477,8 @@ function createRepoSetupHtml(username: string, token: string): string {
   </div>
 
   <script>
-    const { invoke } = window.__TAURI__.core;
+    const { emit } = window.__TAURI__.event;
     const token = '${token}';
-
-    // Get dialogId - injected as global variable for data URLs, or via query param for regular URLs
-    const dialogId = window.__DIALOG_ID__ || new URLSearchParams(location.search).get('dialogId');
-    if (!dialogId) {
-      console.error('No dialogId found! Dialog submission will fail.');
-    }
 
     const input = document.getElementById('repo-name');
     const inputWrapper = document.getElementById('input-wrapper');
@@ -604,11 +584,7 @@ function createRepoSetupHtml(username: string, token: string): string {
     });
 
     cancelBtn.addEventListener('click', async () => {
-      // Submit cancellation via dialog result
-      await invoke('submit_dialog_result', {
-        dialogId: dialogId,
-        result: { type: 'cancelled' }
-      });
+      await emit('repo-setup-cancel', {});
     });
 
     createBtn.addEventListener('click', async () => {
@@ -618,11 +594,7 @@ function createRepoSetupHtml(username: string, token: string): string {
       createBtn.disabled = true;
       btnText.innerHTML = '<span class="creating"><div class="spinner"></div>Creating...</span>';
 
-      // Submit repo name via dialog result
-      await invoke('submit_dialog_result', {
-        dialogId: dialogId,
-        result: { type: 'submitted', value: { name: name } }
-      });
+      await emit('repo-setup-submit', { name: name });
     });
 
     input.focus();

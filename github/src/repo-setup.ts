@@ -11,7 +11,7 @@
  * - repo-dialog.ts
  */
 
-import { openBrowserWithHtml, closeBrowser, waitForEvent } from "@symbiosis-lab/moss-api";
+import { showBrowserForm } from "@symbiosis-lab/moss-api";
 import { log } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
@@ -158,24 +158,7 @@ async function showRepoNameUI(
   await log("log", "   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
-
-  // Open HTML in integrated plugin browser panel
-  await openBrowserWithHtml(html);
-
-  // Wait for user to submit or cancel via Tauri events
-  let result: RepoSetupValue | null;
-  try {
-    result = await Promise.race([
-      waitForEvent<RepoSetupValue>("repo-setup-submit", 300000),
-      waitForEvent<void>("repo-setup-cancel", 300000).then(() => null),
-    ]);
-  } catch {
-    await log("warn", "   Repository setup timed out");
-    await closeBrowser();
-    return null;
-  }
-
-  await closeBrowser();
+  const result = await showBrowserForm<RepoSetupValue>(html, { timeoutMs: 300000 });
 
   if (!result) {
     await log("log", "   User cancelled repository setup");
@@ -477,7 +460,6 @@ function createRepoSetupHtml(username: string, token: string): string {
   </div>
 
   <script>
-    const { emit } = window.__TAURI__.event;
     const token = '${token}';
 
     const input = document.getElementById('repo-name');
@@ -583,8 +565,8 @@ function createRepoSetupHtml(username: string, token: string): string {
       }, 300);
     });
 
-    cancelBtn.addEventListener('click', async () => {
-      await emit('repo-setup-cancel', {});
+    cancelBtn.addEventListener('click', () => {
+      mossApi.cancel();
     });
 
     createBtn.addEventListener('click', async () => {
@@ -594,7 +576,7 @@ function createRepoSetupHtml(username: string, token: string): string {
       createBtn.disabled = true;
       btnText.innerHTML = '<span class="creating"><div class="spinner"></div>Creating...</span>';
 
-      await emit('repo-setup-submit', { name: name });
+      mossApi.submit({ name: name });
     });
 
     input.focus();

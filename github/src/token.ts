@@ -154,7 +154,7 @@ export async function getToken(): Promise<string | null> {
   // Try plugin cookies
   try {
     const cookies = await getPluginCookie();
-    const tokenCookie = cookies.find((c) => c.name === TOKEN_COOKIE_NAME);
+    const tokenCookie = cookies?.find((c) => c.name === TOKEN_COOKIE_NAME);
 
     if (tokenCookie) {
       cachedToken = tokenCookie.value;

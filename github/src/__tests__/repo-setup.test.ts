@@ -9,14 +9,10 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 
 // Mock moss-api
-const mockOpenBrowserWithHtml = vi.fn().mockResolvedValue(undefined);
-const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
-const mockWaitForEvent = vi.fn().mockRejectedValue(new Error("Timeout"));
+const mockShowBrowserForm = vi.fn().mockResolvedValue(null);
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  openBrowserWithHtml: (...args: unknown[]) => mockOpenBrowserWithHtml(...args),
-  closeBrowser: (...args: unknown[]) => mockCloseBrowser(...args),
-  waitForEvent: (...args: unknown[]) => mockWaitForEvent(...args),
+  showBrowserForm: (...args: unknown[]) => mockShowBrowserForm(...args),
   executeBinary: vi.fn().mockResolvedValue({ success: true, stdout: "", stderr: "" }),
 }));
 
@@ -151,7 +147,7 @@ describe("ensureGitHubRepo", () => {
       const result = await ensureGitHubRepo();
 
       // Should NOT show any UI
-      expect(mockOpenBrowserWithHtml).not.toHaveBeenCalled();
+      expect(mockShowBrowserForm).not.toHaveBeenCalled();
 
       // Should create the root repo
       expect(mockCheckRepoExists).toHaveBeenCalledWith("testuser", "testuser.github.io", "test-token");
@@ -192,14 +188,8 @@ describe("ensureGitHubRepo", () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // User submits custom name via event
-      mockWaitForEvent.mockImplementation((event: string) => {
-        if (event === "repo-setup-submit") {
-          return Promise.resolve({ name: "my-website" });
-        }
-        // Cancel event never fires (stays pending)
-        return new Promise(() => {});
-      });
+      // User submits custom name via showBrowserForm
+      mockShowBrowserForm.mockResolvedValue({ name: "my-website" });
 
       mockCreateRepository.mockResolvedValue({
         name: "my-website",
@@ -209,15 +199,20 @@ describe("ensureGitHubRepo", () => {
 
       const result = await ensureGitHubRepo();
 
-      // Should open browser with HTML
-      expect(mockOpenBrowserWithHtml).toHaveBeenCalled();
+      // Should call showBrowserForm with HTML and timeout
+      expect(mockShowBrowserForm).toHaveBeenCalledWith(
+        expect.any(String),
+        { timeoutMs: 300000 }
+      );
 
       // HTML should contain explanation about root being taken
-      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
+      const html = mockShowBrowserForm.mock.calls[0][0] as string;
       expect(html).toContain("already");
 
-      // Should close browser after getting result
-      expect(mockCloseBrowser).toHaveBeenCalled();
+      // HTML should use mossApi.submit/cancel (not __TAURI__)
+      expect(html).toContain("mossApi.submit");
+      expect(html).toContain("mossApi.cancel");
+      expect(html).not.toContain("__TAURI__");
 
       // Should create custom repo
       expect(mockCreateRepository).toHaveBeenCalledWith("my-website", "test-token", expect.any(String));
@@ -233,19 +228,12 @@ describe("ensureGitHubRepo", () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // User cancels via event - cancel event resolves first
-      mockWaitForEvent.mockImplementation((event: string) => {
-        if (event === "repo-setup-cancel") {
-          return Promise.resolve(undefined);
-        }
-        // Submit event never fires (stays pending)
-        return new Promise(() => {});
-      });
+      // User cancels - showBrowserForm returns null
+      mockShowBrowserForm.mockResolvedValue(null);
 
       const result = await ensureGitHubRepo();
 
-      expect(mockOpenBrowserWithHtml).toHaveBeenCalled();
-      expect(mockCloseBrowser).toHaveBeenCalled();
+      expect(mockShowBrowserForm).toHaveBeenCalled();
       expect(result).toBeNull();
     });
 
@@ -253,13 +241,12 @@ describe("ensureGitHubRepo", () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // Both events time out
-      mockWaitForEvent.mockRejectedValue(new Error("Timeout waiting for event"));
+      // Timeout - showBrowserForm returns null on timeout
+      mockShowBrowserForm.mockResolvedValue(null);
 
       const result = await ensureGitHubRepo();
 
-      expect(mockOpenBrowserWithHtml).toHaveBeenCalled();
-      expect(mockCloseBrowser).toHaveBeenCalled();
+      expect(mockShowBrowserForm).toHaveBeenCalled();
       expect(result).toBeNull();
     });
 
@@ -268,16 +255,11 @@ describe("ensureGitHubRepo", () => {
       mockCheckRepoExists.mockResolvedValue(true);
 
       // Cancel to just inspect HTML
-      mockWaitForEvent.mockImplementation((event: string) => {
-        if (event === "repo-setup-cancel") {
-          return Promise.resolve(undefined);
-        }
-        return new Promise(() => {});
-      });
+      mockShowBrowserForm.mockResolvedValue(null);
 
       await ensureGitHubRepo();
 
-      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
+      const html = mockShowBrowserForm.mock.calls[0][0] as string;
       // UI should explain the URL difference
       expect(html).toMatch(/github\.io.*\//i);
     });

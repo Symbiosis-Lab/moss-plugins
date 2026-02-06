@@ -1,6 +1,6 @@
 {
   "name": "github",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "author": "moss team",
   "entry": "main.bundle.js",

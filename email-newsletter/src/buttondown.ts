@@ -4,10 +4,11 @@
  * Handles communication with Buttondown's REST API for sending newsletter emails.
  */
 
-import { httpPost } from "@symbiosis-lab/moss-api";
+import { httpPost, httpGet } from "@symbiosis-lab/moss-api";
 import type { ButtondownEmailResponse } from "./types";
 
 const BUTTONDOWN_API_URL = "https://api.buttondown.com/v1/emails";
+const BUTTONDOWN_NEWSLETTERS_URL = "https://api.buttondown.com/v1/newsletters";
 
 /**
  * Create an email via Buttondown API
@@ -47,6 +48,31 @@ export async function createEmail(
 
   const response = JSON.parse(result.text()) as ButtondownEmailResponse;
   return response;
+}
+
+/**
+ * Get newsletter information from Buttondown API
+ *
+ * @param apiKey - Buttondown API key
+ * @returns Newsletter info including username
+ * @throws Error if API request fails or no newsletter found
+ */
+export async function getNewsletterInfo(apiKey: string): Promise<{ username: string }> {
+  const result = await httpGet(BUTTONDOWN_NEWSLETTERS_URL, {
+    headers: { Authorization: `Token ${apiKey}` },
+  });
+
+  if (!result.ok) {
+    throw new Error(`Buttondown API error (${result.status}): ${result.text()}`);
+  }
+
+  const data = JSON.parse(result.text());
+  const newsletter = Array.isArray(data.results) ? data.results[0] : data;
+  if (!newsletter?.username) {
+    throw new Error("No newsletter found for this API key");
+  }
+
+  return { username: newsletter.username };
 }
 
 /**

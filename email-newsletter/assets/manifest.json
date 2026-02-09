@@ -4,13 +4,11 @@
   "description": "Syndicate articles to email subscribers via Buttondown",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["syndicate"],
+  "capabilities": ["enhance", "syndicate"],
   "global_name": "EmailNewsletter",
-  "config": {
-    "send_as_draft": true
-  },
+  "domain": "buttondown.com",
+  "config": {},
   "config_schema": {
-    "api_key": "string",
-    "send_as_draft": "boolean"
+    "api_key": "string"
   }
 }

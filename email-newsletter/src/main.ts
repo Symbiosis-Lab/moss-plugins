@@ -6,7 +6,7 @@
 
 import type { AfterDeployContext, HookResult, ArticleInfo } from "./types";
 import type { PluginConfig, SyndicatedEntry } from "./types";
-import { showToast } from "@symbiosis-lab/moss-api";
+import { showToast, openBrowser } from "@symbiosis-lab/moss-api";
 import { createEmail } from "./buttondown";
 import {
   loadSyndicationData,
@@ -68,7 +68,6 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 
     const { url: siteUrl } = context.deployment;
     const { articles } = context;
-    const sendAsDraft = config.send_as_draft ?? true;
 
     // Load syndication tracking data
     const syndicationData = await loadSyndicationData();
@@ -88,16 +87,15 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 
     console.log(`📧 Syndicating ${articlesToSyndicate.length} article(s) to Buttondown`);
     console.log(`🌐 Site URL: ${siteUrl}`);
-    console.log(`📝 Mode: ${sendAsDraft ? "Draft" : "Send immediately"}`);
+    console.log(`📝 Mode: Draft`);
 
     await showToast({
-      message: `Sending ${articlesToSyndicate.length} article(s) to newsletter...`,
+      message: `Creating ${articlesToSyndicate.length} draft(s) for newsletter...`,
       variant: "info",
       duration: 3000,
     });
 
     // Syndicate articles one at a time
-    let sent = 0;
     let drafts = 0;
     const errors: string[] = [];
 
@@ -110,7 +108,7 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
           config.api_key,
           article.title,
           emailBody,
-          sendAsDraft
+          true // Always create drafts
         );
 
         // Record successful syndication
@@ -118,20 +116,15 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
           url_path: article.url_path,
           syndicated_at: new Date().toISOString(),
           email_id: response.id,
-          status: response.status === "sent" ? "sent" : "draft",
+          status: "draft",
         };
         recordSyndication(syndicationData, entry);
 
         // Save after each article to avoid losing data on error
         await saveSyndicationData(syndicationData);
 
-        if (response.status === "sent") {
-          sent++;
-          console.log(`    ✅ Sent: ${article.title}`);
-        } else {
-          drafts++;
-          console.log(`    📝 Draft created: ${article.title}`);
-        }
+        drafts++;
+        console.log(`    📝 Draft created: ${article.title}`);
       } catch (error) {
         console.error(`    ✗ Failed to syndicate ${article.title}:`, error);
         errors.push(`${article.title}: ${error}`);
@@ -140,7 +133,6 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 
     // Build summary
     const parts: string[] = [];
-    if (sent > 0) parts.push(`${sent} sent`);
     if (drafts > 0) parts.push(`${drafts} drafts`);
     if (errors.length > 0) parts.push(`${errors.length} failed`);
 
@@ -156,12 +148,15 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
     } else {
       console.log(`✅ Email syndication complete: ${summary}`);
       await showToast({
-        message: sendAsDraft
-          ? `Newsletter drafts created: ${drafts}`
-          : `Newsletter sent: ${sent}`,
+        message: `Newsletter drafts created: ${drafts}`,
         variant: "success",
         duration: 5000,
       });
+    }
+
+    // Open browser to review drafts if any were created
+    if (drafts > 0) {
+      await openBrowser("https://buttondown.com/emails");
     }
 
     return {
@@ -186,10 +181,13 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 // Plugin Export
 // ============================================================================
 
+import { enhance } from "./enhance";
+
 /**
  * Plugin object exported as global for the moss plugin runtime
  */
 const EmailNewsletter = {
+  enhance,
   syndicate,
 };
 
@@ -198,5 +196,6 @@ const EmailNewsletter = {
   EmailNewsletter;
 
 // Also export for module usage
+export { enhance };
 export { syndicate as after_deploy };
 export default EmailNewsletter;

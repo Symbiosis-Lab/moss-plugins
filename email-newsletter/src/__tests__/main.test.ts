@@ -11,6 +11,7 @@ const mockReadPluginFile = vi.fn();
 const mockWritePluginFile = vi.fn();
 const mockPluginFileExists = vi.fn();
 const mockShowToast = vi.fn();
+const mockOpenBrowser = vi.fn();
 
 // Mock moss-api functions
 vi.mock("@symbiosis-lab/moss-api", () => ({
@@ -19,6 +20,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writePluginFile: (...args: unknown[]) => mockWritePluginFile(...args),
   pluginFileExists: (...args: unknown[]) => mockPluginFileExists(...args),
   showToast: (...args: unknown[]) => mockShowToast(...args),
+  openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
 }));
 
 import { syndicate } from "../main";
@@ -28,6 +30,7 @@ describe("Email Newsletter Plugin", () => {
     vi.clearAllMocks();
     mockShowToast.mockResolvedValue(undefined);
     mockWritePluginFile.mockResolvedValue(undefined);
+    mockOpenBrowser.mockResolvedValue(undefined);
   });
 
   function createTestArticle(overrides: Partial<ArticleInfo> = {}): ArticleInfo {
@@ -54,7 +57,6 @@ describe("Email Newsletter Plugin", () => {
       },
       config: {
         api_key: "test-api-key",
-        send_as_draft: true,
       },
       site_files: ["index.html", "posts/test.html"],
       articles: [createTestArticle()],
@@ -113,7 +115,7 @@ describe("Email Newsletter Plugin", () => {
       expect(result.message).toContain("No new articles");
     });
 
-    it("creates draft email when send_as_draft is true", async () => {
+    it("creates draft emails", async () => {
       mockPluginFileExists.mockResolvedValue(false);
       mockHttpPost.mockResolvedValue({
         ok: true,
@@ -129,9 +131,7 @@ describe("Email Newsletter Plugin", () => {
           }),
       });
 
-      const context = createTestContext({
-        config: { api_key: "test-key", send_as_draft: true },
-      });
+      const context = createTestContext();
       const result = await syndicate(context);
 
       expect(result.success).toBe(true);
@@ -142,40 +142,6 @@ describe("Email Newsletter Plugin", () => {
         "https://api.buttondown.com/v1/emails",
         expect.objectContaining({
           status: "draft",
-        }),
-        expect.any(Object)
-      );
-    });
-
-    it("sends email immediately when send_as_draft is false", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockHttpPost.mockResolvedValue({
-        ok: true,
-        status: 200,
-        contentType: "application/json",
-        body: new Uint8Array(),
-        text: () =>
-          JSON.stringify({
-            id: "new-email-id",
-            subject: "Test Article",
-            status: "sent",
-            creation_date: "2025-01-15T12:00:00Z",
-          }),
-      });
-
-      const context = createTestContext({
-        config: { api_key: "test-key", send_as_draft: false },
-      });
-      const result = await syndicate(context);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain("1 sent");
-
-      // Verify API was called with sent status
-      expect(mockHttpPost).toHaveBeenCalledWith(
-        "https://api.buttondown.com/v1/emails",
-        expect.objectContaining({
-          status: "sent",
         }),
         expect.any(Object)
       );
@@ -252,6 +218,120 @@ describe("Email Newsletter Plugin", () => {
 
       expect(result.success).toBe(false);
       expect(result.message).toContain("1 failed");
+    });
+
+    it("always creates drafts regardless of send_as_draft config", async () => {
+      mockPluginFileExists.mockResolvedValue(false);
+      mockHttpPost.mockResolvedValue({
+        ok: true,
+        status: 200,
+        contentType: "application/json",
+        body: new Uint8Array(),
+        text: () =>
+          JSON.stringify({
+            id: "new-email-id",
+            subject: "Test Article",
+            status: "draft",
+            creation_date: "2025-01-15T12:00:00Z",
+          }),
+      });
+
+      const context = createTestContext({
+        config: { api_key: "test-key", send_as_draft: false },
+      });
+      const result = await syndicate(context);
+
+      expect(result.success).toBe(true);
+
+      // Verify API was called with draft status even though config says send_as_draft: false
+      expect(mockHttpPost).toHaveBeenCalledWith(
+        "https://api.buttondown.com/v1/emails",
+        expect.objectContaining({
+          status: "draft",
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it("calls openBrowser after creating drafts", async () => {
+      mockPluginFileExists.mockResolvedValue(false);
+      mockHttpPost.mockResolvedValue({
+        ok: true,
+        status: 200,
+        contentType: "application/json",
+        body: new Uint8Array(),
+        text: () =>
+          JSON.stringify({
+            id: "new-email-id",
+            subject: "Test Article",
+            status: "draft",
+            creation_date: "2025-01-15T12:00:00Z",
+          }),
+      });
+
+      const context = createTestContext();
+      await syndicate(context);
+
+      // Verify openBrowser was called with Buttondown emails URL
+      expect(mockOpenBrowser).toHaveBeenCalledWith(
+        "https://buttondown.com/emails"
+      );
+    });
+
+    it("does not open browser when no new articles to syndicate", async () => {
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({
+          articles: {
+            "posts/test.html": {
+              url_path: "posts/test.html",
+              syndicated_at: "2025-01-15T12:00:00Z",
+              email_id: "existing-id",
+              status: "sent",
+            },
+          },
+        })
+      );
+
+      const context = createTestContext();
+      const result = await syndicate(context);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("No new articles");
+
+      // Verify openBrowser was NOT called
+      expect(mockOpenBrowser).not.toHaveBeenCalled();
+    });
+
+    it("shows toast with draft count before opening browser", async () => {
+      mockPluginFileExists.mockResolvedValue(false);
+      mockHttpPost.mockResolvedValue({
+        ok: true,
+        status: 200,
+        contentType: "application/json",
+        body: new Uint8Array(),
+        text: () =>
+          JSON.stringify({
+            id: "new-email-id",
+            subject: "Test Article",
+            status: "draft",
+            creation_date: "2025-01-15T12:00:00Z",
+          }),
+      });
+
+      const context = createTestContext();
+      await syndicate(context);
+
+      // Verify toast was shown with draft count
+      expect(mockShowToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("drafts created"),
+          variant: "success",
+        })
+      );
+
+      // Verify openBrowser was called after
+      expect(mockOpenBrowser).toHaveBeenCalled();
     });
   });
 });

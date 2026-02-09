@@ -23,6 +23,7 @@ var EmailNewsletter = (() => {
   __export(main_exports, {
     after_deploy: () => syndicate,
     default: () => main_default,
+    enhance: () => enhance,
     syndicate: () => syndicate
   });
 
@@ -32,18 +33,55 @@ var EmailNewsletter = (() => {
     if (!w.__TAURI__?.core) throw new Error("Tauri core not available");
     return w.__TAURI__.core;
   }
-  function getTauriEvent() {
+  function getTauriEvent$1() {
     const w = window;
     if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
     return w.__TAURI__.event;
   }
   async function emitEvent(event, payload) {
-    await getTauriEvent().emit(event, payload);
+    await getTauriEvent$1().emit(event, payload);
+  }
+  function getTauriEvent() {
+    const w = window;
+    if (!w.__TAURI__?.event?.listen) throw new Error("Tauri event API not available");
+    return w.__TAURI__.event;
+  }
+  async function openBrowser(url) {
+    await getTauriCore().invoke("open_plugin_browser", { url });
+    const closed = new Promise((resolve) => {
+      const { listen } = getTauriEvent();
+      listen("browser-closed", (event) => {
+        const payload = event.payload;
+        resolve(payload.reason);
+      }).then((unlisten) => {
+        closed.then(() => unlisten());
+      });
+    });
+    return { closed };
   }
   function getInternalContext() {
     const context = window.__MOSS_INTERNAL_CONTEXT__;
     if (!context) throw new Error("This function must be called from within a plugin hook. Ensure you're calling this from process(), generate(), deploy(), or syndicate().");
     return context;
+  }
+  async function readFile(relativePath) {
+    const ctx = getInternalContext();
+    return getTauriCore().invoke("read_project_file", {
+      projectPath: ctx.project_path,
+      relativePath
+    });
+  }
+  async function writeFile(relativePath, content) {
+    const ctx = getInternalContext();
+    await getTauriCore().invoke("write_project_file", {
+      projectPath: ctx.project_path,
+      relativePath,
+      data: content
+    });
+  }
+  async function listFiles() {
+    const ctx = getInternalContext();
+    return getTauriCore().invoke("list_project_files", { projectPath: ctx.project_path });
   }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
@@ -90,6 +128,25 @@ var EmailNewsletter = (() => {
       }
     };
   }
+  async function httpGet(url, options = {}) {
+    const { timeoutMs = 3e4, headers = {} } = options;
+    const result = await getTauriCore().invoke("http_get", {
+      url,
+      headers,
+      timeoutMs
+    });
+    const binaryString = atob(result.body_base64);
+    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
+    return {
+      status: result.status,
+      ok: result.ok,
+      contentType: result.content_type,
+      body: bytes,
+      text() {
+        return new TextDecoder().decode(bytes);
+      }
+    };
+  }
   var TOAST_EVENT = "plugin-toast";
   async function showToast(options) {
     await emitEvent(TOAST_EVENT, typeof options === "string" ? { message: options } : options);
@@ -97,6 +154,7 @@ var EmailNewsletter = (() => {
 
   // src/buttondown.ts
   var BUTTONDOWN_API_URL = "https://api.buttondown.com/v1/emails";
+  var BUTTONDOWN_NEWSLETTERS_URL = "https://api.buttondown.com/v1/newsletters";
   async function createEmail(apiKey, subject, body, asDraft = true) {
     const status = asDraft ? "draft" : "sent";
     const result = await httpPost(
@@ -118,6 +176,20 @@ var EmailNewsletter = (() => {
     }
     const response = JSON.parse(result.text());
     return response;
+  }
+  async function getNewsletterInfo(apiKey) {
+    const result = await httpGet(BUTTONDOWN_NEWSLETTERS_URL, {
+      headers: { Authorization: `Token ${apiKey}` }
+    });
+    if (!result.ok) {
+      throw new Error(`Buttondown API error (${result.status}): ${result.text()}`);
+    }
+    const data = JSON.parse(result.text());
+    const newsletter = Array.isArray(data.results) ? data.results[0] : data;
+    if (!newsletter?.username) {
+      throw new Error("No newsletter found for this API key");
+    }
+    return { username: newsletter.username };
   }
 
   // src/tracking.ts
@@ -141,6 +213,61 @@ var EmailNewsletter = (() => {
   }
   function recordSyndication(data, entry) {
     data.articles[entry.url_path] = entry;
+  }
+
+  // src/enhance.ts
+  async function enhance(ctx) {
+    const config = ctx.config;
+    if (!config.api_key) {
+      console.warn(
+        "No Buttondown API key configured, skipping footer injection"
+      );
+      return { success: false, message: "No API key configured" };
+    }
+    let username;
+    try {
+      if (await pluginFileExists("newsletter-info.json")) {
+        const cached = JSON.parse(await readPluginFile("newsletter-info.json"));
+        username = cached.username;
+      } else {
+        const info = await getNewsletterInfo(config.api_key);
+        username = info.username;
+        await writePluginFile(
+          "newsletter-info.json",
+          JSON.stringify({ username })
+        );
+      }
+    } catch (e) {
+      return { success: false, message: `Failed to get newsletter info: ${e}` };
+    }
+    const files = await listFiles();
+    const htmlFiles = files.filter((f) => f.endsWith(".html"));
+    for (const filePath of htmlFiles) {
+      try {
+        const html = await readFile(filePath);
+        const modified = injectSubscribeForm(html, username);
+        if (modified !== html) {
+          await writeFile(filePath, modified);
+        }
+      } catch (e) {
+        console.warn(`Failed to process ${filePath}: ${e}`);
+      }
+    }
+    return { success: true };
+  }
+  function injectSubscribeForm(html, username) {
+    const footerContentRegex = /<div class="footer-content">([\s\S]*?)<\/div>/;
+    const match = html.match(footerContentRegex);
+    if (!match) return html;
+    const formHtml = `<div class="footer-content">
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
+        <input type="email" name="email" placeholder="your@email.com" required />
+        <input type="hidden" value="1" name="embed" />
+        <button type="submit">Subscribe</button>
+    </form>
+</div>`;
+    return html.replace(footerContentRegex, formHtml);
   }
 
   // src/main.ts
@@ -178,7 +305,6 @@ var EmailNewsletter = (() => {
       }
       const { url: siteUrl } = context.deployment;
       const { articles } = context;
-      const sendAsDraft = config.send_as_draft ?? true;
       const syndicationData = await loadSyndicationData();
       const articlesToSyndicate = articles.filter((article) => {
         return !isAlreadySyndicated(syndicationData, article.url_path);
@@ -192,13 +318,12 @@ var EmailNewsletter = (() => {
       }
       console.log(`\u{1F4E7} Syndicating ${articlesToSyndicate.length} article(s) to Buttondown`);
       console.log(`\u{1F310} Site URL: ${siteUrl}`);
-      console.log(`\u{1F4DD} Mode: ${sendAsDraft ? "Draft" : "Send immediately"}`);
+      console.log(`\u{1F4DD} Mode: Draft`);
       await showToast({
-        message: `Sending ${articlesToSyndicate.length} article(s) to newsletter...`,
+        message: `Creating ${articlesToSyndicate.length} draft(s) for newsletter...`,
         variant: "info",
         duration: 3e3
       });
-      let sent = 0;
       let drafts = 0;
       const errors = [];
       for (const article of articlesToSyndicate) {
@@ -209,30 +334,25 @@ var EmailNewsletter = (() => {
             config.api_key,
             article.title,
             emailBody,
-            sendAsDraft
+            true
+            // Always create drafts
           );
           const entry = {
             url_path: article.url_path,
             syndicated_at: (/* @__PURE__ */ new Date()).toISOString(),
             email_id: response.id,
-            status: response.status === "sent" ? "sent" : "draft"
+            status: "draft"
           };
           recordSyndication(syndicationData, entry);
           await saveSyndicationData(syndicationData);
-          if (response.status === "sent") {
-            sent++;
-            console.log(`    \u2705 Sent: ${article.title}`);
-          } else {
-            drafts++;
-            console.log(`    \u{1F4DD} Draft created: ${article.title}`);
-          }
+          drafts++;
+          console.log(`    \u{1F4DD} Draft created: ${article.title}`);
         } catch (error) {
           console.error(`    \u2717 Failed to syndicate ${article.title}:`, error);
           errors.push(`${article.title}: ${error}`);
         }
       }
       const parts = [];
-      if (sent > 0) parts.push(`${sent} sent`);
       if (drafts > 0) parts.push(`${drafts} drafts`);
       if (errors.length > 0) parts.push(`${errors.length} failed`);
       const summary = parts.join(", ");
@@ -246,10 +366,13 @@ var EmailNewsletter = (() => {
       } else {
         console.log(`\u2705 Email syndication complete: ${summary}`);
         await showToast({
-          message: sendAsDraft ? `Newsletter drafts created: ${drafts}` : `Newsletter sent: ${sent}`,
+          message: `Newsletter drafts created: ${drafts}`,
           variant: "success",
           duration: 5e3
         });
+      }
+      if (drafts > 0) {
+        await openBrowser("https://buttondown.com/emails");
       }
       return {
         success: errors.length === 0,
@@ -269,6 +392,7 @@ var EmailNewsletter = (() => {
     }
   }
   var EmailNewsletter = {
+    enhance,
     syndicate
   };
   window.EmailNewsletter = EmailNewsletter;

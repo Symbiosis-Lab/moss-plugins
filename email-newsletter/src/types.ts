@@ -15,8 +15,6 @@ export type {
 export interface PluginConfig {
   /** Buttondown API key */
   api_key?: string;
-  /** If true, create drafts instead of sending immediately */
-  send_as_draft?: boolean;
 }
 
 /**

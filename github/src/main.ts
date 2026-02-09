@@ -386,9 +386,13 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Categorize error for toast display
     const lowerError = errorMessage.toLowerCase();
     let toastMessage: string;
-    if (lowerError.includes("authentication") || lowerError.includes("auth") || lowerError.includes("token")) {
+    if (lowerError.includes("permission denied") || lowerError.includes("publickey")) {
+      toastMessage = "SSH key not loaded. Run ssh-add in terminal and retry.";
+    } else if (lowerError.includes("timed out") || lowerError.includes("timeout")) {
+      toastMessage = "Push may still be running. Check GitHub in a few minutes.";
+    } else if (lowerError.includes("authentication") || lowerError.includes("auth") || lowerError.includes("token")) {
       toastMessage = "Authentication failed";
-    } else if (lowerError.includes("network") || lowerError.includes("connection") || lowerError.includes("timeout")) {
+    } else if (lowerError.includes("network") || lowerError.includes("connection")) {
       toastMessage = "Network error";
     } else if (lowerError.includes("not a git repository") || lowerError.includes("no remote")) {
       toastMessage = "Git not configured";

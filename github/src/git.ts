@@ -10,13 +10,14 @@ import { log, reportProgress, reportError } from "./utils";
 /**
  * Run a git command and return the output
  */
-async function runGit(args: string[]): Promise<string> {
+async function runGit(args: string[], timeoutMs = 60000, env?: Record<string, string>): Promise<string> {
   await log("log", `   git ${args.join(" ")}`);
 
   const result = await executeBinary({
     binaryPath: "git",
     args,
-    timeoutMs: 60000,
+    timeoutMs,
+    env,
   });
 
   if (!result.success) {
@@ -1030,7 +1031,26 @@ export async function deployToGhPages(siteDir: string = ".moss/site"): Promise<D
     // Step 5: Push gh-pages
     await reportProgress("deploying", 5, 5, "Pushing to GitHub...");
     await log("log", "   Pushing gh-pages to GitHub...");
-    await runGit(["-C", worktreePath, "push", "--force", "origin", "gh-pages"]);
+
+    // Keepalive: send progress every 30s to prevent hook inactivity timeout (60s)
+    const pushStart = Date.now();
+    const keepalive = setInterval(async () => {
+      const elapsed = Math.round((Date.now() - pushStart) / 1000);
+      await reportProgress("deploying", 5, 5, `Still pushing to GitHub... (${elapsed}s)`);
+      await log("log", `   Push still in progress... (${elapsed}s elapsed)`);
+    }, 30000);
+
+    try {
+      await runGit(
+        ["-C", worktreePath, "push", "--force", "origin", "gh-pages"],
+        300000, // 5 minutes for network operations (large sites can take >60s)
+        { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=30" },
+      );
+      const pushDuration = ((Date.now() - pushStart) / 1000).toFixed(1);
+      await log("log", `   Push completed in ${pushDuration}s`);
+    } finally {
+      clearInterval(keepalive);
+    }
 
     // Return commit SHA and cleanup callback
     // Caller should call cleanup() AFTER signaling completion to moss

@@ -25,7 +25,7 @@ vi.mock("../utils", () => ({
 
 // Import after mocking
 import { on_deploy } from "../main";
-import { reportProgress } from "../utils";
+import { reportProgress, showToast } from "../utils";
 
 /**
  * Create a mock OnDeployContext for testing
@@ -2031,6 +2031,122 @@ describe("on_deploy integration", () => {
 
       // Should include worktree-specific progress messages
       expect(progressMessages).toContainEqual(expect.stringMatching(/worktree|preparing|copying/i));
+    });
+  });
+
+  describe("Error Categorization", () => {
+    // Helper to set up a deploy that will reach the push step and then fail
+    function setupDeployToReachPush(ctx: MockTauriContext, pushError: { stderr: string }) {
+      // Git repo exists with SSH remote
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("git branch --show-current", {
+        success: true,
+        exitCode: 0,
+        stdout: "main",
+        stderr: "",
+      });
+      // gh-pages exists but has different content (triggers deploy)
+      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
+        success: true,
+        exitCode: 0,
+        stdout: "abc123",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("git rev-parse HEAD", {
+        success: true,
+        exitCode: 0,
+        stdout: "def456",
+        stderr: "",
+      });
+      // Default git success for most commands
+      ctx.binaryConfig.setResult("git", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      // Shell commands succeed
+      ctx.binaryConfig.setResult("rm", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("sh", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("cp", {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
+      // Worktree status shows changes (so it tries to push)
+      ctx.binaryConfig.setResult("git -C", {
+        success: true,
+        exitCode: 0,
+        stdout: "M  index.html",
+        stderr: "",
+      });
+    }
+
+    it("shows helpful message for push timeout errors", async () => {
+      setupDeployToReachPush(ctx, { stderr: "" });
+
+      // Make the fallback git command fail with timeout error
+      // Since we can't target the exact push command (random worktree path),
+      // we test error categorization through a general git failure
+      ctx.binaryConfig.setResult("git", {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "Binary execution timed out after 300000 ms",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(false);
+      // Verify showToast was called with timeout-specific message
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const errorToasts = toastCalls.filter(call => call[0]?.variant === "error");
+      expect(errorToasts.length).toBeGreaterThan(0);
+      const toastMsg = errorToasts[0][0].message;
+      expect(toastMsg).toContain("may still be running");
+    });
+
+    it("shows SSH auth message for permission denied errors", async () => {
+      setupDeployToReachPush(ctx, { stderr: "" });
+
+      // Make git fail with SSH permission denied
+      ctx.binaryConfig.setResult("git", {
+        success: false,
+        exitCode: 128,
+        stdout: "",
+        stderr: "Permission denied (publickey).",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(false);
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const errorToasts = toastCalls.filter(call => call[0]?.variant === "error");
+      expect(errorToasts.length).toBeGreaterThan(0);
+      const toastMsg = errorToasts[0][0].message;
+      expect(toastMsg).toContain("ssh-add");
     });
   });
 });

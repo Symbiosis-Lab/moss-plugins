@@ -1,6 +1,7 @@
 {
   "name": "email",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "icon": "icon.svg",
   "description": "Syndicate articles to email subscribers via Buttondown",
   "author": "moss team",
   "entry": "main.bundle.js",

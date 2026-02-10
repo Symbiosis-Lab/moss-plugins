@@ -30,6 +30,8 @@ export interface MattersPluginConfig {
   sync_drafts?: boolean;
   /** Explicit article folder name override (auto-detected if not set) */
   articleFolder?: string;
+  /** Override Matters domain (default: "matters.town", test: "matters.icu") */
+  domain?: string;
 }
 
 // ============================================================================

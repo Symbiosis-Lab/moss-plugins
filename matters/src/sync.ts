@@ -45,6 +45,7 @@ import type { MattersPluginConfig } from "./config";
 import { slugify, reportProgress, reportError } from "./utils";
 import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
 import { readFile, writeFile, listFiles } from "@symbiosis-lab/moss-api";
+import { isMattersUrl, articleUrl } from "./domain";
 
 // ============================================================================
 // Exported Functions for Folder Detection
@@ -103,7 +104,7 @@ export async function detectArticleFolder(): Promise<string | null> {
           parsed?.frontmatter?.syndicated &&
           Array.isArray(parsed.frontmatter.syndicated) &&
           parsed.frontmatter.syndicated.some((url: string) =>
-            url.includes("matters.town")
+            isMattersUrl(url)
           )
         ) {
           return topFolder;
@@ -244,7 +245,7 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
         ) {
           // Find Matters URL in syndicated array
           const mattersUrl = parsed.frontmatter.syndicated.find(
-            (url: string) => typeof url === "string" && url.includes("matters.town")
+            (url: string) => typeof url === "string" && isMattersUrl(url)
           );
 
           if (mattersUrl) {
@@ -481,7 +482,7 @@ export async function syncToLocalFiles(
 
     try {
       const articleSlug = article.slug || slugify(article.title);
-      const mattersUrl = `https://matters.town/@${userName}/${article.slug}-${article.shortHash}`;
+      const mattersUrl = articleUrl(userName, article.slug, article.shortHash);
 
       // Determine file location based on mode and collection membership
       // All articles live under the article/ folder

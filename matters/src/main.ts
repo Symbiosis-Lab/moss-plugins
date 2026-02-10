@@ -567,10 +567,11 @@ async function syndicateArticle(
 
   const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
-  let content = article.content;
+  const { content: articleContent, isHtml } = getArticleContent(article);
+  let content = articleContent;
 
   if (options.addCanonicalLink) {
-    content = addCanonicalLinkToContent(content, canonicalUrl);
+    content = addCanonicalLinkToContent(content, canonicalUrl, isHtml);
   }
 
   // Step 1: Create draft via API
@@ -698,9 +699,28 @@ async function updateFrontmatterSyndicated(
 }
 
 /**
+ * Get the best content from an article for syndication.
+ * Prefers rendered HTML (for platforms like Matters that expect HTML),
+ * falls back to markdown content.
+ */
+export function getArticleContent(article: ArticleInfo): { content: string; isHtml: boolean } {
+  if (article.html_content) {
+    return { content: article.html_content, isHtml: true };
+  }
+  return { content: article.content, isHtml: false };
+}
+
+/**
  * Add canonical link to article content
  */
-function addCanonicalLinkToContent(content: string, canonicalUrl: string): string {
+export function addCanonicalLinkToContent(
+  content: string,
+  canonicalUrl: string,
+  isHtml: boolean = false
+): string {
+  if (isHtml) {
+    return content + `<hr><p><em>Originally published at <a href="${canonicalUrl}">${canonicalUrl}</a></em></p>`;
+  }
   const canonicalNotice = `\n\n---\n\n*Originally published at [${canonicalUrl}](${canonicalUrl})*\n`;
   return content + canonicalNotice;
 }

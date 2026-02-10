@@ -1,5 +1,5 @@
 {
-  "name": "email-newsletter",
+  "name": "email",
   "version": "1.0.0",
   "description": "Syndicate articles to email subscribers via Buttondown",
   "main": "dist/main.bundle.js",

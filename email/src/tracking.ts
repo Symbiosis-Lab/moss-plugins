@@ -2,7 +2,7 @@
  * Syndication tracking module
  *
  * Tracks which articles have been syndicated to avoid duplicate emails.
- * Data is stored in .moss/plugins/email-newsletter/syndicated.json
+ * Data is stored in .moss/plugins/email/syndicated.json
  */
 
 import {

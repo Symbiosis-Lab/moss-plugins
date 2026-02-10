@@ -16,4 +16,8 @@ flags:
     paths:
       - matters/
     carryforward: true
+  email:
+    paths:
+      - email/
+    carryforward: true
   # Add more plugins as they're added to the repo

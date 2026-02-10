@@ -1,0 +1,397 @@
+/* ==========================================================================
+   Moss Comments Plugin - Styles
+   Matches the moss site design: warm paper tones, system font stack,
+   typography-first minimal aesthetic.
+
+   Uses the CSS custom properties from moss default.css:
+     --moss-text-primary, --moss-text-secondary, --moss-text-muted
+     --moss-background, --moss-background-alt
+     --moss-accent, --moss-accent-hover, --moss-accent-light
+     --moss-border-light, --moss-border-medium
+     --moss-font-base, --moss-font-sm, --moss-font-lg
+     --moss-space-xs, --moss-space-sm, --moss-space-md, --moss-space-lg, --moss-space-xl
+     --moss-content-width
+   ========================================================================== */
+
+/* ==========================================================================
+   1. Comment Section Wrapper
+   ========================================================================== */
+
+.moss-comments {
+  max-width: var(--moss-content-width, 65ch);
+  margin-top: var(--moss-space-xl, 3rem);
+  padding-top: var(--moss-space-lg, 2rem);
+  border-top: 1px solid var(--moss-border-light, #e6e2db);
+}
+
+.moss-comments-heading {
+  font-size: var(--moss-font-lg, 1.25rem);
+  font-weight: 480;
+  color: var(--moss-text-primary, #2c2825);
+  margin: 0 0 var(--moss-space-lg, 2rem) 0;
+  line-height: 1.3;
+}
+
+/* ==========================================================================
+   2. Comment List
+   ========================================================================== */
+
+.comment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--moss-space-xl, 3rem) 0;
+}
+
+.comment-item {
+  display: flex;
+  flex-direction: column;
+  padding: var(--moss-space-md, 1.5rem) 0;
+  border-bottom: 1px solid var(--moss-border-light, #e6e2db);
+}
+
+.comment-item:first-child {
+  padding-top: 0;
+}
+
+.comment-item:last-child {
+  border-bottom: none;
+}
+
+/* Comment header: avatar + meta in a row */
+.comment-header {
+  display: flex;
+  align-items: center;
+  gap: var(--moss-space-sm, 1rem);
+  margin-bottom: var(--moss-space-xs, 0.5rem);
+}
+
+/* Avatar */
+.comment-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--moss-background-alt, #f4f1ec);
+}
+
+.comment-avatar--default {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--moss-background-alt, #f4f1ec);
+  border: 1px solid var(--moss-border-light, #e6e2db);
+}
+
+/* Meta: author name, date, source badge */
+.comment-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--moss-space-xs, 0.5rem);
+}
+
+/* Author */
+.comment-author-name {
+  font-weight: 480;
+  font-size: var(--moss-font-sm, 1rem);
+  color: var(--moss-text-primary, #2c2825);
+  text-decoration: none;
+}
+
+a.comment-author-name:hover {
+  color: var(--moss-accent, #2d5a2d);
+}
+
+/* Date */
+.comment-date {
+  font-size: 0.875rem;
+  color: var(--moss-text-muted, #8a8580);
+}
+
+/* Source badge (e.g. "matters", "waline") */
+.comment-source {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  padding: 0.2em 0.5em;
+  border-radius: 9999px;
+  background: var(--moss-background-alt, #f4f1ec);
+  color: var(--moss-text-secondary, #5d5853);
+  border: 1px solid var(--moss-border-light, #e6e2db);
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* Comment body */
+.comment-body {
+  font-size: var(--moss-font-base, 1.125rem);
+  line-height: 1.7;
+  color: var(--moss-text-primary, #2c2825);
+}
+
+.comment-body p {
+  margin: 0 0 var(--moss-space-sm, 1rem) 0;
+}
+
+.comment-body p:last-child {
+  margin-bottom: 0;
+}
+
+.comment-body a {
+  color: var(--moss-text-primary, #2c2825);
+  text-decoration: underline;
+}
+
+.comment-body a:hover {
+  color: var(--moss-accent, #2d5a2d);
+}
+
+/* Nested replies */
+.comment-replies {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  margin-left: calc(36px + var(--moss-space-sm, 1rem));
+}
+
+.comment-replies .comment-item {
+  padding: var(--moss-space-sm, 1rem) 0;
+}
+
+.comment-replies .comment-item:first-child {
+  padding-top: var(--moss-space-sm, 1rem);
+}
+
+/* New comment highlight */
+.comment-item--new {
+  animation: comment-fade-in 0.3s ease-out;
+}
+
+@keyframes comment-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Empty state */
+.comment-empty {
+  color: var(--moss-text-muted, #8a8580);
+  font-size: var(--moss-font-sm, 1rem);
+  font-style: italic;
+  padding: var(--moss-space-md, 1.5rem) 0;
+}
+
+/* ==========================================================================
+   3. Comment Form
+   ========================================================================== */
+
+.comment-form {
+  max-width: var(--moss-content-width, 65ch);
+}
+
+.comment-form-field {
+  margin-bottom: var(--moss-space-sm, 1rem);
+}
+
+.comment-form-field label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 480;
+  color: var(--moss-text-secondary, #5d5853);
+  margin-bottom: 0.25rem;
+}
+
+.comment-form textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  padding: var(--moss-space-sm, 1rem);
+  border: 1px solid var(--moss-border-medium, #d1cdc4);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--moss-font-base, 1.125rem);
+  line-height: 1.7;
+  color: var(--moss-text-primary, #2c2825);
+  background: var(--moss-background, #faf8f5);
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.comment-form textarea:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+  border-color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-form textarea::placeholder {
+  color: var(--moss-text-muted, #8a8580);
+}
+
+/* Row layout for name, email, website */
+.comment-form-row {
+  display: flex;
+  gap: var(--moss-space-sm, 1rem);
+}
+
+.comment-form-row .comment-form-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-form input[type="text"],
+.comment-form input[type="email"],
+.comment-form input[type="url"] {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--moss-border-medium, #d1cdc4);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--moss-text-primary, #2c2825);
+  background: var(--moss-background, #faf8f5);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.comment-form input[type="text"]:focus,
+.comment-form input[type="email"]:focus,
+.comment-form input[type="url"]:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+  border-color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-form input::placeholder {
+  color: var(--moss-text-muted, #8a8580);
+}
+
+/* Submit button */
+.comment-form-submit {
+  display: inline-block;
+  margin-top: var(--moss-space-sm, 1rem);
+  padding: 0.5rem 1.25rem;
+  background: var(--moss-accent, #2d5a2d);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.comment-form-submit:hover {
+  background: var(--moss-accent-hover, #1e3d1e);
+}
+
+.comment-form-submit:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+}
+
+.comment-form-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Status messages */
+.comment-form-status {
+  margin-top: var(--moss-space-sm, 1rem);
+  font-size: 0.875rem;
+  min-height: 1.25em;
+}
+
+.comment-form-status:empty {
+  display: none;
+}
+
+.comment-form-status--error {
+  padding: var(--moss-space-xs, 0.5rem) var(--moss-space-sm, 1rem);
+  color: #a83232;
+  background: rgba(168, 50, 50, 0.08);
+  border: 1px solid rgba(168, 50, 50, 0.2);
+  border-radius: 4px;
+}
+
+.comment-form-status--success {
+  padding: var(--moss-space-xs, 0.5rem) var(--moss-space-sm, 1rem);
+  color: var(--moss-accent, #2d5a2d);
+  background: var(--moss-accent-light, rgba(45, 90, 45, 0.15));
+  border: 1px solid rgba(45, 90, 45, 0.25);
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   4. Dark Mode (system preference)
+   ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .comment-source {
+    background: var(--moss-background-alt, #242018);
+    border-color: var(--moss-border-light, #3a362f);
+    color: var(--moss-text-secondary, #b8b5b0);
+  }
+
+  :root:not([data-theme="light"]) .comment-form-status--error {
+    color: #e08080;
+    background: rgba(224, 128, 128, 0.1);
+    border-color: rgba(224, 128, 128, 0.2);
+  }
+
+  :root:not([data-theme="light"]) .comment-avatar,
+  :root:not([data-theme="light"]) .comment-avatar--default {
+    background: var(--moss-background-alt, #242018);
+  }
+}
+
+/* Dark mode (explicit toggle) */
+[data-theme="dark"] .comment-source {
+  background: var(--moss-background-alt, #242018);
+  border-color: var(--moss-border-light, #3a362f);
+  color: var(--moss-text-secondary, #b8b5b0);
+}
+
+[data-theme="dark"] .comment-form-status--error {
+  color: #e08080;
+  background: rgba(224, 128, 128, 0.1);
+  border-color: rgba(224, 128, 128, 0.2);
+}
+
+[data-theme="dark"] .comment-avatar,
+[data-theme="dark"] .comment-avatar--default {
+  background: var(--moss-background-alt, #242018);
+}
+
+/* ==========================================================================
+   5. Responsive - Mobile
+   ========================================================================== */
+
+@media (max-width: 48rem) {
+  .comment-form-row {
+    flex-direction: column;
+    gap: var(--moss-space-xs, 0.5rem);
+  }
+
+  .comment-replies {
+    margin-left: var(--moss-space-md, 1.5rem);
+  }
+
+  .comment-header {
+    gap: var(--moss-space-xs, 0.5rem);
+  }
+
+  .comment-avatar,
+  .comment-avatar--default {
+    width: 28px;
+    height: 28px;
+  }
+
+  .comment-replies {
+    margin-left: calc(28px + var(--moss-space-xs, 0.5rem));
+  }
+}

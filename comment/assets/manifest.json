@@ -1,0 +1,16 @@
+{
+  "name": "comment",
+  "version": "0.1.0",
+  "description": "Comment section with custom UI -- renders stored + accepts new comments",
+  "entry": "main.bundle.js",
+  "capabilities": ["enhance"],
+  "icon": "icon.svg",
+  "config": {
+    "provider": "waline",
+    "server_url": ""
+  },
+  "config_schema": {
+    "provider": "string",
+    "server_url": "string"
+  }
+}

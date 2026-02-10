@@ -9,7 +9,7 @@
  * The file stores a MattersSocialData object with:
  * - schemaVersion: "1.0.0" - Version for future migrations
  * - updatedAt: ISO timestamp of last update
- * - articles: Map of article shortHash to ArticleSocialData
+ * - articles: Map of source .md path (project-relative) to ArticleSocialData
  *
  * Each ArticleSocialData contains:
  * - comments: Array of MattersComment
@@ -191,7 +191,7 @@ function mergeAppreciations(
  * Uses upsert semantics: adds new items, updates existing, never removes.
  *
  * @param data - Existing social data structure (will be mutated)
- * @param shortHash - Article identifier
+ * @param articleKey - Article identifier (source .md path, project-relative)
  * @param comments - New comments to merge
  * @param donations - New donations to merge
  * @param appreciations - New appreciations to merge
@@ -199,16 +199,16 @@ function mergeAppreciations(
  */
 export function mergeSocialData(
   data: MattersSocialData,
-  shortHash: string,
+  articleKey: string,
   comments: MattersComment[],
   donations: MattersDonation[],
   appreciations: MattersAppreciation[]
 ): MattersSocialData {
   // Get or create article entry
-  const existing = data.articles[shortHash] || createEmptyArticleSocialData();
+  const existing = data.articles[articleKey] || createEmptyArticleSocialData();
 
   // Merge each type
-  data.articles[shortHash] = {
+  data.articles[articleKey] = {
     comments: mergeComments(existing.comments, comments),
     donations: mergeDonations(existing.donations, donations),
     appreciations: mergeAppreciations(existing.appreciations, appreciations),
@@ -226,9 +226,9 @@ export function mergeSocialData(
  */
 export function getArticleSocialData(
   data: MattersSocialData,
-  shortHash: string
+  articleKey: string
 ): ArticleSocialData | undefined {
-  return data.articles[shortHash];
+  return data.articles[articleKey];
 }
 
 /**
@@ -236,9 +236,9 @@ export function getArticleSocialData(
  */
 export function getSocialCounts(
   data: MattersSocialData,
-  shortHash: string
+  articleKey: string
 ): { comments: number; donations: number; appreciations: number; totalClaps: number } {
-  const articleData = data.articles[shortHash];
+  const articleData = data.articles[articleKey];
 
   if (!articleData) {
     return { comments: 0, donations: 0, appreciations: 0, totalClaps: 0 };

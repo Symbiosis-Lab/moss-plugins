@@ -2,7 +2,7 @@
 
 The comment plugin has two layers:
 
-1. **Static comments** (no server needed) — renders existing comments from `.moss/social/matters.json` as HTML at build time
+1. **Static comments** (no server needed) — renders existing comments from JSON files in `.moss/social/` as HTML at build time
 2. **Live comments** (requires a Waline server) — visitors can submit new comments via a form
 
 Static comments work out of the box. This guide covers setting up the Waline server for live comments.
@@ -25,9 +25,9 @@ docker run -d \
 
 Then set `server_url` to `http://localhost:8360`.
 
-### Option B: LeanCloud (free, recommended for production)
+### Option B: LeanCloud + Vercel (free, recommended for production)
 
-LeanCloud's free tier gives 30K API requests/day with no ID verification.
+LeanCloud provides the database backend; Vercel hosts the Waline server. LeanCloud's free tier gives 30K API requests/day with no ID verification.
 
 1. **Create a LeanCloud account** at https://console.leancloud.app/
 

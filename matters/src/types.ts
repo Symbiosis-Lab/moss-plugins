@@ -286,7 +286,7 @@ export interface ArticleSocialData {
  * Schema:
  * - schemaVersion: Version string for future migrations (currently "1.0.0")
  * - updatedAt: ISO timestamp of last update
- * - articles: Map of article shortHash to social data
+ * - articles: Map of source .md path (project-relative) to social data
  *
  * Merge strategy: Upsert by ID (add new, update existing, never delete)
  */
@@ -295,7 +295,7 @@ export interface MattersSocialData {
   schemaVersion: string;
   /** ISO timestamp of last update */
   updatedAt: string;
-  /** Social data indexed by article shortHash */
+  /** Social data keyed by source .md path (project-relative) */
   articles: Record<string, ArticleSocialData>;
 }
 

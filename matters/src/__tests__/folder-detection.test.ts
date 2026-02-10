@@ -29,9 +29,9 @@ describe("Folder Detection", () => {
   });
 
   describe("getDefaultFolderNames", () => {
-    it("returns 'posts' as the default article folder name", () => {
+    it("returns 'articles' as the default article folder name", () => {
       const folders = getDefaultFolderNames();
-      expect(folders.article).toBe("posts");
+      expect(folders.article).toBe("articles");
     });
 
     it("returns '_drafts' as the default drafts folder name", () => {
@@ -42,7 +42,7 @@ describe("Folder Detection", () => {
     it("does not vary by language - always returns English names", () => {
       // The function should not take language parameter
       const folders = getDefaultFolderNames();
-      expect(folders.article).toBe("posts");
+      expect(folders.article).toBe("articles");
       expect(folders.drafts).toBe("_drafts");
     });
   });
@@ -194,10 +194,10 @@ Content`
       expect(folder).toBe("文章");
     });
 
-    it("falls back to default 'posts' when nothing detected", async () => {
+    it("falls back to default 'articles' when nothing detected", async () => {
       const config = {}; // No articleFolder set, no existing content
       const folder = await getArticleFolderName(config);
-      expect(folder).toBe("posts");
+      expect(folder).toBe("articles");
     });
 
     it("prefers explicit config over auto-detection", async () => {

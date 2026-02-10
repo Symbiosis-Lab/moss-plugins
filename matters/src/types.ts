@@ -69,6 +69,15 @@ export interface MattersCollection {
   articles: MattersCollectionArticle[];
 }
 
+export interface MattersPinnedWork {
+  id: string;
+  type: "article" | "collection";
+  title: string;
+  slug?: string;       // articles only
+  shortHash?: string;   // articles only
+  cover?: string;
+}
+
 export interface MattersUserProfile {
   userName: string;
   displayName: string;
@@ -76,6 +85,7 @@ export interface MattersUserProfile {
   avatar?: string;
   profileCover?: string;
   language?: string; // e.g., "zh_hans", "zh_hant", "en"
+  pinnedWorks?: MattersPinnedWork[];  // optional for backwards compat
 }
 
 // ============================================================================
@@ -187,6 +197,15 @@ export interface ViewerProfileResponse {
     settings: {
       language?: string;
     };
+    pinnedWorks?: Array<{
+      id: string;
+      pinned: boolean;
+      title: string;
+      cover?: string;
+      __typename?: string;
+      slug?: string;
+      shortHash?: string;
+    }>;
   };
 }
 

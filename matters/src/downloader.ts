@@ -16,6 +16,7 @@ import {
 } from "./utils";
 import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
+import { isInternalMattersLink as isDomainInternalLink } from "./domain";
 import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
@@ -504,8 +505,7 @@ export async function downloadMediaAndUpdate(): Promise<{
  * Check if a URL points to current user's Matters content
  */
 function isInternalMattersLink(url: string, userName: string): boolean {
-  const pattern = new RegExp(`^https?://matters\\.town/@${userName}/`);
-  return pattern.test(url);
+  return isDomainInternalLink(url, userName);
 }
 
 /**

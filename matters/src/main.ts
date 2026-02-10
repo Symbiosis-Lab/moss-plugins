@@ -35,6 +35,13 @@ import { getConfig, saveConfig } from "./config";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
 import { readFile, writeFile, showToast } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
+import {
+  initializeDomain,
+  loginUrl,
+  draftUrl,
+  articleUrl,
+  isMattersUrl,
+} from "./domain";
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -130,7 +137,7 @@ async function promptLogin(): Promise<boolean> {
   console.log("🔐 Opening Matters.town login page...");
 
   try {
-    const browser = await openBrowser("https://matters.town/login");
+    const browser = await openBrowser(loginUrl());
 
     console.log("🌐 Browser opened. Please log in to Matters.town.");
     console.log("⏳ Will check for authentication after 20 seconds...");
@@ -177,6 +184,7 @@ async function promptLogin(): Promise<boolean> {
 export async function process(context: BeforeBuildContext): Promise<HookResult> {
   setCurrentHookName("process");
   clearTokenCache();
+  await initializeDomain();
 
   console.log("🔐 Matters: process hook started");
 
@@ -418,6 +426,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 export async function syndicate(context: AfterDeployContext): Promise<HookResult> {
   setCurrentHookName("syndicate");
   clearTokenCache();
+  await initializeDomain();
 
   console.log("📡 Matters: Starting syndication...");
 
@@ -435,7 +444,7 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
     // Filter to only articles that don't already have a Matters syndication URL
     const articlesToSyndicate = articles.filter((article) => {
       const syndicated = (article.frontmatter.syndicated as string[] | undefined) || [];
-      return !syndicated.some((url: string) => url.includes("matters.town"));
+      return !syndicated.some((url: string) => isMattersUrl(url));
     });
 
     if (articlesToSyndicate.length === 0) {
@@ -577,16 +586,16 @@ async function syndicateArticle(
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
   // Step 2: Open draft in browser for user review
-  const draftUrl = `https://matters.town/me/drafts/${draft.id}`;
-  console.log(`    🌐 Opening draft for review: ${draftUrl}`);
-  await openBrowser(draftUrl);
+  const draftPageUrl = draftUrl(draft.id);
+  console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
+  await openBrowser(draftPageUrl);
 
   // Step 3: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
 
   if (publishedArticle) {
     // Step 4: Article was published - update local frontmatter
-    const publishedUrl = `https://matters.town/@${userName}/${publishedArticle.slug}-${publishedArticle.shortHash}`;
+    const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
     // Show success toast

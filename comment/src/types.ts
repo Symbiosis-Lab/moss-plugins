@@ -9,17 +9,10 @@
 export interface NormalizedComment {
   id: string;
   source: string; // "matters", "nostr", "webmention", "waline"
-  author: { name: string; avatar?: string; url?: string };
+  author: { name: string; url?: string };
   content_html: string;
   date: string; // ISO 8601
   replyToId?: string;
-}
-
-export interface CommentProvider {
-  name: string;
-  getFormAction(serverUrl: string): string;
-  buildSubmitScript(serverUrl: string, pagePath: string): string;
-  buildFetchScript(serverUrl: string, pagePath: string): string;
 }
 
 // ============================================================================

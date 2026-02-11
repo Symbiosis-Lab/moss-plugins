@@ -4,7 +4,7 @@
  * Main entry point. Provides an enhance hook that:
  * 1. Reads comments from all JSON files in .moss/social/
  * 2. Reads .moss/article-map.json for source->output path mapping
- * 3. Renders a comment section with existing comments + submission form
+ * 3. Renders a minimal comment section (author, date, text)
  * 4. Injects the section before </article> in each page
  * 5. Copies CSS to the output directory
  */
@@ -13,23 +13,10 @@ import { readFile, writeFile, readPluginFile, log } from "@symbiosis-lab/moss-ap
 import { loadAllComments, buildSourceToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
-import { getProvider } from "./providers";
+import { getSubmitScriptBuilder } from "./providers";
 import type { EnhanceContext, HookResult, NormalizedComment } from "./types";
 
 const COMMENTS_CSS_FILENAME = "moss-comments.css";
-
-/**
- * Convert an HTML file path to a pretty URL for comment lookup.
- */
-function toPrettyUrl(htmlPath: string): string {
-  if (htmlPath.endsWith("/index.html")) {
-    return htmlPath.slice(0, -"index.html".length); // "posts/foo/index.html" -> "posts/foo/"
-  }
-  if (htmlPath.endsWith(".html")) {
-    return htmlPath.slice(0, -".html".length); // "posts/foo.html" -> "posts/foo"
-  }
-  return htmlPath;
-}
 
 /**
  * Derive the project-relative output directory prefix from context.
@@ -59,9 +46,9 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   const config = ctx.config || {};
   const providerName = (config.provider as string) || "waline";
   const serverUrl = (config.server_url as string) || "";
-  const provider = getProvider(providerName);
+  const buildScript = getSubmitScriptBuilder(providerName);
 
-  if (provider && serverUrl) {
+  if (buildScript && serverUrl) {
     log(`[info] Comment: Using provider "${providerName}" at ${serverUrl}`);
   } else if (!serverUrl) {
     log("[info] Comment: No server_url configured, static comments only");
@@ -88,22 +75,24 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   // 4. Derive output prefix for project-relative paths
   const outputPrefix = getOutputPrefix(ctx);
 
-  // 5. Collect all article URL paths from the article map for HTML injection
-  //    (includes pages with AND without comments — all get a comment section)
+  // 5. Collect pages that need injection:
+  //    - Pages with comments always get a section
+  //    - Pages without comments only get a section if there's a form (serverUrl set)
   const allUrlPaths: string[] = [];
-  for (const v of sourceToUrl.values()) {
-    if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
+  if (serverUrl) {
+    // All articles get comment sections (with form)
+    for (const v of sourceToUrl.values()) {
+      if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
+    }
   }
-  // Also add any pages that have comments but weren't in the article map
+  // Always include pages that have comments
   for (const urlPath of commentsByPage.keys()) {
     if (!allUrlPaths.includes(urlPath)) allUrlPaths.push(urlPath);
   }
+
   let injectedCount = 0;
 
   for (const urlPath of allUrlPaths) {
-    // Construct the project-relative HTML file path
-    // url_path like "posts/foo/" -> ".moss/site/posts/foo/index.html"
-    // url_path like "posts/foo"  -> ".moss/site/posts/foo.html" or ".moss/site/posts/foo/index.html"
     const htmlRelPath = urlPath.endsWith("/")
       ? `${outputPrefix}/${urlPath}index.html`
       : `${outputPrefix}/${urlPath}/index.html`;
@@ -115,8 +104,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         htmlRelPath,
         urlPath,
         comments,
-        provider,
-        serverUrl
+        serverUrl,
+        buildScript
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -137,15 +126,13 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
 
 /**
  * Process a single HTML file: read it, inject comments, write it back.
- * htmlRelPath is project-relative (e.g., ".moss/site/posts/foo/index.html").
- * urlPath is for display/lookup (e.g., "posts/foo/").
  */
 async function processHtmlFile(
   htmlRelPath: string,
   urlPath: string,
   comments: NormalizedComment[],
-  provider: ReturnType<typeof getProvider>,
-  serverUrl: string
+  serverUrl: string,
+  buildScript: ((serverUrl: string, pagePath: string) => string) | null
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
@@ -165,13 +152,21 @@ async function processHtmlFile(
       return false;
     }
 
+    // Build the submit script if we have a server
+    const submitScript = (buildScript && serverUrl)
+      ? buildScript(serverUrl, "/" + urlPath)
+      : "";
+
     // Render the comment section
     const commentHtml = renderCommentSection(
       comments,
       urlPath,
-      provider,
-      serverUrl
+      serverUrl,
+      submitScript
     );
+
+    // renderCommentSection returns "" if nothing to render
+    if (!commentHtml) return false;
 
     // Inject before </article>
     const injected = injectCommentSection(html, commentHtml);

@@ -84,6 +84,7 @@ export async function buildSourceToUrlMap(): Promise<Map<string, string>> {
  * Normalize generic social comments to NormalizedComment[].
  *
  * Filters out inactive comments (only includes if state is absent or "active").
+ * Author URL is derived from userName for Matters-sourced comments.
  */
 function normalizeComments(
   comments: GenericSocialComment[] | undefined,
@@ -103,8 +104,9 @@ function normalizeComments(
             c.author.name ||
             c.author.userName ||
             "Anonymous",
-          avatar: c.author.avatar || undefined,
-          url: undefined,
+          url: (source === "matters" && c.author.userName)
+            ? `https://matters.town/@${c.author.userName}`
+            : undefined,
         },
         content_html: c.content,
         date: c.createdAt,

@@ -1,23 +1,21 @@
 /**
  * Provider registry
  *
- * Adapter pattern for different comment backends.
- * Currently supports Waline; other providers can be added here.
+ * Currently only supports Waline. Returns the submit script builder
+ * for the named provider, or null if not found.
  */
 
-import type { CommentProvider } from "../types";
-import { walineProvider } from "./waline";
+import { buildWalineSubmitScript } from "./waline";
 
-const providers: Record<string, CommentProvider> = {
-  waline: walineProvider,
+type SubmitScriptBuilder = (serverUrl: string, pagePath: string) => string;
+
+const providers: Record<string, SubmitScriptBuilder> = {
+  waline: buildWalineSubmitScript,
 };
 
 /**
- * Get a comment provider by name.
- *
- * @param name - Provider name (e.g., "waline")
- * @returns The provider, or null if not found
+ * Get a submit script builder by provider name.
  */
-export function getProvider(name: string): CommentProvider | null {
+export function getSubmitScriptBuilder(name: string): SubmitScriptBuilder | null {
   return providers[name] || null;
 }

@@ -1,13 +1,12 @@
 /**
  * Comment section HTML renderer
  *
- * Generates static HTML for the comment section including:
- * - Existing comments with threading
- * - Comment submission form
- * - Inline CSS
+ * Generates static HTML for the comment section:
+ * - Existing comments with threading (author name, date, text)
+ * - Optional comment submission form (textarea + submit)
  */
 
-import type { NormalizedComment, CommentProvider } from "./types";
+import type { NormalizedComment } from "./types";
 
 // ============================================================================
 // HTML Sanitization
@@ -26,17 +25,26 @@ export function escapeHtml(text: string): string {
 }
 
 /**
- * Sanitize HTML content: strip <script>, <iframe>, and on* event attributes.
+ * Sanitize HTML content: strip dangerous tags and attributes.
  * Preserves safe HTML tags like <p>, <a>, <strong>, <em>, etc.
  */
 export function sanitizeHtml(html: string): string {
   return html
+    // Strip dangerous tags (with content)
     .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<iframe[\s\S]*?\/>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe[\s\S]*?(<\/iframe>|\/>)/gi, "")
+    .replace(/<object[\s\S]*?(<\/object>|\/>)/gi, "")
+    .replace(/<embed[\s\S]*?(\/>|>)/gi, "")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+    .replace(/<math[\s\S]*?<\/math>/gi, "")
+    // Strip event handler attributes (on*)
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/\son\w+\s*=\s*[^\s>]*/gi, "");
+    .replace(/\son\w+\s*=\s*[^\s>]*/gi, "")
+    // Strip javascript: URLs in href/src attributes
+    .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1=""')
+    .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1=''");
 }
 
 // ============================================================================
@@ -47,42 +55,32 @@ export function sanitizeHtml(html: string): string {
  * Format an ISO date string for display.
  */
 function formatDate(isoDate: string): string {
-  try {
-    const d = new Date(isoDate);
-    return d.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return isoDate;
-  }
+  const d = new Date(isoDate);
+  if (isNaN(d.getTime())) return isoDate;
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 /**
  * Render a single comment as an <li> element.
+ * Author name is a clickable link when URL is available.
  */
 function renderComment(comment: NormalizedComment): string {
-  const avatarHtml = comment.author.avatar
-    ? `<img class="comment-avatar" src="${escapeHtml(comment.author.avatar)}" alt="" width="40" height="40" loading="lazy">`
-    : `<span class="comment-avatar comment-avatar--default"></span>`;
-
   const authorName = escapeHtml(comment.author.name);
-  const authorLink = comment.author.url
-    ? `<a href="${escapeHtml(comment.author.url)}" class="comment-author-name" rel="nofollow noopener" target="_blank">${authorName}</a>`
-    : `<span class="comment-author-name">${authorName}</span>`;
+  const authorHtml = comment.author.url
+    ? `<a href="${escapeHtml(comment.author.url)}" class="comment-author" rel="nofollow noopener" target="_blank">${authorName}</a>`
+    : `<span class="comment-author">${authorName}</span>`;
 
   const dateStr = formatDate(comment.date);
   const contentHtml = sanitizeHtml(comment.content_html);
 
-  return `<li class="comment-item" id="comment-${escapeHtml(comment.id)}" data-comment-id="${escapeHtml(comment.id)}">
+  return `<li class="comment-item" id="comment-${escapeHtml(comment.id)}">
   <div class="comment-header">
-    ${avatarHtml}
-    <div class="comment-meta">
-      ${authorLink}
-      <time class="comment-date" datetime="${escapeHtml(comment.date)}">${dateStr}</time>
-      <span class="comment-source">${escapeHtml(comment.source)}</span>
-    </div>
+    ${authorHtml}
+    <time class="comment-date" datetime="${escapeHtml(comment.date)}">${dateStr}</time>
   </div>
   <div class="comment-body">${contentHtml}</div>`;
 }
@@ -143,29 +141,14 @@ function renderCommentList(comments: NormalizedComment[]): string {
 // ============================================================================
 
 /**
- * Render the comment submission form.
+ * Render the minimal comment form: just a textarea and submit button.
+ * No label (placeholder is enough), no name/email/website fields.
+ * Textarea has rows="2" and auto-grows via inline JS.
  */
 function renderCommentForm(pagePath: string): string {
   return `<form class="comment-form" id="moss-comment-form">
   <input type="hidden" name="url" value="/${escapeHtml(pagePath)}">
-  <div class="comment-form-field">
-    <label for="moss-comment-text">Comment</label>
-    <textarea id="moss-comment-text" name="comment" required rows="4" placeholder="Write a comment..."></textarea>
-  </div>
-  <div class="comment-form-row">
-    <div class="comment-form-field">
-      <label for="moss-comment-nick">Name</label>
-      <input type="text" id="moss-comment-nick" name="nick" placeholder="Name (optional)">
-    </div>
-    <div class="comment-form-field">
-      <label for="moss-comment-mail">Email</label>
-      <input type="email" id="moss-comment-mail" name="mail" placeholder="Email (optional)">
-    </div>
-    <div class="comment-form-field">
-      <label for="moss-comment-link">Website</label>
-      <input type="url" id="moss-comment-link" name="link" placeholder="https:// (optional)">
-    </div>
-  </div>
+  <textarea id="moss-comment-text" name="comment" required rows="2" placeholder="Write a comment..."></textarea>
   <button type="submit" class="comment-form-submit">Submit</button>
   <div class="comment-form-status" id="moss-comment-status"></div>
 </form>`;
@@ -178,39 +161,31 @@ function renderCommentForm(pagePath: string): string {
 /**
  * Render the complete comment section HTML.
  *
- * @param comments - Normalized comments for this page
- * @param pagePath - Relative path of the page (e.g., "posts/foo.html")
- * @param provider - Comment provider for form submission
- * @param serverUrl - Server URL for the provider
- * @returns Complete comment section HTML string
+ * Returns empty string if no comments and no form (nothing to render).
  */
 export function renderCommentSection(
   comments: NormalizedComment[],
   pagePath: string,
-  provider: CommentProvider | null,
-  serverUrl: string
+  serverUrl: string,
+  submitScript: string
 ): string {
-  const count = comments.length;
-  const heading = count > 0
-    ? `Comments (${count})`
-    : "Comments";
+  const hasComments = comments.length > 0;
+  const hasForm = !!serverUrl;
 
-  const commentListHtml = count > 0
+  if (!hasComments && !hasForm) return "";
+
+  const commentListHtml = hasComments
     ? `<ol class="comment-list">${renderCommentList(comments)}</ol>`
-    : `<p class="comment-empty">No comments yet.</p>`;
-
-  const formHtml = provider && serverUrl
-    ? renderCommentForm(pagePath)
     : "";
 
-  const clientScript = provider && serverUrl
-    ? `<script>${provider.buildSubmitScript(serverUrl, "/" + pagePath)}</script>`
+  const formHtml = hasForm ? renderCommentForm(pagePath) : "";
+  const scriptHtml = hasForm && submitScript
+    ? `<script>${submitScript}</script>`
     : "";
 
   return `<section class="moss-comments" id="moss-comments">
-  <h3 class="moss-comments-heading">${heading}</h3>
   ${commentListHtml}
   ${formHtml}
-  ${clientScript}
+  ${scriptHtml}
 </section>`;
 }

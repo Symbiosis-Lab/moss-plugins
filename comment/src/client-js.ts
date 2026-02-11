@@ -1,20 +1,19 @@
 /**
  * Client-side JavaScript generator
  *
- * Generates inline vanilla JS for the comment form submission.
- * The generated JS intercepts form submit, POSTs to the Waline API,
- * and dynamically appends new comments on success.
+ * Generates inline vanilla JS for:
+ * 1. Comment form submission (POST to Waline API)
+ * 2. Textarea auto-grow (expands as user types)
  */
 
 /**
  * Generate inline JS for the comment form.
  *
  * @param serverUrl - Waline server URL (e.g., "https://comments.example.com")
- * @param pagePath - Page path for the comment (e.g., "/posts/foo.html")
+ * @param pagePath - Page path for the comment (e.g., "/posts/foo/")
  * @returns JavaScript code string
  */
 export function buildClientScript(serverUrl: string, pagePath: string): string {
-  // We embed serverUrl and pagePath as string literals in the generated JS
   const safeServerUrl = serverUrl.replace(/'/g, "\\'");
   const safePagePath = pagePath.replace(/'/g, "\\'");
 
@@ -22,22 +21,31 @@ export function buildClientScript(serverUrl: string, pagePath: string): string {
   var form = document.getElementById('moss-comment-form');
   if (!form) return;
 
+  var textarea = document.getElementById('moss-comment-text');
   var statusEl = document.getElementById('moss-comment-status');
   var commentList = document.querySelector('.moss-comments .comment-list');
-  var emptyMsg = document.querySelector('.moss-comments .comment-empty');
+
+  // Auto-grow textarea
+  if (textarea) {
+    function autoGrow() {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    }
+    textarea.addEventListener('input', autoGrow);
+  }
 
   form.addEventListener('submit', function(e) {
     e.preventDefault();
     var btn = form.querySelector('.comment-form-submit');
     btn.disabled = true;
     btn.textContent = 'Submitting...';
-    if (statusEl) statusEl.textContent = '';
+    if (statusEl) { statusEl.textContent = ''; statusEl.className = 'comment-form-status'; }
 
     var body = {
       comment: form.elements['comment'].value,
-      nick: form.elements['nick'].value || 'Anonymous',
-      mail: form.elements['mail'].value || '',
-      link: form.elements['link'].value || '',
+      nick: 'Anonymous',
+      mail: '',
+      link: '',
       url: '${safePagePath}',
       ua: navigator.userAgent
     };
@@ -60,43 +68,31 @@ export function buildClientScript(serverUrl: string, pagePath: string): string {
         return;
       }
 
-      // Success: append new comment to the list
       if (statusEl) {
-        statusEl.textContent = 'Comment submitted! It may need approval.';
+        statusEl.textContent = 'Comment submitted!';
         statusEl.className = 'comment-form-status comment-form-status--success';
       }
 
-      if (emptyMsg) emptyMsg.remove();
       if (!commentList) {
         commentList = document.createElement('ol');
         commentList.className = 'comment-list';
-        var heading = document.querySelector('.moss-comments-heading');
-        if (heading) heading.after(commentList);
+        form.before(commentList);
       }
 
       var li = document.createElement('li');
-      li.className = 'comment-item comment-item--new';
-      var nick = body.nick || 'Anonymous';
+      li.className = 'comment-item';
       var now = new Date().toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'});
       li.innerHTML = '<div class="comment-header">'
-        + '<span class="comment-avatar comment-avatar--default"></span>'
-        + '<div class="comment-meta">'
-        + '<span class="comment-author-name">' + nick.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span>'
+        + '<span class="comment-author">Anonymous</span>'
         + '<time class="comment-date">' + now + '</time>'
-        + '</div></div>'
-        + '<div class="comment-body"><p>' + body.comment.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p></div>';
+        + '</div>'
+        + '<div class="comment-body"><p>' + body.comment.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
       commentList.appendChild(li);
 
-      // Update heading count
-      var heading = document.querySelector('.moss-comments-heading');
-      if (heading) {
-        var items = commentList.querySelectorAll('.comment-item');
-        heading.textContent = 'Comments (' + items.length + ')';
-      }
-
       form.elements['comment'].value = '';
+      if (textarea) { textarea.style.height = 'auto'; }
     })
-    .catch(function(err) {
+    .catch(function() {
       btn.disabled = false;
       btn.textContent = 'Submit';
       if (statusEl) {

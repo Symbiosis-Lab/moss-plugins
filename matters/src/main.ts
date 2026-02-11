@@ -370,7 +370,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         try {
           const comments = await fetchArticleComments(article.shortHash);
 
-          mergeSocialData(socialData, article.shortHash, comments, [], []);
+          mergeSocialData(socialData, article.path, comments, [], []);
 
           totalComments += comments.length;
 

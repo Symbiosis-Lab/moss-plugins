@@ -5,7 +5,7 @@
   "main": "dist/main.bundle.js",
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",
-    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=CommentPlugin --external:@symbiosis-lab/moss-api --outfile=dist/main.bundle.js",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=CommentPlugin --outfile=dist/main.bundle.js",
     "clean": "rm -rf dist && mkdir -p dist",
     "copy-assets": "cp assets/* dist/ && cp browser/moss-comments.css dist/"
   },

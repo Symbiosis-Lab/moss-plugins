@@ -49,7 +49,7 @@ function processNode(node: Node): string {
     case "p":
       return `${children.trim()}\n\n`;
     case "br":
-      return "\n";
+      return "\\\n";
     case "hr":
       return "\n---\n\n";
     case "strong":

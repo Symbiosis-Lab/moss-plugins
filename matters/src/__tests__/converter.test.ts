@@ -78,8 +78,13 @@ describe("htmlToMarkdown", () => {
     expect(htmlToMarkdown("<hr>")).toContain("---");
   });
 
-  it("converts line breaks", () => {
-    expect(htmlToMarkdown("line1<br>line2")).toBe("line1\nline2");
+  it("converts <br> to backslash hard line break", () => {
+    expect(htmlToMarkdown("line1<br>line2")).toBe("line1\\\nline2");
+  });
+
+  it("converts multiple <br> tags in a paragraph", () => {
+    const html = "<p>line one<br>line two<br>line three</p>";
+    expect(htmlToMarkdown(html)).toBe("line one\\\nline two\\\nline three\n\n");
   });
 
   it("handles nested elements", () => {

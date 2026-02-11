@@ -80,6 +80,289 @@ describe("syncToLocalFiles", () => {
 });
 
 // ============================================================================
+// Homepage Grid Generation Tests
+// ============================================================================
+
+describe("syncToLocalFiles - homepage grid from pinned works", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should generate :::grid 3 homepage when pinnedWorks has collections", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [
+        { id: "c1", title: "Travel Notes", description: "My travels", articles: [], cover: "https://example.com/cover.jpg" },
+        { id: "c2", title: "Tech Essays", description: "Tech writing", articles: [], cover: undefined },
+      ],
+      "testuser",
+      {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "Hello world",
+        pinnedWorks: [
+          { id: "c1", type: "collection", title: "Travel Notes", cover: "https://example.com/cover.jpg" },
+          { id: "c2", type: "collection", title: "Tech Essays", cover: undefined },
+        ],
+      }
+    );
+
+    expect(result.result.created).toBeGreaterThanOrEqual(1);
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toBeDefined();
+    expect(homepage).toContain(":::grid 3");
+    expect(homepage).toContain("[Travel Notes](/articles/travel-notes/)");
+    expect(homepage).toContain("[Tech Essays](/articles/tech-essays/)");
+    expect(homepage).toContain(":::");
+  });
+
+  it("should generate :::grid 3 homepage with pinned articles", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "My Article", slug: "my-article", shortHash: "abc123",
+          content: "<p>Content</p>", summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [],
+      "testuser",
+      {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "Bio text",
+        pinnedWorks: [
+          { id: "a1", type: "article", title: "My Article", slug: "my-article", shortHash: "abc123" },
+        ],
+      }
+    );
+
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toBeDefined();
+    expect(homepage).toContain(":::grid 3");
+    expect(homepage).toContain("[My Article](/articles/my-article/)");
+  });
+
+  it("should generate :::grid 3 homepage with mixed pinned works", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "Standalone Article", slug: "standalone-article", shortHash: "hash1",
+          content: "<p>Content</p>", summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [
+        { id: "c1", title: "My Collection", description: "Desc", articles: [], cover: undefined },
+      ],
+      "testuser",
+      {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "Bio",
+        pinnedWorks: [
+          { id: "c1", type: "collection", title: "My Collection" },
+          { id: "a1", type: "article", title: "Standalone Article", slug: "standalone-article", shortHash: "hash1" },
+        ],
+      }
+    );
+
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toContain(":::grid 3");
+    expect(homepage).toContain("[My Collection](/articles/my-collection/)");
+    expect(homepage).toContain("[Standalone Article](/articles/standalone-article/)");
+  });
+
+  it("should generate plain homepage when pinnedWorks is empty", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "Just a bio", pinnedWorks: [] }
+    );
+
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toBeDefined();
+    expect(homepage).not.toContain(":::grid");
+    expect(homepage).toContain("Just a bio");
+  });
+
+  it("should still skip homepage when index.md already exists even with pinnedWorks", async () => {
+    ctx.filesystem.setFile(`${ctx.projectPath}/index.md`, "---\ntitle: \"Existing\"\n---\n\nMy custom homepage");
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "Bio",
+        pinnedWorks: [
+          { id: "c1", type: "collection", title: "Pinned Collection" },
+        ],
+      }
+    );
+
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toContain("My custom homepage");
+    expect(homepage).not.toContain(":::grid");
+  });
+
+  it("should link pinned article to its collection folder when in a collection", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "Article In Collection", slug: "article-in-collection", shortHash: "hash1",
+          content: "<p>Content</p>", summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [
+        {
+          id: "c1", title: "My Series", description: "A series",
+          articles: [{ id: "a1", shortHash: "hash1", title: "Article In Collection", slug: "article-in-collection" }],
+          cover: undefined,
+        },
+      ],
+      "testuser",
+      {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "Bio",
+        pinnedWorks: [
+          { id: "a1", type: "article", title: "Article In Collection", slug: "article-in-collection", shortHash: "hash1" },
+        ],
+      }
+    );
+
+    const homepage = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(homepage).toContain(":::grid 3");
+    // Article should link to its collection folder path
+    expect(homepage).toContain("[Article In Collection](/articles/my-series/article-in-collection/)");
+  });
+});
+
+// ============================================================================
+// Folder-mode Collection Order Tests
+// ============================================================================
+
+describe("syncToLocalFiles - folder-mode collection order", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should generate order field with bare slugs in folder mode", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "First Article", slug: "first-article", shortHash: "hash1",
+          content: "<p>First</p>", summary: "First",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+        {
+          id: "a2", title: "Second Article", slug: "second-article", shortHash: "hash2",
+          content: "<p>Second</p>", summary: "Second",
+          createdAt: "2024-01-02T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [{
+        id: "c1",
+        title: "My Collection",
+        description: "Collection desc",
+        cover: undefined,
+        articles: [
+          { id: "a1", shortHash: "hash1", title: "First Article", slug: "first-article" },
+          { id: "a2", shortHash: "hash2", title: "Second Article", slug: "second-article" },
+        ],
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`)?.content;
+    expect(collectionIndex).toBeDefined();
+    expect(collectionIndex).toContain("order:");
+    expect(collectionIndex).toContain("first-article");
+    expect(collectionIndex).toContain("second-article");
+    // In folder mode, order should NOT have full paths
+    expect(collectionIndex).not.toContain("posts/");
+  });
+
+  it("should preserve article ordering from Matters API", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "Third", slug: "third", shortHash: "h3",
+          content: "<p>3</p>", summary: "3", createdAt: "2024-01-03T00:00:00Z", tags: [],
+        },
+        {
+          id: "a2", title: "First", slug: "first", shortHash: "h1",
+          content: "<p>1</p>", summary: "1", createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+        {
+          id: "a3", title: "Second", slug: "second", shortHash: "h2",
+          content: "<p>2</p>", summary: "2", createdAt: "2024-01-02T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [{
+        id: "c1",
+        title: "Ordered Collection",
+        description: "",
+        cover: undefined,
+        articles: [
+          // Matters API returns articles in specific order
+          { id: "a2", shortHash: "h1", title: "First", slug: "first" },
+          { id: "a3", shortHash: "h2", title: "Second", slug: "second" },
+          { id: "a1", shortHash: "h3", title: "Third", slug: "third" },
+        ],
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/ordered-collection/index.md`)?.content;
+    expect(collectionIndex).toBeDefined();
+    // Order should match Matters API order: first, second, third
+    const orderMatch = collectionIndex!.match(/order:\n([\s\S]*?)---/);
+    expect(orderMatch).toBeTruthy();
+    const orderLines = orderMatch![1].trim().split("\n").map((l: string) => l.trim());
+    expect(orderLines[0]).toContain("first");
+    expect(orderLines[1]).toContain("second");
+    expect(orderLines[2]).toContain("third");
+  });
+});
+
+// ============================================================================
 // Integration Tests with Mock Tauri
 // ============================================================================
 
@@ -114,7 +397,7 @@ Test bio`;
       [], // no collections
       "testuser",
       {},
-      { displayName: "Test User", userName: "testuser", description: "Test bio" }
+      { displayName: "Test User", userName: "testuser", description: "Test bio", pinnedWorks: [] }
     );
 
     // Homepage should be skipped, not created
@@ -138,7 +421,7 @@ Old bio`;
       [], // no collections
       "testuser",
       {},
-      { displayName: "New Name", userName: "testuser", description: "New bio" }
+      { displayName: "New Name", userName: "testuser", description: "New bio", pinnedWorks: [] }
     );
 
     // Homepage should be skipped (local file preserved)
@@ -159,7 +442,7 @@ description: "Collection description"
 ---
 
 Collection description`;
-    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-collection/index.md`, existingCollection);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/test-collection/index.md`, existingCollection);
 
     const { syncToLocalFiles } = await import("../sync");
     const result = await syncToLocalFiles(
@@ -174,7 +457,7 @@ Collection description`;
       }],
       "testuser",
       {},
-      { displayName: "Test User", userName: "testuser", description: "" }
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
     );
 
     // Collection should be skipped if content matches
@@ -190,7 +473,7 @@ is_collection: true
 ---
 
 Old description`;
-    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-collection/index.md`, existingCollection);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/test-collection/index.md`, existingCollection);
 
     const { syncToLocalFiles } = await import("../sync");
     const result = await syncToLocalFiles(
@@ -205,14 +488,14 @@ Old description`;
       }],
       "testuser",
       {},
-      { displayName: "Test User", userName: "testuser", description: "" }
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
     );
 
     // Collection should be skipped (local file preserved)
     expect(result.result.skipped).toBeGreaterThanOrEqual(1);
 
     // Verify local content was NOT overwritten
-    const preservedContent = ctx.filesystem.getFile(`${ctx.projectPath}/posts/test-collection/index.md`)?.content;
+    const preservedContent = ctx.filesystem.getFile(`${ctx.projectPath}/articles/test-collection/index.md`)?.content;
     expect(preservedContent).toContain("Old Collection Name");
     expect(preservedContent).toContain("Old description");
   });
@@ -274,7 +557,7 @@ syndicated:
 ---
 
 Article content`;
-    ctx.filesystem.setFile(`${ctx.projectPath}/posts/test-article.md`, articleContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/test-article.md`, articleContent);
 
     const { scanLocalArticles } = await import("../sync");
     const articles = await scanLocalArticles();
@@ -290,7 +573,7 @@ title: "Local Only Article"
 ---
 
 Article content`;
-    ctx.filesystem.setFile(`${ctx.projectPath}/posts/local-article.md`, articleContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/local-article.md`, articleContent);
 
     const { scanLocalArticles } = await import("../sync");
     const articles = await scanLocalArticles();
@@ -306,7 +589,7 @@ syndicated:
 ---
 
 Article content`;
-    ctx.filesystem.setFile(`${ctx.projectPath}/posts/devto-article.md`, articleContent);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/devto-article.md`, articleContent);
 
     const { scanLocalArticles } = await import("../sync");
     const articles = await scanLocalArticles();

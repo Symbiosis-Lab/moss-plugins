@@ -4,6 +4,7 @@ import {
   ARTICLES_QUERY,
   DRAFTS_QUERY,
   COLLECTIONS_QUERY,
+  PROFILE_QUERY,
   ARTICLE_COMMENTS_QUERY,
   ARTICLE_DONATIONS_QUERY,
   ARTICLE_APPRECIATIONS_QUERY,
@@ -165,6 +166,22 @@ describe("User Queries (Public)", () => {
     expect(USER_PROFILE_QUERY).toContain("displayName");
     expect(USER_PROFILE_QUERY).toContain("avatar");
     expect(USER_PROFILE_QUERY).toContain("language");
+  });
+});
+
+describe("Pinned Works in Profile Queries", () => {
+  it("PROFILE_QUERY includes pinnedWorks with inline fragments", () => {
+    expect(PROFILE_QUERY).toContain("pinnedWorks");
+    expect(PROFILE_QUERY).toContain("... on Article");
+    expect(PROFILE_QUERY).toContain("slug");
+    expect(PROFILE_QUERY).toContain("shortHash");
+  });
+
+  it("USER_PROFILE_QUERY includes pinnedWorks with inline fragments", () => {
+    expect(USER_PROFILE_QUERY).toContain("pinnedWorks");
+    expect(USER_PROFILE_QUERY).toContain("... on Article");
+    expect(USER_PROFILE_QUERY).toContain("slug");
+    expect(USER_PROFILE_QUERY).toContain("shortHash");
   });
 });
 

@@ -174,6 +174,17 @@ query MeProfile {
     settings {
       language
     }
+    pinnedWorks {
+      id
+      pinned
+      title
+      cover
+      __typename
+      ... on Article {
+        slug
+        shortHash
+      }
+    }
   }
 }
 `;
@@ -261,6 +272,17 @@ query UserProfile($userName: String!) {
     avatar
     settings {
       language
+    }
+    pinnedWorks {
+      id
+      pinned
+      title
+      cover
+      __typename
+      ... on Article {
+        slug
+        shortHash
+      }
     }
   }
 }
@@ -814,6 +836,14 @@ async function fetchViewerProfile(): Promise<MattersUserProfile> {
     avatar: data.viewer.avatar,
     profileCover: data.viewer.info?.profileCover,
     language: data.viewer.settings?.language,
+    pinnedWorks: (data.viewer.pinnedWorks || []).map((work) => ({
+      id: work.id,
+      type: work.__typename === "Article" ? "article" as const : "collection" as const,
+      title: work.title,
+      slug: work.__typename === "Article" ? work.slug : undefined,
+      shortHash: work.__typename === "Article" ? work.shortHash : undefined,
+      cover: work.cover,
+    })),
   };
 
   console.log(`   Profile: ${profile.displayName} (@${profile.userName})`);
@@ -836,13 +866,34 @@ async function fetchUserProfilePublic(userName: string): Promise<MattersUserProf
     throw new Error(`Failed to fetch user profile for @${userName}`);
   }
 
+  // Cast to access pinnedWorks which may not be in the generated types yet
+  const userData = data.user as NonNullable<UserProfileQuery["user"]> & {
+    pinnedWorks?: Array<{
+      id: string;
+      pinned: boolean;
+      title: string;
+      cover?: string;
+      __typename?: string;
+      slug?: string;
+      shortHash?: string;
+    }>;
+  };
+
   const profile: MattersUserProfile = {
-    userName: data.user.userName ?? userName,
-    displayName: data.user.displayName ?? userName,
-    description: data.user.info?.description ?? undefined,
-    avatar: data.user.avatar ?? undefined,
-    profileCover: data.user.info?.profileCover ?? undefined,
-    language: data.user.settings?.language,
+    userName: userData.userName ?? userName,
+    displayName: userData.displayName ?? userName,
+    description: userData.info?.description ?? undefined,
+    avatar: userData.avatar ?? undefined,
+    profileCover: userData.info?.profileCover ?? undefined,
+    language: userData.settings?.language,
+    pinnedWorks: (userData.pinnedWorks || []).map((work) => ({
+      id: work.id,
+      type: work.__typename === "Article" ? "article" as const : "collection" as const,
+      title: work.title,
+      slug: work.__typename === "Article" ? work.slug : undefined,
+      shortHash: work.__typename === "Article" ? work.shortHash : undefined,
+      cover: work.cover,
+    })),
   };
 
   console.log(`   Profile: ${profile.displayName} (@${profile.userName})`);

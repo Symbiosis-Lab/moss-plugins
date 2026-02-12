@@ -11,6 +11,7 @@ import {
   reportError as sdkReportError,
   showToast as sdkShowToast,
   dismissToast as sdkDismissToast,
+  closeBrowser as sdkCloseBrowser,
   type PluginMessage,
   type ToastOptions,
 } from "@symbiosis-lab/moss-api";
@@ -114,6 +115,13 @@ export async function showToast(options: ToastOptions | string): Promise<void> {
  */
 export async function dismissToast(id: string): Promise<void> {
   await sdkDismissToast(id);
+}
+
+/**
+ * Close the plugin browser window
+ */
+export async function closeBrowser(): Promise<void> {
+  await sdkCloseBrowser();
 }
 
 // ============================================================================

@@ -11,7 +11,7 @@
  */
 
 import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
-import { log, reportProgress, reportError, setCurrentHookName, showToast } from "./utils";
+import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
 // Note: checkAuthentication and promptLogin removed - Bug 23 fix
@@ -94,6 +94,12 @@ async function waitForPagesLive(
   await log("log", "   Checking deployment status...");
 
   for (let i = 0; i < maxAttempts; i++) {
+    // Report progress FIRST to reset the 60-second inactivity timer
+    // This must happen BEFORE sleep() to prevent timeout
+    if (i > 0) {
+      await reportProgress("deploying", 4, 5, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
+    }
+
     const status = await checkPagesStatus(owner, repo, token);
 
     if (status.status === "built") {
@@ -106,9 +112,8 @@ async function waitForPagesLive(
       return { isLive: false, url: pagesUrl };
     }
 
-    // Still building - wait and retry
+    // Still building - sleep before next check
     if (i < maxAttempts - 1) {
-      await reportProgress("deploying", 4, 5, `Building on GitHub... (${i + 1}/${maxAttempts})`);
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
   }
@@ -192,6 +197,12 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
       remoteUrl = repoInfo.sshUrl;
       wasFirstSetup = true;
+
+      // Close the plugin browser after repo setup completes
+      // The browser was used to show the repo creation form (if needed)
+      // Now that setup is done, close it and continue deployment in background
+      await closeBrowser();
+      await log("log", "   Browser closed - continuing deployment in background");
     } else {
       // Use the URL we already fetched
       remoteUrl = existingRemoteUrl || "";

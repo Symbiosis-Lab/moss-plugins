@@ -288,4 +288,64 @@ describe("ensureGitHubRepo", () => {
       expect(result).toBeNull();
     });
   });
+
+  describe("input field attributes", () => {
+    beforeEach(() => {
+      mockGetToken.mockResolvedValue("test-token");
+      mockGetAuthenticatedUser.mockResolvedValue({ login: "testuser" });
+    });
+
+    it("includes autocomplete, autocorrect, and spellcheck attributes on repo name input", async () => {
+      // Root repo EXISTS - triggers UI
+      mockCheckRepoExists.mockResolvedValue(true);
+      mockShowBrowserForm.mockResolvedValue(null); // Cancel to just inspect HTML
+
+      await ensureGitHubRepo();
+
+      expect(mockShowBrowserForm).toHaveBeenCalled();
+
+      // Extract the HTML passed to showBrowserForm
+      const html = mockShowBrowserForm.mock.calls[0][0] as string;
+
+      // Verify the input has all required attributes
+      // The input should have: autocomplete="off" autocorrect="off" spellcheck="false"
+      expect(html).toMatch(/<input[^>]*id="repo-name"[^>]*>/);
+
+      // Extract the input tag
+      const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
+      expect(inputMatch).not.toBeNull();
+
+      const inputTag = inputMatch![0];
+
+      // Verify each attribute is present
+      expect(inputTag).toContain('autocomplete="off"');
+      expect(inputTag).toContain('autocorrect="off"');
+      expect(inputTag).toContain('spellcheck="false"');
+      expect(inputTag).toContain('autofocus');
+    });
+
+    it("disables autocorrect to prevent iOS keyboard corrections", async () => {
+      mockCheckRepoExists.mockResolvedValue(true);
+      mockShowBrowserForm.mockResolvedValue(null);
+
+      await ensureGitHubRepo();
+
+      const html = mockShowBrowserForm.mock.calls[0][0] as string;
+      const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
+
+      expect(inputMatch![0]).toContain('autocorrect="off"');
+    });
+
+    it("disables spellcheck to avoid underlining valid repo names", async () => {
+      mockCheckRepoExists.mockResolvedValue(true);
+      mockShowBrowserForm.mockResolvedValue(null);
+
+      await ensureGitHubRepo();
+
+      const html = mockShowBrowserForm.mock.calls[0][0] as string;
+      const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
+
+      expect(inputMatch![0]).toContain('spellcheck="false"');
+    });
+  });
 });

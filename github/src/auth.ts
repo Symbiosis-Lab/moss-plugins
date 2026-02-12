@@ -65,6 +65,7 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
     {
       headers: {
         Accept: "application/json",
+        Origin: "https://github.com",
       },
     }
   );
@@ -110,6 +111,7 @@ export async function pollForToken(
     {
       headers: {
         Accept: "application/json",
+        Origin: "https://github.com",
       },
     }
   );

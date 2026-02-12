@@ -12,7 +12,7 @@
  */
 
 import { showBrowserForm } from "@symbiosis-lab/moss-api";
-import { log } from "./utils";
+import { log, reportProgress } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
@@ -149,6 +149,41 @@ async function createRootRepo(
 }
 
 /**
+ * Wrapper for showBrowserForm that sends progress heartbeats every 30 seconds
+ * to prevent inactivity timeout during long form interactions.
+ *
+ * Phase 3 Fix: The 60-second inactivity timer can expire while user fills out
+ * interactive forms. This wrapper sends progress updates every 30 seconds to
+ * keep the timer alive.
+ *
+ * @param html - The HTML content for the form
+ * @param progressMessage - Message to show during heartbeat updates
+ * @param options - Options to pass to showBrowserForm (including timeoutMs)
+ * @returns Form result or null if cancelled/timeout/error
+ */
+async function showBrowserFormWithProgress<T>(
+  html: string,
+  progressMessage: string,
+  options?: { timeoutMs?: number }
+): Promise<T | null> {
+  // Start heartbeat interval (every 30 seconds)
+  const heartbeat = setInterval(async () => {
+    await reportProgress("setup", 0, 6, progressMessage);
+  }, 30000);
+
+  try {
+    return await showBrowserForm<T>(html, options);
+  } catch (error) {
+    // If showBrowserForm throws an error, log it and return null
+    await log("error", `   Form display error: ${error}`);
+    return null;
+  } finally {
+    // Always clear interval, whether form succeeds, fails, or is cancelled
+    clearInterval(heartbeat);
+  }
+}
+
+/**
  * Show UI for custom repo name (when root is taken)
  */
 async function showRepoNameUI(
@@ -158,7 +193,11 @@ async function showRepoNameUI(
   await log("log", "   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
-  const result = await showBrowserForm<RepoSetupValue>(html, { timeoutMs: 300000 });
+  const result = await showBrowserFormWithProgress<RepoSetupValue>(
+    html,
+    "Setting up GitHub repository...",
+    { timeoutMs: 300000 }
+  );
 
   if (!result) {
     await log("log", "   User cancelled repository setup");
@@ -442,7 +481,8 @@ function createRepoSetupHtml(username: string, token: string): string {
       <label for="repo-name">Repository name</label>
       <div class="input-wrapper" id="input-wrapper">
         <span class="prefix">github.com/${username}/</span>
-        <input type="text" id="repo-name" placeholder="my-website" autocomplete="off" autofocus>
+        <input type="text" id="repo-name" placeholder="my-website"
+               autocomplete="off" autocorrect="off" spellcheck="false" autofocus>
       </div>
       <div class="status" id="status"></div>
     </div>

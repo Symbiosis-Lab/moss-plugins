@@ -2,7 +2,7 @@
  * Unit tests for enhance hook functionality
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Interaction, EnhanceContext } from "../types";
 
 // Mock the moss-api
@@ -25,12 +25,19 @@ vi.mock("@symbiosis-lab/moss-api", () => {
 
 describe("enhance hook", () => {
   let mockFilesystem: Map<string, string>;
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import("@symbiosis-lab/moss-api") as unknown as { __filesystem: Map<string, string> };
     mockFilesystem = mod.__filesystem;
     mockFilesystem.clear();
+    // Spy on console.log to verify it's being called
+    consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
   });
 
   const createEnhanceContext = (

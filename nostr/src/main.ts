@@ -36,7 +36,7 @@
  * @see README.md for full documentation
  */
 
-import { readFile, writeFile, log } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile } from "@symbiosis-lab/moss-api";
 import {
   fetchInteractionsFromRelays,
   publishEvent,
@@ -101,14 +101,14 @@ class NostrPluginImpl {
    * @returns HookResult with fetched interactions
    */
   async process(ctx: ProcessContext): Promise<HookResult> {
-    log("[info] Nostr: Fetching interactions from relays...");
+    console.log("[info] Nostr: Fetching interactions from relays...");
 
     const config = ctx.config as PluginConfig;
     const relays = config.relays ?? [];
 
     // Early return if no relays configured
     if (relays.length === 0) {
-      log("[info] Nostr: No relays configured, skipping fetch");
+      console.log("[info] Nostr: No relays configured, skipping fetch");
       return {
         success: true,
         message: "No relays configured",
@@ -129,7 +129,7 @@ class NostrPluginImpl {
         articleUrls.length > 0 ? articleUrls : [siteUrl]
       );
 
-      log(`[info] Nostr: Found ${interactions.length} interactions`);
+      console.log(`[info] Nostr: Found ${interactions.length} interactions`);
 
       return {
         success: true,
@@ -139,7 +139,7 @@ class NostrPluginImpl {
     } catch (error) {
       // Log error but don't fail the build
       const errorMessage = error instanceof Error ? error.message : String(error);
-      log(`[warn] Nostr: Error fetching interactions: ${errorMessage}`);
+      console.log(`[warn] Nostr: Error fetching interactions: ${errorMessage}`);
 
       return {
         success: true, // Return success to not block the build
@@ -199,11 +199,11 @@ class NostrPluginImpl {
    * @returns HookResult indicating success/failure
    */
   async enhance(ctx: EnhanceContext): Promise<HookResult> {
-    log(`[info] Nostr: Rendering ${ctx.interactions.length} interactions...`);
+    console.log(`[info] Nostr: Rendering ${ctx.interactions.length} interactions...`);
 
     // Early return if no interactions to render
     if (ctx.interactions.length === 0) {
-      log("[info] Nostr: No interactions to render");
+      console.log("[info] Nostr: No interactions to render");
       return { success: true };
     }
 
@@ -223,10 +223,10 @@ class NostrPluginImpl {
         const html = await readFile(htmlPath);
         const enriched = this.injectInteractionIsland(html, interactions);
         await writeFile(htmlPath, enriched);
-        log(`[info] Nostr: Injected ${interactions.length} interactions into ${targetUrl}`);
+        console.log(`[info] Nostr: Injected ${interactions.length} interactions into ${targetUrl}`);
       } catch (e) {
         // Log error but continue with other files
-        log(`[warn] Nostr: Failed to process ${targetUrl}: ${e}`);
+        console.log(`[warn] Nostr: Failed to process ${targetUrl}: ${e}`);
       }
     }
 
@@ -286,7 +286,7 @@ class NostrPluginImpl {
    * @see https://github.com/nostr-protocol/nips/blob/master/23.md
    */
   async syndicate(ctx: SyndicateContext): Promise<HookResult> {
-    log("[info] Nostr: Publishing articles to Nostr relays...");
+    console.log("[info] Nostr: Publishing articles to Nostr relays...");
 
     const config = ctx.config as PluginConfig;
     const relays = config.relays ?? [];
@@ -294,7 +294,7 @@ class NostrPluginImpl {
 
     // Validate: nsec required for publishing
     if (!nsec) {
-      log("[info] Nostr: No private key configured, skipping publish");
+      console.log("[info] Nostr: No private key configured, skipping publish");
       return {
         success: true,
         message: "No signing key configured - articles not published to Nostr",
@@ -303,7 +303,7 @@ class NostrPluginImpl {
 
     // Validate: relays required
     if (relays.length === 0) {
-      log("[info] Nostr: No relays configured, skipping publish");
+      console.log("[info] Nostr: No relays configured, skipping publish");
       return {
         success: true,
         message: "No relays configured",
@@ -312,7 +312,7 @@ class NostrPluginImpl {
 
     // Validate: articles required
     if (ctx.articles.length === 0) {
-      log("[info] Nostr: No articles to publish");
+      console.log("[info] Nostr: No articles to publish");
       return {
         success: true,
         message: "No articles to publish",
@@ -322,7 +322,7 @@ class NostrPluginImpl {
     // Decode nsec to get private key bytes
     const privateKey = decodeNsec(nsec);
     if (!privateKey) {
-      log("[warn] Nostr: Invalid nsec key format");
+      console.log("[warn] Nostr: Invalid nsec key format");
       return {
         success: false,
         message: "Invalid nsec key format - unable to decode private key",
@@ -331,7 +331,7 @@ class NostrPluginImpl {
 
     // Derive public key from private key
     const pubkey = getPublicKeyFromPrivate(privateKey);
-    log(`[info] Nostr: Publishing as ${pubkey.slice(0, 12)}...`);
+    console.log(`[info] Nostr: Publishing as ${pubkey.slice(0, 12)}...`);
 
     let publishedCount = 0;
     let failedCount = 0;
@@ -362,7 +362,7 @@ class NostrPluginImpl {
 
         if (result.success) {
           publishedCount++;
-          log(`[info] Nostr: Published "${article.title}" to ${result.published.length} relay(s)`);
+          console.log(`[info] Nostr: Published "${article.title}" to ${result.published.length} relay(s)`);
         } else {
           failedCount++;
           errors.push(`"${article.title}": Failed to publish to any relay`);
@@ -370,13 +370,13 @@ class NostrPluginImpl {
 
         // Log partial failures (some relays succeeded, some failed)
         if (result.failed.length > 0) {
-          log(`[warn] Nostr: Failed to publish to: ${result.failed.join(", ")}`);
+          console.log(`[warn] Nostr: Failed to publish to: ${result.failed.join(", ")}`);
         }
       } catch (error) {
         failedCount++;
         const errorMsg = error instanceof Error ? error.message : String(error);
         errors.push(`"${article.title}": ${errorMsg}`);
-        log(`[warn] Nostr: Error publishing article "${article.title}": ${errorMsg}`);
+        console.log(`[warn] Nostr: Error publishing article "${article.title}": ${errorMsg}`);
       }
     }
 
@@ -409,13 +409,13 @@ class NostrPluginImpl {
   private injectInteractionIsland(html: string, interactions: Interaction[]): string {
     // Detect SSG for logging
     const ssg = detectSSG(html);
-    log(`[info] Nostr: Detected SSG: ${ssg}`);
+    console.log(`[info] Nostr: Detected SSG: ${ssg}`);
 
     // Find the best insertion point (SSG-aware)
     const insertionPoint = findInsertionPoint(html);
     if (insertionPoint === html.length) {
       // No suitable insertion point found
-      log("[warn] Nostr: No suitable insertion point found, skipping injection");
+      console.log("[warn] Nostr: No suitable insertion point found, skipping injection");
       return html;
     }
 
@@ -529,7 +529,7 @@ console.log('Nostr social interactions loaded');
       await writeFile(`${jsDir}/nostr-social.js`, placeholderJs);
       await writeFile(`${cssDir}/nostr-social.css`, placeholderCss);
     } catch (e) {
-      log(`[warn] Failed to copy browser assets: ${e}`);
+      console.log(`[warn] Failed to copy browser assets: ${e}`);
     }
   }
 

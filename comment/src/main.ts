@@ -9,7 +9,7 @@
  * 5. Copies CSS to the output directory
  */
 
-import { readFile, writeFile, readPluginFile, log } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
 import { loadAllComments, buildSourceToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
@@ -41,7 +41,7 @@ function getOutputPrefix(ctx: EnhanceContext): string {
  * Enhance hook - inject comment sections into generated HTML pages.
  */
 export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
-  log("[info] Comment: Starting enhance hook...");
+  console.log("[info] Comment: Starting enhance hook...");
 
   const config = ctx.config || {};
   const providerName = (config.provider as string) || "waline";
@@ -49,18 +49,18 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   const buildScript = getSubmitScriptBuilder(providerName);
 
   if (buildScript && serverUrl) {
-    log(`[info] Comment: Using provider "${providerName}" at ${serverUrl}`);
+    console.log(`[info] Comment: Using provider "${providerName}" at ${serverUrl}`);
   } else if (!serverUrl) {
-    log("[info] Comment: No server_url configured, static comments only");
+    console.log("[info] Comment: No server_url configured, static comments only");
   }
 
   // 1. Load existing comments from .moss/social/*.json files
   const commentsByMdPath = await loadAllComments();
-  log(`[info] Comment: Loaded comments for ${commentsByMdPath.size} articles`);
+  console.log(`[info] Comment: Loaded comments for ${commentsByMdPath.size} articles`);
 
   // 2. Build authoritative source->output mapping from Moss's article-map.json
   const sourceToUrl = await buildSourceToUrlMap();
-  log(`[info] Comment: Article map has ${sourceToUrl.size} entries`);
+  console.log(`[info] Comment: Article map has ${sourceToUrl.size} entries`);
 
   // 3. Resolve: source .md path -> output URL path
   const commentsByPage = new Map<string, NormalizedComment[]>();
@@ -70,7 +70,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
       commentsByPage.set(urlPath, comments);
     }
   }
-  log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
+  console.log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
 
   // 4. Derive output prefix for project-relative paths
   const outputPrefix = getOutputPrefix(ctx);
@@ -110,14 +110,14 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
       if (result) injectedCount++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      log(`[warn] Comment: Error processing ${urlPath}: ${msg}`);
+      console.log(`[warn] Comment: Error processing ${urlPath}: ${msg}`);
     }
   }
 
   // 6. Copy CSS to output directory
   await copyCss(outputPrefix);
 
-  log(`[info] Comment: Injected comments into ${injectedCount} pages`);
+  console.log(`[info] Comment: Injected comments into ${injectedCount} pages`);
   return {
     success: true,
     message: `Injected comment sections into ${injectedCount} pages`,
@@ -180,7 +180,7 @@ async function processHtmlFile(
     }
 
     await writeFile(htmlRelPath, html);
-    log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);
+    console.log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);
     return true;
   } catch {
     // File not found in output dir or other error -- skip silently
@@ -197,6 +197,6 @@ async function copyCss(outputPrefix: string): Promise<void> {
     const css = await readPluginFile(COMMENTS_CSS_FILENAME);
     await writeFile(`${outputPrefix}/${COMMENTS_CSS_FILENAME}`, css);
   } catch (e) {
-    log(`[warn] Comment: Failed to copy CSS: ${e}`);
+    console.log(`[warn] Comment: Failed to copy CSS: ${e}`);
   }
 }

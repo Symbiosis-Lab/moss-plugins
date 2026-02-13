@@ -10,7 +10,7 @@
  * so we discover social files by trying known source names rather than listing.
  */
 
-import { readFile, log } from "@symbiosis-lab/moss-api";
+import { readFile } from "@symbiosis-lab/moss-api";
 import type {
   NormalizedComment,
   GenericSocialFile,
@@ -74,7 +74,7 @@ export async function buildSourceToUrlMap(): Promise<Map<string, string>> {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log(`[warn] Comment: Could not read article-map.json: ${msg}`);
+    console.log(`[warn] Comment: Could not read article-map.json: ${msg}`);
   }
 
   return result;
@@ -149,7 +149,7 @@ export async function loadAllComments(
     }
 
     if (!data.articles) continue;
-    log(`[info] Comment: Found social data from "${source}"`);
+    console.log(`[info] Comment: Found social data from "${source}"`);
 
     for (const [articleKey, articleData] of Object.entries(data.articles)) {
       const normalized = normalizeComments(articleData.comments, source);

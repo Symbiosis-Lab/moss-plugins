@@ -430,18 +430,34 @@ describe("Binary Resolution E2E", () => {
         // Download
         const archivePath = path.join(tempDir, assetName);
         if (platform.os === "windows") {
-          // Use array form to avoid shell injection
-          execSync(
-            `powershell -Command "Invoke-WebRequest -Uri '${downloadUrl.replace(/'/g, "''")}' -OutFile '${archivePath.replace(/'/g, "''")}'"`
-,
+          const result = spawnSync(
+            "powershell",
+            [
+              "-Command",
+              "Invoke-WebRequest",
+              "-Uri",
+              downloadUrl,
+              "-OutFile",
+              archivePath,
+            ],
             { stdio: "pipe", timeout: 300000 }
           );
+          if (result.status !== 0) {
+            throw new Error(
+              `PowerShell download failed: ${result.stderr?.toString() ?? "Unknown error"}`
+            );
+          }
         } else {
-          // Use array form to avoid shell injection
-          execSync(`curl -fsSL -o ${JSON.stringify(archivePath)} ${JSON.stringify(downloadUrl)}`, {
-            stdio: "pipe",
-            timeout: 300000,
-          });
+          const result = spawnSync(
+            "curl",
+            ["-fsSL", "-o", archivePath, downloadUrl],
+            { stdio: "pipe", timeout: 300000 }
+          );
+          if (result.status !== 0) {
+            throw new Error(
+              `curl download failed: ${result.stderr?.toString() ?? "Unknown error"}`
+            );
+          }
         }
 
         // Verify download
@@ -451,16 +467,33 @@ describe("Binary Resolution E2E", () => {
 
         // Extract
         if (archiveFormat === "tar.gz") {
-          // Use JSON.stringify to safely escape paths
-          execSync(`tar -xzf ${JSON.stringify(archivePath)} -C ${JSON.stringify(binDir)}`, {
+          const result = spawnSync("tar", ["-xzf", archivePath, "-C", binDir], {
             stdio: "pipe",
           });
+          if (result.status !== 0) {
+            throw new Error(
+              `tar extraction failed: ${result.stderr?.toString() ?? "Unknown error"}`
+            );
+          }
         } else {
-          // Escape single quotes in PowerShell by doubling them
-          execSync(
-            `powershell -Command "Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${binDir.replace(/'/g, "''")}' -Force"`,
+          const result = spawnSync(
+            "powershell",
+            [
+              "-Command",
+              "Expand-Archive",
+              "-Path",
+              archivePath,
+              "-DestinationPath",
+              binDir,
+              "-Force",
+            ],
             { stdio: "pipe" }
           );
+          if (result.status !== 0) {
+            throw new Error(
+              `PowerShell extraction failed: ${result.stderr?.toString() ?? "Unknown error"}`
+            );
+          }
         }
 
         // Find Hugo binary

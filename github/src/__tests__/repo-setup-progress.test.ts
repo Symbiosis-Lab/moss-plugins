@@ -12,9 +12,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock moss-api
 const mockShowBrowserForm = vi.fn().mockResolvedValue(null);
+const mockOpenBrowserWithHtml = vi.fn().mockResolvedValue(undefined);
+const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
+const mockOnEvent = vi.fn();
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   showBrowserForm: (...args: unknown[]) => mockShowBrowserForm(...args),
+  openBrowserWithHtml: (...args: unknown[]) => mockOpenBrowserWithHtml(...args),
+  closeBrowser: () => mockCloseBrowser(),
+  onEvent: (...args: unknown[]) => mockOnEvent(...args),
   executeBinary: vi.fn().mockResolvedValue({ success: true, stdout: "", stderr: "" }),
 }));
 
@@ -88,14 +94,21 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     vi.useFakeTimers();
 
     // Simulate user taking 75 seconds to fill out form (should trigger 2 heartbeats)
-    let formResolve: ((value: { name: string }) => void) | null = null;
-    mockShowBrowserForm.mockImplementation(() => {
-      return new Promise((resolve) => {
-        formResolve = resolve as (value: { name: string }) => void;
-      });
+    let eventHandler: ((payload: unknown) => void) | null = null;
+    mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+      if (eventName === "github:repo-created") {
+        eventHandler = handler;
+      }
+      return vi.fn(); // Return unlisten function
     });
 
-    // Start the repo setup (will call showBrowserForm and start heartbeat)
+    mockCreateRepository.mockResolvedValue({
+      name: "my-website",
+      fullName: "testuser/my-website",
+      sshUrl: "git@github.com:testuser/my-website.git",
+    });
+
+    // Start the repo setup (will call openBrowserWithHtml and start heartbeat)
     const resultPromise = ensureGitHubRepo();
 
     // Fast-forward: 0s -> no heartbeat yet (first one starts immediately but we check calls)
@@ -114,14 +127,9 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
 
     // Fast-forward: 75s -> user submits form
     await vi.advanceTimersByTimeAsync(15000);
-    mockCreateRepository.mockResolvedValue({
-      name: "my-website",
-      fullName: "testuser/my-website",
-      sshUrl: "git@github.com:testuser/my-website.git",
-    });
 
-    // User submits form
-    formResolve!({ name: "my-website" });
+    // User submits form via event
+    eventHandler!({ name: "my-website" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -142,11 +150,12 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     vi.useFakeTimers();
 
     // User submits form after 35 seconds (should trigger 1 heartbeat, then clear)
-    let formResolve: ((value: { name: string }) => void) | null = null;
-    mockShowBrowserForm.mockImplementation(() => {
-      return new Promise((resolve) => {
-        formResolve = resolve as (value: { name: string }) => void;
-      });
+    let eventHandler: ((payload: unknown) => void) | null = null;
+    mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+      if (eventName === "github:repo-created") {
+        eventHandler = handler;
+      }
+      return vi.fn();
     });
 
     mockCreateRepository.mockResolvedValue({
@@ -163,7 +172,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
 
     // User submits form (should clear interval)
-    formResolve!({ name: "quick-submit" });
+    eventHandler!({ name: "quick-submit" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -180,23 +189,20 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
   it("clears heartbeat interval when form is cancelled", async () => {
     vi.useFakeTimers();
 
-    // User cancels form after 35 seconds
-    let formResolve: ((value: null) => void) | null = null;
-    mockShowBrowserForm.mockImplementation(() => {
-      return new Promise((resolve) => {
-        formResolve = resolve as (value: null) => void;
-      });
+    // User cancels form after 35 seconds (timeout without event)
+    mockOnEvent.mockImplementation(async () => {
+      return vi.fn(); // Don't trigger event handler (simulates cancellation)
     });
 
-    // Start the repo setup
+    // Start the repo setup (will timeout after 300s but we'll test before that)
     const resultPromise = ensureGitHubRepo();
 
     // Fast-forward: 35s -> first heartbeat happens
     await vi.advanceTimersByTimeAsync(35000);
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
 
-    // User cancels form (should clear interval)
-    formResolve!(null);
+    // Fast-forward to timeout (300s total)
+    await vi.advanceTimersByTimeAsync(265000);
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -216,11 +222,12 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     vi.useFakeTimers();
 
     // Simulate user taking 120 seconds (2 minutes) - should NOT timeout
-    let formResolve: ((value: { name: string }) => void) | null = null;
-    mockShowBrowserForm.mockImplementation(() => {
-      return new Promise((resolve) => {
-        formResolve = resolve as (value: { name: string }) => void;
-      });
+    let eventHandler: ((payload: unknown) => void) | null = null;
+    mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+      if (eventName === "github:repo-created") {
+        eventHandler = handler;
+      }
+      return vi.fn();
     });
 
     mockCreateRepository.mockResolvedValue({
@@ -242,7 +249,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenCalledTimes(4);
 
     // User finally submits form
-    formResolve!({ name: "slow-user" });
+    eventHandler!({ name: "slow-user" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -259,11 +266,12 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
   it("uses consistent progress message for all heartbeats", async () => {
     vi.useFakeTimers();
 
-    let formResolve: ((value: { name: string }) => void) | null = null;
-    mockShowBrowserForm.mockImplementation(() => {
-      return new Promise((resolve) => {
-        formResolve = resolve as (value: { name: string }) => void;
-      });
+    let eventHandler: ((payload: unknown) => void) | null = null;
+    mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+      if (eventName === "github:repo-created") {
+        eventHandler = handler;
+      }
+      return vi.fn();
     });
 
     mockCreateRepository.mockResolvedValue({
@@ -288,16 +296,16 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenNthCalledWith(3, "setup", 0, 6, "Setting up GitHub repository...");
 
     // Complete
-    formResolve!({ name: "test" });
+    eventHandler!({ name: "test" });
     await vi.runAllTimersAsync();
     await resultPromise;
   });
 
-  it("handles showBrowserForm rejection gracefully", async () => {
+  it("handles openBrowserWithHtml rejection gracefully", async () => {
     vi.useFakeTimers();
 
-    // Simulate error during form display
-    mockShowBrowserForm.mockRejectedValue(new Error("Form display error"));
+    // Simulate error during browser opening
+    mockOpenBrowserWithHtml.mockRejectedValue(new Error("Form display error"));
 
     // Start the repo setup (catch the error to prevent unhandled rejection)
     let result: any;

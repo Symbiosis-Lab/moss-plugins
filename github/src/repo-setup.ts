@@ -11,7 +11,7 @@
  * - repo-dialog.ts
  */
 
-import { showBrowserForm } from "@symbiosis-lab/moss-api";
+import { openBrowserWithHtml, closeBrowser, onEvent } from "@symbiosis-lab/moss-api";
 import { log, reportProgress } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
@@ -149,22 +149,26 @@ async function createRootRepo(
 }
 
 /**
- * Wrapper for showBrowserForm that sends progress heartbeats every 30 seconds
- * to prevent inactivity timeout during long form interactions.
+ * Show browser with HTML and wait for form submission with progress heartbeats.
  *
- * Phase 3 Fix: The 60-second inactivity timer can expire while user fills out
- * interactive forms. This wrapper sends progress updates every 30 seconds to
- * keep the timer alive.
+ * Uses the new manual browser control pattern:
+ * - openBrowserWithHtml() to display content
+ * - onEvent() to listen for custom events
+ * - closeBrowser() to explicitly close when done
+ *
+ * Sends progress heartbeats every 30 seconds to prevent inactivity timeout.
  *
  * @param html - The HTML content for the form
+ * @param eventName - Custom event name to listen for (e.g., "github:repo-created")
  * @param progressMessage - Message to show during heartbeat updates
- * @param options - Options to pass to showBrowserForm (including timeoutMs)
+ * @param timeoutMs - Maximum time to wait (default: 300000ms / 5 minutes)
  * @returns Form result or null if cancelled/timeout/error
  */
-async function showBrowserFormWithProgress<T>(
+async function showBrowserWithProgress<T>(
   html: string,
+  eventName: string,
   progressMessage: string,
-  options?: { timeoutMs?: number }
+  timeoutMs: number = 300000
 ): Promise<T | null> {
   // Start heartbeat interval (every 30 seconds)
   const heartbeat = setInterval(async () => {
@@ -172,14 +176,33 @@ async function showBrowserFormWithProgress<T>(
   }, 30000);
 
   try {
-    return await showBrowserForm<T>(html, options);
+    // Open browser with HTML
+    await openBrowserWithHtml(html);
+
+    // Wait for form submission or timeout
+    return await Promise.race([
+      // Wait for event
+      new Promise<T>((resolve) => {
+        onEvent<T>(eventName, (payload) => {
+          resolve(payload);
+        });
+      }),
+      // Timeout
+      new Promise<T | null>((resolve) => {
+        setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
   } catch (error) {
-    // If showBrowserForm throws an error, log it and return null
     await log("error", `   Form display error: ${error}`);
     return null;
   } finally {
-    // Always clear interval, whether form succeeds, fails, or is cancelled
+    // Always clear interval and close browser
     clearInterval(heartbeat);
+    try {
+      await closeBrowser();
+    } catch {
+      // Browser might already be closed
+    }
   }
 }
 
@@ -193,10 +216,11 @@ async function showRepoNameUI(
   await log("log", "   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
-  const result = await showBrowserFormWithProgress<RepoSetupValue>(
+  const result = await showBrowserWithProgress<RepoSetupValue>(
     html,
+    "github:repo-created",
     "Setting up GitHub repository...",
-    { timeoutMs: 300000 }
+    300000
   );
 
   if (!result) {
@@ -606,7 +630,7 @@ function createRepoSetupHtml(username: string, token: string): string {
     });
 
     cancelBtn.addEventListener('click', () => {
-      mossApi.cancel();
+      mossApi.close();
     });
 
     createBtn.addEventListener('click', async () => {
@@ -616,7 +640,7 @@ function createRepoSetupHtml(username: string, token: string): string {
       createBtn.disabled = true;
       btnText.innerHTML = '<span class="creating"><div class="spinner"></div>Creating...</span>';
 
-      mossApi.submit({ name: name });
+      mossApi.emit('github:repo-created', { name: name });
     });
 
     input.focus();

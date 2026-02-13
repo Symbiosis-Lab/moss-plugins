@@ -7,6 +7,7 @@
  */
 
 import type { NormalizedComment } from "./types";
+import sanitizeHtmlLib from 'sanitize-html';
 
 // ============================================================================
 // HTML Sanitization
@@ -25,26 +26,21 @@ export function escapeHtml(text: string): string {
 }
 
 /**
- * Sanitize HTML content: strip dangerous tags and attributes.
- * Preserves safe HTML tags like <p>, <a>, <strong>, <em>, etc.
+ * Sanitizes HTML content to prevent XSS attacks.
+ * Uses sanitize-html library for robust, battle-tested sanitization.
  */
 export function sanitizeHtml(html: string): string {
-  return html
-    // Strip dangerous tags (with content)
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<iframe[\s\S]*?(<\/iframe>|\/>)/gi, "")
-    .replace(/<object[\s\S]*?(<\/object>|\/>)/gi, "")
-    .replace(/<embed[\s\S]*?(\/>|>)/gi, "")
-    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-    .replace(/<math[\s\S]*?<\/math>/gi, "")
-    // Strip event handler attributes (on*)
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/\son\w+\s*=\s*[^\s>]*/gi, "")
-    // Strip javascript: URLs in href/src attributes
-    .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1=""')
-    .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1=''");
+  return sanitizeHtmlLib(html, {
+    allowedTags: [
+      'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li',
+      'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+    ],
+    allowedAttributes: {
+      'a': ['href', 'title']
+    },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    disallowedTagsMode: 'discard'
+  });
 }
 
 // ============================================================================

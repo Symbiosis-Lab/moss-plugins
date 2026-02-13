@@ -7,6 +7,21 @@
  */
 
 /**
+ * Properly escapes a string for use in a single-quoted JavaScript string literal.
+ * Must escape backslashes first, then quotes, then newlines.
+ *
+ * @param str - The string to escape
+ * @returns Escaped string safe for single-quoted JS string literals
+ */
+function escapeForSingleQuotedJs(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')   // Escape backslashes FIRST
+    .replace(/'/g, "\\'")      // Then escape single quotes
+    .replace(/\r/g, '\\r')     // Escape carriage returns
+    .replace(/\n/g, '\\n');    // Escape newlines
+}
+
+/**
  * Generate inline JS for the comment form.
  *
  * @param serverUrl - Waline server URL (e.g., "https://comments.example.com")
@@ -14,8 +29,8 @@
  * @returns JavaScript code string
  */
 export function buildClientScript(serverUrl: string, pagePath: string): string {
-  const safeServerUrl = serverUrl.replace(/'/g, "\\'");
-  const safePagePath = pagePath.replace(/'/g, "\\'");
+  const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
+  const safePagePath = escapeForSingleQuotedJs(pagePath);
 
   return `(function() {
   var form = document.getElementById('moss-comment-form');

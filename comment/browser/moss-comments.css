@@ -1,0 +1,179 @@
+/* ==========================================================================
+   Moss Comments Plugin - Minimal Styles
+
+   No redundant max-width (parent article.container handles width).
+   No avatars, no source badges, no heading.
+   Uses CSS custom properties from moss default.css.
+   ========================================================================== */
+
+/* Comment Section */
+.moss-comments {
+  margin-top: var(--moss-space-xl, 3rem);
+  padding-top: var(--moss-space-lg, 2rem);
+  border-top: 1px solid var(--moss-border-light, #e6e2db);
+}
+
+/* Comment List */
+.comment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.comment-item {
+  padding: var(--moss-space-md, 1.5rem) 0;
+  border-bottom: 1px solid var(--moss-border-light, #e6e2db);
+}
+
+.comment-item:first-child {
+  padding-top: 0;
+}
+
+.comment-item:last-child {
+  border-bottom: none;
+}
+
+/* Comment Header: author name + date */
+.comment-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--moss-space-xs, 0.5rem);
+  margin-bottom: var(--moss-space-xs, 0.5rem);
+}
+
+.comment-author {
+  font-weight: 480;
+  font-size: var(--moss-font-sm, 1rem);
+  color: var(--moss-text-primary, #2c2825);
+  text-decoration: none;
+}
+
+a.comment-author:hover {
+  color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-date {
+  font-size: 0.875rem;
+  color: var(--moss-text-muted, #8a8580);
+}
+
+/* Comment Body */
+.comment-body {
+  font-size: var(--moss-font-base, 1.125rem);
+  line-height: 1.7;
+  color: var(--moss-text-primary, #2c2825);
+}
+
+.comment-body p {
+  margin: 0 0 var(--moss-space-sm, 1rem) 0;
+}
+
+.comment-body p:last-child {
+  margin-bottom: 0;
+}
+
+.comment-body a {
+  color: var(--moss-text-primary, #2c2825);
+  text-decoration: underline;
+}
+
+.comment-body a:hover {
+  color: var(--moss-accent, #2d5a2d);
+}
+
+/* Nested Replies */
+.comment-replies {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0 var(--moss-space-lg, 2rem);
+}
+
+.comment-replies .comment-item {
+  padding: var(--moss-space-sm, 1rem) 0;
+}
+
+/* Comment Form */
+.comment-form {
+  margin-top: var(--moss-space-lg, 2rem);
+}
+
+.comment-form textarea {
+  display: block;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--moss-border-medium, #d1cdc4);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--moss-font-base, 1.125rem);
+  line-height: 1.7;
+  color: var(--moss-text-primary, #2c2825);
+  background: var(--moss-background, #faf8f5);
+  resize: none;
+  overflow-y: auto;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.comment-form textarea:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+  border-color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-form textarea::placeholder {
+  color: var(--moss-text-muted, #8a8580);
+}
+
+.comment-form-submit {
+  display: inline-block;
+  margin-top: var(--moss-space-sm, 1rem);
+  padding: 0.5rem 1.25rem;
+  background: var(--moss-accent, #2d5a2d);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.comment-form-submit:hover {
+  background: var(--moss-accent-hover, #1e3d1e);
+}
+
+.comment-form-submit:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+}
+
+.comment-form-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.comment-form-status {
+  margin-top: var(--moss-space-sm, 1rem);
+  font-size: 0.875rem;
+}
+
+.comment-form-status:empty {
+  display: none;
+}
+
+.comment-form-status--error {
+  color: #a83232;
+}
+
+.comment-form-status--success {
+  color: var(--moss-accent, #2d5a2d);
+}
+
+/* Mobile */
+@media (max-width: 48rem) {
+  .comment-replies {
+    margin-left: var(--moss-space-md, 1.5rem);
+  }
+}

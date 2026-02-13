@@ -1,0 +1,15 @@
+{
+  "name": "gatsby",
+  "version": "1.0.0",
+  "description": "Gatsby static site generator for Moss",
+  "author": "Symbiosis Lab",
+  "entry": "main.bundle.js",
+  "category": "generator",
+  "global_name": "Gatsby",
+  "config": {
+    "build_args": []
+  },
+  "config_schema": {
+    "build_args": "array"
+  }
+}

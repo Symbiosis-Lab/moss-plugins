@@ -154,7 +154,7 @@ async function createRootRepo(
  * Uses the new manual browser control pattern:
  * - openBrowserWithHtml() to display content
  * - onEvent() to listen for custom events
- * - closeBrowser() to explicitly close when done
+ * - Caller is responsible for calling closeBrowser() when done
  *
  * Sends progress heartbeats every 30 seconds to prevent inactivity timeout.
  *
@@ -175,6 +175,8 @@ async function showBrowserWithProgress<T>(
     await reportProgress("setup", 0, 6, progressMessage);
   }, 30000);
 
+  let unlisten: (() => void) | null = null;
+
   try {
     // Open browser with HTML
     await openBrowserWithHtml(html);
@@ -182,9 +184,10 @@ async function showBrowserWithProgress<T>(
     // Wait for form submission or timeout
     return await Promise.race([
       // Wait for event
-      new Promise<T>((resolve) => {
-        onEvent<T>(eventName, (payload) => {
+      new Promise<T>(async (resolve) => {
+        unlisten = await onEvent<T>(eventName, (payload) => {
           resolve(payload);
+          return payload;
         });
       }),
       // Timeout
@@ -196,12 +199,10 @@ async function showBrowserWithProgress<T>(
     await log("error", `   Form display error: ${error}`);
     return null;
   } finally {
-    // Always clear interval and close browser
+    // Always clear interval and unlisten from event
     clearInterval(heartbeat);
-    try {
-      await closeBrowser();
-    } catch {
-      // Browser might already be closed
+    if (unlisten) {
+      unlisten();
     }
   }
 }
@@ -225,6 +226,7 @@ async function showRepoNameUI(
 
   if (!result) {
     await log("log", "   User cancelled repository setup");
+    await closeBrowser(); // Close browser on cancellation
     return null;
   }
 
@@ -236,6 +238,8 @@ async function showRepoNameUI(
     const createdRepo = await createRepository(repoName, token, "Created with Moss");
     await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
 
+    await closeBrowser(); // Close browser after successful repo creation
+
     return {
       name: createdRepo.name,
       sshUrl: createdRepo.sshUrl,
@@ -243,6 +247,7 @@ async function showRepoNameUI(
     };
   } catch (error) {
     await log("error", `   Failed to create repository: ${error}`);
+    await closeBrowser(); // Close browser on error
     return null;
   }
 }

@@ -9,13 +9,11 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 
 // Mock moss-api
-const mockShowBrowserForm = vi.fn().mockResolvedValue(null);
 const mockOpenBrowserWithHtml = vi.fn().mockResolvedValue(undefined);
 const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
 const mockOnEvent = vi.fn();
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  showBrowserForm: (...args: unknown[]) => mockShowBrowserForm(...args),
   openBrowserWithHtml: (...args: unknown[]) => mockOpenBrowserWithHtml(...args),
   closeBrowser: () => mockCloseBrowser(),
   onEvent: (...args: unknown[]) => mockOnEvent(...args),
@@ -153,7 +151,7 @@ describe("ensureGitHubRepo", () => {
       const result = await ensureGitHubRepo();
 
       // Should NOT show any UI
-      expect(mockShowBrowserForm).not.toHaveBeenCalled();
+      expect(mockOpenBrowserWithHtml).not.toHaveBeenCalled();
 
       // Should create the root repo
       expect(mockCheckRepoExists).toHaveBeenCalledWith("testuser", "testuser.github.io", "test-token");
@@ -218,9 +216,8 @@ describe("ensureGitHubRepo", () => {
       // Start the flow and await
       const result = await ensureGitHubRepo();
 
-      // NEW: Should use openBrowserWithHtml instead of showBrowserForm
+      // Should use openBrowserWithHtml (not old showBrowserForm API)
       expect(mockOpenBrowserWithHtml).toHaveBeenCalledWith(expect.any(String));
-      expect(mockShowBrowserForm).not.toHaveBeenCalled();
 
       // NEW: Should listen for github:repo-created event
       expect(mockOnEvent).toHaveBeenCalledWith("github:repo-created", expect.any(Function));

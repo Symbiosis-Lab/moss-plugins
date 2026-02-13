@@ -11,13 +11,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock moss-api
-const mockShowBrowserForm = vi.fn().mockResolvedValue(null);
 const mockOpenBrowserWithHtml = vi.fn().mockResolvedValue(undefined);
 const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
 const mockOnEvent = vi.fn();
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  showBrowserForm: (...args: unknown[]) => mockShowBrowserForm(...args),
   openBrowserWithHtml: (...args: unknown[]) => mockOpenBrowserWithHtml(...args),
   closeBrowser: () => mockCloseBrowser(),
   onEvent: (...args: unknown[]) => mockOnEvent(...args),
@@ -350,8 +348,8 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Fast-forward time - should be no heartbeats
     await vi.advanceTimersByTimeAsync(60000);
 
-    // showBrowserForm should NOT be called (auto-create path)
-    expect(mockShowBrowserForm).not.toHaveBeenCalled();
+    // openBrowserWithHtml should NOT be called (auto-create path)
+    expect(mockOpenBrowserWithHtml).not.toHaveBeenCalled();
 
     // reportProgress should NOT be called (no heartbeat)
     expect(mockReportProgress).not.toHaveBeenCalled();

@@ -131,8 +131,10 @@ export function isInternalMattersLink(
   url: string,
   userName: string
 ): boolean {
+  // Escape backslashes in domain before escaping dots for regex
+  const escapedDomain = currentDomain.replace(/\\/g, "\\\\").replace(/\./g, "\\.");
   const pattern = new RegExp(
-    `^https?://${currentDomain.replace(/\./g, "\\.")}/@${userName}/`
+    `^https?://${escapedDomain}/@${userName}/`
   );
   return pattern.test(url);
 }

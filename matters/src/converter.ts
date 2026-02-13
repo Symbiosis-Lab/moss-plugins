@@ -115,19 +115,26 @@ function processNode(node: Node): string {
 // ============================================================================
 
 /**
+ * Escape string for YAML (escape backslashes first, then quotes)
+ */
+function escapeYaml(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
  * Generate frontmatter YAML from data object
  */
 export function generateFrontmatter(data: FrontmatterData): string {
   const lines: string[] = ["---"];
 
-  lines.push(`title: "${data.title.replace(/"/g, '\\"')}"`);
+  lines.push(`title: "${escapeYaml(data.title)}"`);
 
   if (data.is_collection) {
     lines.push("is_collection: true");
   }
 
   if (data.description) {
-    lines.push(`description: "${data.description.replace(/"/g, '\\"')}"`);
+    lines.push(`description: "${escapeYaml(data.description)}"`);
   }
 
   if (data.date) {
@@ -140,7 +147,7 @@ export function generateFrontmatter(data: FrontmatterData): string {
   if (data.tags && data.tags.length > 0) {
     lines.push("tags:");
     for (const tag of data.tags) {
-      lines.push(`  - "${tag.replace(/"/g, '\\"')}"`);
+      lines.push(`  - "${escapeYaml(tag)}"`);
     }
   }
 
@@ -246,7 +253,7 @@ export function regenerateFrontmatter(frontmatter: Record<string, unknown>): str
   const formatValue = (value: unknown): string => {
     if (typeof value === "string") {
       if (value.includes(":") || value.includes("#") || value.includes('"') || value.startsWith(" ")) {
-        return `"${value.replace(/"/g, '\\"')}"`;
+        return `"${escapeYaml(value)}"`;
       }
       return `"${value}"`;
     }

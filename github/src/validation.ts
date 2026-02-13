@@ -92,7 +92,14 @@ export async function validateGitHubRemote(existingUrl?: string): Promise<string
     remoteUrl = await getRemoteUrl();
   }
 
-  if (!remoteUrl.includes("github.com")) {
+  // Check if URL is a valid GitHub URL (must be github.com in the hostname)
+  // Use URL parsing to ensure github.com is the actual host, not part of path/query
+  try {
+    const url = new URL(remoteUrl.replace(/^git@github\.com:/, 'https://github.com/'));
+    if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
+      throw new Error('Not a GitHub URL');
+    }
+  } catch {
     throw new Error(
       `Remote '${remoteUrl}' is not a GitHub URL.\n\n` +
         "GitHub Pages deployment only works with GitHub repositories.\n" +

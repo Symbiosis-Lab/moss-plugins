@@ -38,7 +38,7 @@ describe("Progress Timeout Fix", () => {
         // Still building - report progress THEN sleep
         if (i < maxAttempts - 1) {
           operations.push(`report-progress-${i + 1}`);
-          await reportProgress("deploying", 4, 5, `Building on GitHub... (${i + 1}/${maxAttempts})`);
+          await reportProgress("verifying", 9, 10, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
 
           operations.push(`sleep-${i + 1}`);
           await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -59,9 +59,9 @@ describe("Progress Timeout Fix", () => {
       // Verify reportProgress was called exactly 2 times (not on last iteration)
       expect(reportProgress).toHaveBeenCalledTimes(2);
 
-      // Verify each call has the correct iteration number
-      expect(reportProgress).toHaveBeenNthCalledWith(1, "deploying", 4, 5, "Building on GitHub... (1/3)");
-      expect(reportProgress).toHaveBeenNthCalledWith(2, "deploying", 4, 5, "Building on GitHub... (2/3)");
+      // Verify each call has the correct iteration number (total=10 for REST API flow)
+      expect(reportProgress).toHaveBeenNthCalledWith(1, "verifying", 9, 10, "Waiting for GitHub Pages... (1/3)");
+      expect(reportProgress).toHaveBeenNthCalledWith(2, "verifying", 9, 10, "Waiting for GitHub Pages... (2/3)");
     });
 
     it("demonstrates WRONG pattern (reportProgress AFTER sleep)", async () => {
@@ -87,7 +87,7 @@ describe("Progress Timeout Fix", () => {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
 
           operations.push(`report-progress-${i + 1}`);
-          await reportProgress("deploying", 4, 5, `Building on GitHub... (${i + 1}/${maxAttempts})`);
+          await reportProgress("verifying", 9, 10, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
         }
       }
 
@@ -133,7 +133,7 @@ describe("Progress Timeout Fix", () => {
 
           if (i < maxAttempts - 1) {
             // CORRECT: Report progress BEFORE sleep
-            await timedReportProgress("deploying", 4, 5, `Building on GitHub... (${i + 1}/${maxAttempts})`);
+            await timedReportProgress("verifying", 9, 10, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
             await new Promise(resolve => setTimeout(resolve, pollInterval));
           }
         }

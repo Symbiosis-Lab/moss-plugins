@@ -3,6 +3,8 @@
  *
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
  * and test the full deployment flow with various scenarios.
+ *
+ * Updated for REST API deployment flow (replaces git CLI worktree+push).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -21,11 +23,107 @@ vi.mock("../utils", () => ({
   setCurrentHookName: vi.fn(),
   showToast: vi.fn().mockResolvedValue(undefined),
   dismissToast: vi.fn().mockResolvedValue(undefined),
+  closeBrowser: vi.fn().mockResolvedValue(undefined),
+  sleep: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the github-deploy module (REST API functions)
+vi.mock("../github-deploy", () => ({
+  getGhPagesState: vi.fn(),
+  getRemoteTree: vi.fn(),
+  diffFiles: vi.fn(),
+  deployViaAPI: vi.fn(),
+}));
+
+// Mock the auth module
+vi.mock("../auth", () => ({
+  promptLogin: vi.fn(),
+  checkAuthentication: vi.fn(),
+  validateToken: vi.fn(),
+  hasRequiredScopes: vi.fn(),
+}));
+
+// Mock the token module
+vi.mock("../token", () => ({
+  getToken: vi.fn(),
+  getTokenFromGit: vi.fn(),
+  storeToken: vi.fn(),
+  clearToken: vi.fn(),
+}));
+
+// Mock the git module (only functions still imported by main.ts)
+vi.mock("../git", () => ({
+  extractGitHubPagesUrl: vi.fn().mockImplementation((remoteUrl: string) => {
+    // Simple implementation for testing
+    const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (m) return `https://${m[1]}.github.io/${m[2]}`;
+    return "https://user.github.io/repo";
+  }),
+  parseGitHubUrl: vi.fn().mockImplementation((remoteUrl: string) => {
+    const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (m) return { owner: m[1], repo: m[2] };
+    return null;
+  }),
+  tryGetRemoteUrl: vi.fn(),
+  getLocalSiteFingerprint: vi.fn(),
+  isGitRepository: vi.fn(),
+  isGitAvailable: vi.fn(),
+  getRemoteUrl: vi.fn(),
+  hasGitRemote: vi.fn(),
+  initGitRepository: vi.fn(),
+  addRemote: vi.fn(),
+  ensureRemote: vi.fn(),
+  hasUpstream: vi.fn(),
+  hasLocalCommits: vi.fn(),
+  remoteHasCommits: vi.fn(),
+  pushWithUpstream: vi.fn(),
+  pushWithRetry: vi.fn(),
+}));
+
+// Mock the validation module (main.ts imports from this)
+vi.mock("../validation", () => ({
+  validateAll: vi.fn().mockImplementation(async (existingUrl?: string) => {
+    // By default, validateAll returns the existing URL (validation passes)
+    return existingUrl || "git@github.com:test-user/test-repo.git";
+  }),
+  isSSHRemote: vi.fn().mockImplementation((url: string) => {
+    return url.startsWith("git@") || url.startsWith("ssh://");
+  }),
+  isGitRepository: vi.fn().mockResolvedValue(true),
+  isGitAvailable: vi.fn().mockResolvedValue(true),
+  initGitRepository: vi.fn().mockResolvedValue(undefined),
+  ensureRemote: vi.fn().mockResolvedValue(undefined),
+  hasRemote: vi.fn().mockResolvedValue(true),
+  hasUpstream: vi.fn().mockResolvedValue(true),
+  hasLocalCommits: vi.fn().mockResolvedValue(true),
+  remoteHasCommits: vi.fn().mockResolvedValue(true),
+  pushWithUpstream: vi.fn().mockResolvedValue(undefined),
+  pushWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the repo-setup module
+vi.mock("../repo-setup", () => ({
+  ensureGitHubRepo: vi.fn(),
+}));
+
+// Mock the github-api module (checkPagesStatus used by waitForPagesLive)
+vi.mock("../github-api", () => ({
+  checkPagesStatus: vi.fn().mockResolvedValue({ status: "built" }),
+  getAuthenticatedUser: vi.fn(),
+  checkRepoExists: vi.fn(),
+  createRepository: vi.fn(),
 }));
 
 // Import after mocking
 import { on_deploy } from "../main";
 import { reportProgress, showToast } from "../utils";
+import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } from "../github-deploy";
+import { promptLogin } from "../auth";
+import { getToken, getTokenFromGit, storeToken } from "../token";
+import { tryGetRemoteUrl, getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { checkPagesStatus } from "../github-api";
+import { validateAll, isGitRepository, isGitAvailable, isSSHRemote } from "../validation";
+import { ensureGitHubRepo } from "../repo-setup";
 
 /**
  * Create a mock OnDeployContext for testing
@@ -47,12 +145,128 @@ function createMockContext(overrides?: Partial<OnDeployContext>): OnDeployContex
   };
 }
 
+/**
+ * Set up common mocks for a successful REST API deployment flow
+ */
+function setupDeployMocks(
+  ctx: MockTauriContext,
+  options?: {
+    ghPagesExists?: boolean;
+    hasChanges?: boolean;
+    commitSha?: string;
+    token?: string;
+    remoteUrl?: string;
+  }
+) {
+  const {
+    ghPagesExists = true,
+    hasChanges = true,
+    commitSha = "abc1234def5678",
+    token = "test-token",
+    remoteUrl = "git@github.com:test-user/test-repo.git",
+  } = options ?? {};
+
+  // Token is available
+  vi.mocked(getToken).mockResolvedValue(token);
+  vi.mocked(getTokenFromGit).mockResolvedValue(null);
+
+  // Git repo exists with remote
+  vi.mocked(isGitRepository).mockResolvedValue(true);
+  vi.mocked(isGitAvailable).mockResolvedValue(true);
+  vi.mocked(tryGetRemoteUrl).mockResolvedValue(remoteUrl);
+
+  // Validation passes and returns the remote URL
+  vi.mocked(validateAll).mockResolvedValue(remoteUrl);
+
+  // gh-pages state via REST API
+  if (ghPagesExists) {
+    vi.mocked(getGhPagesState).mockResolvedValue({
+      exists: true,
+      commitSha: "existing-commit-sha",
+      treeSha: "existing-tree-sha",
+    });
+  } else {
+    vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
+  }
+
+  // Local fingerprint (file hashing)
+  vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+    new Map([
+      ["index.html", "hash1"],
+      ["style.css", "hash2"],
+    ])
+  );
+
+  // Remote tree (if gh-pages exists)
+  if (ghPagesExists) {
+    vi.mocked(getRemoteTree).mockResolvedValue(
+      new Map([
+        [
+          "index.html",
+          { sha: hasChanges ? "old-hash" : "hash1", mode: "100644" },
+        ],
+        ...(hasChanges
+          ? []
+          : [["style.css", { sha: "hash2", mode: "100644" }] as [string, { sha: string; mode: string }]]),
+      ])
+    );
+  }
+
+  // Diff result
+  if (hasChanges) {
+    vi.mocked(diffFiles).mockReturnValue({
+      changed: [
+        { path: "index.html", localHash: "hash1" },
+        { path: "style.css", localHash: "hash2" },
+      ],
+      unchanged: [],
+      deleted: [],
+    });
+  } else {
+    vi.mocked(diffFiles).mockReturnValue({
+      changed: [],
+      unchanged: [
+        { path: "index.html", sha: "hash1", mode: "100644" },
+        { path: "style.css", sha: "hash2", mode: "100644" },
+      ],
+      deleted: [],
+    });
+  }
+
+  // Deploy result (REST API upload)
+  vi.mocked(deployViaAPI).mockResolvedValue(hasChanges ? commitSha : "");
+
+  // Pages status check (polling)
+  vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+}
+
 describe("on_deploy integration", () => {
   let ctx: MockTauriContext;
 
   beforeEach(() => {
     ctx = setupMockTauri();
     vi.clearAllMocks();
+
+    // Restore default implementations after clearAllMocks
+    vi.mocked(parseGitHubUrl).mockImplementation((remoteUrl: string) => {
+      const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+      if (m) return { owner: m[1], repo: m[2] };
+      return null;
+    });
+    vi.mocked(extractGitHubPagesUrl).mockImplementation((remoteUrl: string) => {
+      const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+      if (m) return `https://${m[1]}.github.io/${m[2]}`;
+      return "https://user.github.io/repo";
+    });
+    vi.mocked(validateAll).mockImplementation(async (existingUrl?: string) => {
+      return existingUrl || "git@github.com:test-user/test-repo.git";
+    });
+    vi.mocked(isSSHRemote).mockImplementation((url: string) => {
+      return url.startsWith("git@") || url.startsWith("ssh://");
+    });
+    vi.mocked(isGitRepository).mockResolvedValue(true);
+    vi.mocked(isGitAvailable).mockResolvedValue(true);
+    vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
   });
 
   afterEach(() => {
@@ -61,20 +275,14 @@ describe("on_deploy integration", () => {
 
   describe("Git Repository Validation", () => {
     it("shows repo setup UI when not a git repository", async () => {
-      // Mock git rev-parse to fail (not a git repo)
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: not a git repository (or any of the parent directories): .git",
-      });
+      // Not a git repo
+      vi.mocked(isGitRepository).mockResolvedValue(false);
       // Git is available
-      ctx.binaryConfig.setResult("git --version", {
-        success: true,
-        exitCode: 0,
-        stdout: "git version 2.39.0",
-        stderr: "",
-      });
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
+      // tryGetRemoteUrl returns null (no remote)
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // ensureGitHubRepo returns null (user cancelled)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
 
       const result = await on_deploy(createMockContext());
 
@@ -84,19 +292,14 @@ describe("on_deploy integration", () => {
     });
 
     it("returns cancelled when repo setup browser is dismissed", async () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: not a git repository",
-      });
+      // Not a git repo
+      vi.mocked(isGitRepository).mockResolvedValue(false);
       // Git is available
-      ctx.binaryConfig.setResult("git --version", {
-        success: true,
-        exitCode: 0,
-        stdout: "git version 2.39.0",
-        stderr: "",
-      });
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
+      // tryGetRemoteUrl returns null (no remote)
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // ensureGitHubRepo returns null (user cancelled)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
 
       const result = await on_deploy(createMockContext());
 
@@ -107,30 +310,13 @@ describe("on_deploy integration", () => {
   });
 
   describe("Remote Validation", () => {
-    it("fails when no git remote is configured (SSH-like path)", async () => {
-      // For this test we simulate a scenario where getRemoteUrl fails
-      // We can't easily test HTTPS path because auth check happens first
-      // So we test the validation functions directly via SSH path fallback
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // First call returns empty (triggers validation path)
-      // Then fails on actual validation
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: No such remote 'origin'",
-      });
-
-      // Set up site files
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
+    it("fails when no git remote is configured", async () => {
+      // Git repo exists but no remote
+      vi.mocked(isGitRepository).mockResolvedValue(true);
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // ensureGitHubRepo returns null (user cancelled)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
 
       const result = await on_deploy(createMockContext());
 
@@ -140,24 +326,19 @@ describe("on_deploy integration", () => {
     });
 
     it("fails when remote is not GitHub (SSH protocol path)", async () => {
-      // Use SSH-style GitLab URL to avoid HTTPS auth check
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH-style GitLab remote (not github.com)
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@gitlab.com:user/repo.git",
-        stderr: "",
-      });
-
-      // Set up files for site validation to pass
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
+      // Git repo exists with GitLab remote
+      vi.mocked(isGitRepository).mockResolvedValue(true);
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:user/repo.git");
+      // Token is available
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      // validateAll throws for non-GitHub URL
+      vi.mocked(validateAll).mockRejectedValue(
+        new Error(
+          "Remote 'git@gitlab.com:user/repo.git' is not a GitHub URL.\n\n" +
+          "GitHub Pages deployment only works with GitHub repositories.\n" +
+          "Please add a GitHub remote or use a different deployment method."
+        )
+      );
 
       const result = await on_deploy(createMockContext());
 
@@ -167,22 +348,19 @@ describe("on_deploy integration", () => {
     });
 
     it("includes actual URL in error message for non-GitHub remote", async () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH-style GitLab URL to avoid auth check
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@gitlab.com:myorg/myrepo.git",
-        stderr: "",
-      });
-
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
+      // Git repo exists with GitLab remote
+      vi.mocked(isGitRepository).mockResolvedValue(true);
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:myorg/myrepo.git");
+      // Token is available
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      // validateAll throws with URL in message
+      vi.mocked(validateAll).mockRejectedValue(
+        new Error(
+          "Remote 'git@gitlab.com:myorg/myrepo.git' is not a GitHub URL.\n\n" +
+          "GitHub Pages deployment only works with GitHub repositories.\n" +
+          "Please add a GitHub remote or use a different deployment method."
+        )
+      );
 
       const result = await on_deploy(createMockContext());
 
@@ -194,57 +372,30 @@ describe("on_deploy integration", () => {
   describe("Site Compilation Validation", () => {
     it("fails when context.site_files is empty (Bug 13 fix)", async () => {
       // Bug 13: Use context.site_files for validation, NOT listFiles()
-      // The plugin should trust context data provided by moss
-
-      const result = await on_deploy(createMockContext({
-        site_files: [], // Empty site_files - moss tells plugin no files exist
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: [], // Empty site_files - moss tells plugin no files exist
+        })
+      );
 
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/site.*empty|compile.*first/i);
     });
 
     it("passes validation when context.site_files has files (Bug 13 fix)", async () => {
-      // Setup: Git repo exists with SSH remote (bypass auth)
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      // Setup full deploy mocks
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: true,
-        exitCode: 0,
-        stdout: ".github/workflows/moss-deploy.yml",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Don't set filesystem files - validation should use context.site_files only
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html", "style.css", "app.js"], // Moss provides this
-      }));
+      // Context has site_files (moss provides these)
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html", "style.css", "app.js"],
+        })
+      );
 
       // Should NOT fail with "site empty" error
       expect(result.success).toBe(true);
@@ -252,48 +403,19 @@ describe("on_deploy integration", () => {
     });
 
     it("does NOT call listFiles() for site validation (Bug 13 fix)", async () => {
-      // This test verifies the plugin uses context.site_files, not listFiles()
-
-      // Setup with empty filesystem but populated context.site_files
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: true,
-        exitCode: 0,
-        stdout: ".github/workflows/moss-deploy.yml",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
+      // Setup full deploy mocks
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
       // Context has site_files (moss provides these), filesystem is empty
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
       // If the plugin called listFiles(), it would find nothing and fail
       // But with context.site_files, it should succeed
@@ -303,70 +425,11 @@ describe("on_deploy integration", () => {
 
   describe("SSH Remote Handling", () => {
     it("skips OAuth for SSH remotes and proceeds with deployment", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      // Branch detection
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // Workflow doesn't exist yet
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "error: pathspec did not match",
-      });
-
-      // Git add, commit, push
-      ctx.binaryConfig.setResult("git add .github/workflows/moss-deploy.yml .gitignore", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123def456",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git push", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      // Set up files
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
-      ctx.filesystem.setFile("/test/project/.gitignore", "node_modules/");
 
       const result = await on_deploy(createMockContext());
 
@@ -376,32 +439,17 @@ describe("on_deploy integration", () => {
   });
 
   describe("HTTPS Remote Authentication", () => {
-    it("skips OAuth for existing HTTPS remotes (Bug 23 fix)", async () => {
-      // Bug 23: For existing HTTPS remotes, git handles push auth via credential helper
-      // OAuth is only needed when creating new repos (no remote yet)
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("skips OAuth for existing HTTPS remotes when token available (Bug 23 fix)", async () => {
+      // Bug 23: For existing HTTPS remotes, token from cookie/git-credential is used
+      setupDeployMocks(ctx, {
+        remoteUrl: "https://github.com/user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
-
-      // HTTPS remote exists
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "https://github.com/user/repo.git",
-        stderr: "",
-      });
-
-      // Set up site files
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
 
       const result = await on_deploy(createMockContext());
 
-      // Should not have opened browser for OAuth (git handles push auth)
+      // Should not have opened browser for OAuth
       expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(0);
       // Deployment proceeds (may still fail due to other mocks, but not auth)
     });
@@ -409,53 +457,12 @@ describe("on_deploy integration", () => {
 
   describe("Successful Deployment", () => {
     it("returns success with deployment info for SSH remote", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:testuser/testrepo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "abc123def",
       });
-
-      // SSH remote - use default for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      // Specific overrides
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:testuser/testrepo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: true,
-        exitCode: 0,
-        stdout: ".github/workflows/moss-deploy.yml",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Set up files
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
 
       const result = await on_deploy(createMockContext());
 
@@ -467,304 +474,82 @@ describe("on_deploy integration", () => {
 
     it("indicates first-time setup in message", async () => {
       // Set up for first-time deployment (gh-pages doesn't exist)
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: false,
+        hasChanges: true,
+        commitSha: "abc123",
       });
 
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html", // Show changes exist
-        stderr: "",
+      // First deploy: diffFiles returns all files as changed (no remote tree)
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "hash1" },
+          { path: "style.css", localHash: "hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
       });
-
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages doesn't exist (first time deploy)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Shell commands for worktree approach
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
-      ctx.filesystem.setFile("/test/project/.gitignore", "");
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // New message for zero-config deployment
       expect(result.message).toContain("deployed");
       expect(result.deployment?.metadata?.was_first_setup).toBe("true");
     });
   });
 
   // ============================================================================
-  // Bug 14: Git Push Fails Without Upstream Branch
-  // Tests for smart push with upstream detection and retry logic
+  // Smart Push tests are no longer needed because we use REST API now,
+  // but we keep the test descriptions and adapt them to the new flow.
   // ============================================================================
 
-  describe("Smart Push (Bug 14 Fix)", () => {
-    it("uses push -u when no upstream is configured", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+  describe("Smart Push (Bug 14 Fix) - REST API equivalent", () => {
+    it("deploys via REST API regardless of upstream configuration", async () => {
+      // REST API deployment doesn't depend on upstream configuration
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // Workflow doesn't exist
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "error: pathspec did not match",
-      });
-
-      // No upstream configured (Bug 14 scenario)
-      ctx.binaryConfig.setResult("git rev-parse --abbrev-ref --symbolic-full-name @{u}", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: no upstream configured for branch 'main'",
-      });
-
-      // Has local commits
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
-      ctx.filesystem.setFile("/test/project/.gitignore", "");
 
       const result = await on_deploy(createMockContext());
 
-      // Should succeed - push -u should be used
+      // Should succeed - REST API doesn't need upstream
       expect(result.success).toBe(true);
+      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
     });
 
-    it("uses regular push when upstream exists", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("deploys via REST API with token auth (no SSH needed)", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // Workflow doesn't exist
-      ctx.binaryConfig.setResult("git ls-files --error-unmatch .github/workflows/moss-deploy.yml", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "error: pathspec did not match",
-      });
-
-      // Upstream IS configured (returning user scenario)
-      ctx.binaryConfig.setResult("git rev-parse --abbrev-ref --symbolic-full-name @{u}", {
-        success: true,
-        exitCode: 0,
-        stdout: "origin/main",
-        stderr: "",
-      });
-
-      // Has local commits
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
-      ctx.filesystem.setFile("/test/project/.gitignore", "");
 
       const result = await on_deploy(createMockContext());
 
-      // Should succeed with regular push
+      // Should succeed with regular REST API deploy
       expect(result.success).toBe(true);
     });
 
     it("handles first-time setup (gh-pages branch doesn't exist)", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: false,
+        hasChanges: true,
+        commitSha: "new-commit-sha",
       });
 
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
+      // First deploy: all files are new
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "hash1" },
+          { path: "style.css", localHash: "hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
       });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages doesn't exist (first time deploy)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Default success for all git commands (with changes to commit)
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html",
-        stderr: "",
-      });
-
-      // Shell commands for worktree approach
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.filesystem.setFile("/test/project/.moss/site/index.html", "<html></html>");
-      ctx.filesystem.setFile("/test/project/.gitignore", "");
 
       const result = await on_deploy(createMockContext());
 
@@ -775,154 +560,29 @@ describe("on_deploy integration", () => {
   });
 
   // ============================================================================
-  // Bug 15: Subsequent Deploys Don't Push Site Changes
-  // Note: With Bug 16 fix, we now use gh-pages branch instead of workflow.
-  // The worktree approach uses dynamic paths that are hard to mock precisely.
-  // Detailed push verification is covered by Bug 16 tests.
+  // Subsequent Deploys (now use REST API diff instead of worktree)
   // ============================================================================
 
   describe("Subsequent Deploys (Bug 15 Fix)", () => {
     it("succeeds when gh-pages already exists (returning user)", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch EXISTS (returning user)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456789",
-        stderr: "",
-      });
-
-      // Default success for all git commands (worktree operations)
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      // Default success for shell commands (rm, cp, find)
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
 
-      // Deployment should succeed (worktree operations work)
-      // Note: With default mocks, worktree status returns empty = no changes
-      // Detailed change detection is tested in Bug 16 tests
+      // Deployment should succeed
       expect(result.success).toBe(true);
       expect(result.deployment?.method).toBe("github-pages");
     });
 
     it("reports no changes when site is up to date", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch EXISTS (returning user)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Default success for all git commands (worktree status returns empty = no changes)
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      // Default success for shell commands (rm, cp, find)
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: false,
       });
 
       const result = await on_deploy(createMockContext());
@@ -933,151 +593,29 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.metadata?.commit_sha).toBe("");
     });
 
-    it("uses gh-pages worktree approach (not main branch ahead check)", async () => {
-      // Note: With Bug 16, we use gh-pages worktree approach.
-      // The "local ahead of remote" concept from Bug 15 doesn't apply anymore.
-      // We always compare current site content with gh-pages branch content.
-      // This test verifies deployment succeeds with gh-pages existing.
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "xyz789abc",
-        stderr: "",
-      });
-
-      // Default success for all commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+    it("uses REST API approach (not worktree) for deployment", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
       expect(result.deployment?.method).toBe("github-pages");
-      // With worktree approach, we compare site content, not main branch commits
+      // Verify REST API functions were called
+      expect(vi.mocked(getGhPagesState)).toHaveBeenCalled();
+      expect(vi.mocked(getLocalSiteFingerprint)).toHaveBeenCalled();
+      expect(vi.mocked(diffFiles)).toHaveBeenCalled();
+      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
     });
 
     it("uses existing gh-pages branch (not orphan) when branch already exists", async () => {
-      // Note: With Bug 16, we use gh-pages instead of workflow.
-      // This test verifies that when gh-pages exists, we don't recreate it as orphan.
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch EXISTS (returning user)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      // Default success for shell commands
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
@@ -1089,86 +627,26 @@ describe("on_deploy integration", () => {
   });
 
   // ============================================================================
-  // Bug 16: gh-pages Branch Not Created (Zero-Config Deployment)
-  // Tests for deploying to gh-pages branch using git worktree approach
-  // CRITICAL: Must NOT switch current branch (triggers file watchers)
+  // Zero-Config gh-pages Deployment (now via REST API)
   // ============================================================================
 
   describe("Zero-Config gh-pages Deployment (Bug 16 Fix)", () => {
     it("deploys successfully when gh-pages branch does not exist (first time)", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: false,
+        hasChanges: true,
+        commitSha: "abc123def",
       });
 
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch doesn't exist yet (first time deploy)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123def",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html", // Show changes exist
-        stderr: "",
-      });
-
-      // Default success for shell commands (cp, rm, etc)
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      // First deploy: all files changed
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "hash1" },
+          { path: "style.css", localHash: "hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
@@ -1179,70 +657,11 @@ describe("on_deploy integration", () => {
     });
 
     it("deploys successfully when gh-pages branch already exists (returning user)", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS (returning user)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456ghi",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "M  index.html", // Show changes exist
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "def456ghi",
       });
 
       const result = await on_deploy(createMockContext());
@@ -1253,64 +672,10 @@ describe("on_deploy integration", () => {
     });
 
     it("reports no changes when site content is identical", async () => {
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Git status in worktree returns empty (no changes)
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "", // No changes
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: false,
       });
 
       const result = await on_deploy(createMockContext());
@@ -1321,90 +686,16 @@ describe("on_deploy integration", () => {
   });
 
   // ============================================================================
-  // Bug 24: Stale Worktree Blocks Deployment
-  // When a previous deploy crashed, a stale worktree may still have gh-pages
-  // checked out, blocking new deployments. Plugin must recover gracefully.
+  // Stale Worktree Recovery tests are no longer needed (REST API doesn't use
+  // worktrees), but we keep equivalent tests for REST API error recovery.
   // ============================================================================
 
-  describe("Stale Worktree Recovery (Bug 24 Fix)", () => {
-    it("succeeds when worktree prune cleans up stale entries proactively", async () => {
-      // Bug 24 fix: worktree prune is called at the start to clean up stale entries
-      // This test verifies normal operation when prune successfully cleans up
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
-
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // worktree prune succeeds (cleans up stale entries proactively)
-      ctx.binaryConfig.setResult("git worktree prune", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456ghi",
-        stderr: "",
-      });
-
-      // Default success for all git commands (worktree add succeeds after prune)
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html",
-        stderr: "",
-      });
-
-      // Shell commands succeed
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+  describe("REST API Error Recovery (replaces Stale Worktree Recovery)", () => {
+    it("succeeds with normal REST API deployment", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
@@ -1413,178 +704,37 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.method).toBe("github-pages");
     });
 
-    it("continues deployment even if worktree prune fails", async () => {
-      // Bug 24 fix: if worktree prune fails, deployment should continue
-      // (the error might be harmless, and worktree add might still work)
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("handles REST API errors gracefully", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // worktree prune FAILS (but deployment should continue)
-      ctx.binaryConfig.setResult("git worktree prune", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "error: some prune error",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456ghi",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html",
-        stderr: "",
-      });
-
-      // Shell commands succeed
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
+      // deployViaAPI throws an error
+      vi.mocked(deployViaAPI).mockRejectedValue(new Error("GitHub API error: 500"));
 
       const result = await on_deploy(createMockContext());
 
-      // Should still succeed because worktree prune failure is caught and ignored
-      expect(result.success).toBe(true);
-      expect(result.deployment?.method).toBe("github-pages");
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("500");
     });
 
-    it("handles first-time deployment with worktree prune (orphan branch)", async () => {
-      // Bug 24 fix: worktree prune is also called for first-time deployments
-      // when creating the orphan gh-pages branch
-
-      // Git repo exists
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("handles first-time deployment via REST API (orphan branch equivalent)", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: false,
+        hasChanges: true,
+        commitSha: "abc123def",
       });
 
-      // SSH remote
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages does NOT exist (first time deploy)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-
-      // worktree prune succeeds
-      ctx.binaryConfig.setResult("git worktree prune", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123def",
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "A  index.html",
-        stderr: "",
-      });
-
-      // Shell commands succeed
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "hash1" },
+          { path: "style.css", localHash: "hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
@@ -1595,85 +745,20 @@ describe("on_deploy integration", () => {
   });
 
   describe("Bug 23: OAuth should not trigger when git credentials work", () => {
-    it("should deploy without OAuth when HTTPS remote exists (git handles auth)", async () => {
-      // Setup: Git repo exists with HTTPS remote
-      // Git push will use git's own credential helper - no OAuth needed
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("should deploy without OAuth when token is available (git handles auth)", async () => {
+      // Setup: token available from plugin cookies
+      setupDeployMocks(ctx, {
+        remoteUrl: "https://github.com/user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        token: "test-token",
       });
 
-      // HTTPS remote (triggers auth check in buggy code)
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "https://github.com/user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages branch exists (returning user scenario)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456",
-        stderr: "",
-      });
-
-      // Git worktree and push commands succeed
-      ctx.binaryConfig.setResult("git worktree", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git -C", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
       expect(result.success).toBe(true);
       // Key assertion: No OAuth browser should have been opened
@@ -1682,471 +767,424 @@ describe("on_deploy integration", () => {
   });
 
   // ============================================================================
-  // Early Change Detection
-  // Tests for optimized "no changes" detection before worktree operations
+  // Early Change Detection (now built into REST API flow via diffFiles)
   // ============================================================================
 
   describe("Early Change Detection", () => {
-    it("skips worktree operations when no changes detected", async () => {
-      // Setup: gh-pages exists with same content as local site
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("skips deployment when no changes detected", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: false,
       });
 
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS (returning user)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Early change detection: gh-pages has file with hash "abc123hash"
-      ctx.binaryConfig.setResult("git ls-tree -r gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "100644 blob abc123hash\tindex.html",
-        stderr: "",
-      });
-
-      // Mock find command for listing local files
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "index.html", // Same file list
-        stderr: "",
-      });
-
-      // Local file has same hash (batch hash-object via stdin)
-      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123hash", // Same hash = no changes
-        stderr: "",
-      });
-
-      // Default success for all other git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
       // Should succeed with no changes
       expect(result.success).toBe(true);
       expect(result.message).toContain("No changes to deploy");
       expect(result.deployment?.metadata?.commit_sha).toBe("");
 
-      // Toast is now shown via showToast() call instead of being in HookResult
-      // The showToast mock was called - verify it was invoked
-      const { showToast } = await import("../utils");
-      expect(showToast).toHaveBeenCalled();
+      // deployViaAPI should NOT have been called
+      expect(vi.mocked(deployViaAPI)).not.toHaveBeenCalled();
 
-      // Worktree operations should NOT have been called
-      // (We can't easily verify this without more sophisticated mocking,
-      // but the success with empty commit_sha indicates early exit)
+      // Toast is shown via showToast()
+      expect(showToast).toHaveBeenCalled();
     });
 
-    it("proceeds with worktree when changes detected", async () => {
-      // Setup: gh-pages exists but content differs
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("proceeds with deployment when changes detected", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "newcommitsha789",
       });
 
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Early change detection: gh-pages has old hash
-      ctx.binaryConfig.setResult("git ls-tree -r gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "100644 blob oldhash123\tindex.html",
-        stderr: "",
-      });
-
-      // Mock find command
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "index.html",
-        stderr: "",
-      });
-
-      // Local file has DIFFERENT hash (batch hash-object via stdin)
-      ctx.binaryConfig.setResult("git hash-object --stdin-paths", {
-        success: true,
-        exitCode: 0,
-        stdout: "newhash456", // Different hash = has changes
-        stderr: "",
-      });
-
-      // Default success for worktree operations
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "M  index.html", // Status shows changes
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "newcommitsha789",
-        stderr: "",
-      });
-
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
       // Should succeed with changes deployed
       expect(result.success).toBe(true);
-      // With changes, commit_sha should be set
-      // (Note: due to mocking complexities, this may vary)
+      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
     });
 
-    it("falls back to worktree approach when early detection fails", async () => {
-      // Setup: gh-pages exists but early detection encounters an error
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("handles getLocalSiteFingerprint returning null gracefully", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
+      // Override: fingerprint fails
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(null);
 
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Early change detection FAILS
-      ctx.binaryConfig.setResult("git ls-tree -r gh-pages", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "error: some git error",
-      });
-
-      // Should fall back to worktree approach
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "", // No changes in worktree
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
-
-      // Should still succeed (fallback to worktree approach)
-      expect(result.success).toBe(true);
+      // Should fail gracefully
+      expect(result.success).toBe(false);
     });
   });
 
   describe("Progress Visibility", () => {
-    it("reports granular progress during worktree deployment", async () => {
-      // Setup: gh-pages exists, changes detected, full deployment flow
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("reports progress during REST API deployment", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
 
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-
-      // gh-pages EXISTS
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-
-      // Early change detection returns "has changes"
-      // Uses git -c core.quotepath=false ls-tree -r gh-pages
-      ctx.binaryConfig.setResult("git -c core.quotepath=false ls-tree -r gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "100644 blob oldhash\tindex.html",
-        stderr: "",
-      });
-
-      // find lists local files
-      ctx.binaryConfig.setResult("find", {
-        success: true,
-        exitCode: 0,
-        stdout: ".moss/site/index.html",
-        stderr: "",
-      });
-
-      // git hash-object computes hash for each local file
-      ctx.binaryConfig.setResult("git hash-object .moss/site/index.html", {
-        success: true,
-        exitCode: 0,
-        stdout: "newhash", // Different from oldhash = has changes
-        stderr: "",
-      });
-
-      // Default success for all git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "M  index.html",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-
-      const result = await on_deploy(createMockContext({
-        site_files: ["index.html"],
-      }));
+      const result = await on_deploy(
+        createMockContext({
+          site_files: ["index.html"],
+        })
+      );
 
       expect(result.success).toBe(true);
 
-      // Verify granular progress was reported during deployment
+      // Verify progress was reported during deployment
       const progressCalls = vi.mocked(reportProgress).mock.calls;
-      const progressMessages = progressCalls.map(call => call[3]); // 4th arg is message
 
-      // Should include worktree-specific progress messages
-      expect(progressMessages).toContainEqual(expect.stringMatching(/worktree|preparing|copying/i));
+      // Should have progress calls with total=10
+      expect(progressCalls.length).toBeGreaterThan(0);
+      const progressTotals = progressCalls.map((call) => call[2]); // 3rd arg is total
+      // All progress calls should use total=10
+      for (const total of progressTotals) {
+        expect(total).toBe(10);
+      }
     });
   });
 
   describe("Error Categorization", () => {
-    // Helper to set up a deploy that will reach the push step and then fail
-    function setupDeployToReachPush(ctx: MockTauriContext, pushError: { stderr: string }) {
-      // Git repo exists with SSH remote
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
+    it("shows helpful message for timeout errors", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-      // gh-pages exists but has different content (triggers deploy)
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "def456",
-        stderr: "",
-      });
-      // Default git success for most commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      // Shell commands succeed
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      // Worktree status shows changes (so it tries to push)
-      ctx.binaryConfig.setResult("git -C", {
-        success: true,
-        exitCode: 0,
-        stdout: "M  index.html",
-        stderr: "",
-      });
-    }
 
-    it("shows helpful message for push timeout errors", async () => {
-      setupDeployToReachPush(ctx, { stderr: "" });
-
-      // Make the fallback git command fail with timeout error
-      // Since we can't target the exact push command (random worktree path),
-      // we test error categorization through a general git failure
-      ctx.binaryConfig.setResult("git", {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "Binary execution timed out after 300000 ms",
-      });
+      // Make deployViaAPI fail with timeout error
+      vi.mocked(deployViaAPI).mockRejectedValue(
+        new Error("Request timed out after 300000 ms")
+      );
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
       // Verify showToast was called with timeout-specific message
       const toastCalls = vi.mocked(showToast).mock.calls;
-      const errorToasts = toastCalls.filter(call => call[0]?.variant === "error");
+      const errorToasts = toastCalls.filter(
+        (call) => call[0]?.variant === "error"
+      );
       expect(errorToasts.length).toBeGreaterThan(0);
       const toastMsg = errorToasts[0][0].message;
       expect(toastMsg).toContain("may still be running");
     });
 
     it("shows SSH auth message for permission denied errors", async () => {
-      setupDeployToReachPush(ctx, { stderr: "" });
-
-      // Make git fail with SSH permission denied
-      ctx.binaryConfig.setResult("git", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "Permission denied (publickey).",
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
       });
+
+      // Make deployViaAPI fail with SSH permission denied
+      vi.mocked(deployViaAPI).mockRejectedValue(
+        new Error("Permission denied (publickey).")
+      );
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
       const toastCalls = vi.mocked(showToast).mock.calls;
-      const errorToasts = toastCalls.filter(call => call[0]?.variant === "error");
+      const errorToasts = toastCalls.filter(
+        (call) => call[0]?.variant === "error"
+      );
       expect(errorToasts.length).toBeGreaterThan(0);
       const toastMsg = errorToasts[0][0].message;
       expect(toastMsg).toContain("ssh-add");
+    });
+  });
+
+  // ============================================================================
+  // New REST API-specific tests (Tests A-H)
+  // ============================================================================
+
+  describe("REST API Deploy - New Tests", () => {
+    // Test A: REST API deploy with changes uploads only changed files
+    it("Test A: REST API deploy with changes uploads only changed files", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "new-commit-sha",
+      });
+
+      // Override diffFiles to return specific changed/unchanged/deleted sets
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "new-hash-1" },
+          { path: "new-page.html", localHash: "new-hash-2" },
+        ],
+        unchanged: [{ path: "style.css", sha: "unchanged-hash", mode: "100644" }],
+        deleted: ["old-page.html"],
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      // Verify deployViaAPI was called with the correct changed/deleted arrays
+      expect(vi.mocked(deployViaAPI)).toHaveBeenCalledTimes(1);
+      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
+      expect(deployCall.changed).toEqual([
+        { path: "index.html", localHash: "new-hash-1" },
+        { path: "new-page.html", localHash: "new-hash-2" },
+      ]);
+      expect(deployCall.deleted).toEqual(["old-page.html"]);
+    });
+
+    // Test B: REST API deploy first-time creates branch
+    it("Test B: REST API deploy first-time creates branch", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: false,
+        hasChanges: true,
+        commitSha: "first-commit-sha",
+      });
+
+      // First deploy: all files are changed (no remote tree)
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "hash1" },
+          { path: "style.css", localHash: "hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      // Verify ghPagesState.exists = false was passed to deployViaAPI
+      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
+      expect(deployCall.ghPagesState).toEqual({ exists: false });
+      // getRemoteTree should NOT have been called (no remote tree for first deploy)
+      expect(vi.mocked(getRemoteTree)).not.toHaveBeenCalled();
+    });
+
+    // Test C: REST API deploy no changes exits early
+    it("Test C: REST API deploy no changes exits early", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: false,
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("No changes");
+      // deployViaAPI should NOT have been called
+      expect(vi.mocked(deployViaAPI)).not.toHaveBeenCalled();
+    });
+
+    // Test D: Progress is monotonically increasing
+    it("Test D: Progress is monotonically increasing", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+
+      // Capture all reportProgress calls
+      const progressCalls = vi.mocked(reportProgress).mock.calls;
+      const currentValues = progressCalls.map((call) => call[1]); // 2nd arg is current
+
+      // Assert current values are non-decreasing
+      for (let i = 1; i < currentValues.length; i++) {
+        expect(currentValues[i]).toBeGreaterThanOrEqual(currentValues[i - 1]);
+      }
+
+      // All calls should use total=10
+      for (const call of progressCalls) {
+        expect(call[2]).toBe(10);
+      }
+    });
+
+    // Test E: Auth required before REST API deploy
+    it("Test E: Auth required before REST API deploy", async () => {
+      // Setup with git repo and valid remote
+      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
+        success: true,
+        exitCode: 0,
+        stdout: ".git\n",
+        stderr: "",
+      });
+      ctx.binaryConfig.setResult("git remote get-url origin", {
+        success: true,
+        exitCode: 0,
+        stdout: "git@github.com:user/repo.git\n",
+        stderr: "",
+      });
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(
+        "git@github.com:user/repo.git"
+      );
+
+      // No token available from any source
+      vi.mocked(getToken).mockResolvedValue(null);
+      vi.mocked(getTokenFromGit).mockResolvedValue(null);
+
+      // promptLogin succeeds and then token is available
+      vi.mocked(promptLogin).mockResolvedValue(true);
+      // After promptLogin, getToken returns a token
+      vi.mocked(getToken)
+        .mockResolvedValueOnce(null) // first call in ensureToken
+        .mockResolvedValueOnce("new-token"); // second call after promptLogin
+
+      // Set up rest of the deploy flow
+      vi.mocked(getGhPagesState).mockResolvedValue({
+        exists: true,
+        commitSha: "commit-sha",
+        treeSha: "tree-sha",
+      });
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([["index.html", "hash1"]])
+      );
+      vi.mocked(getRemoteTree).mockResolvedValue(
+        new Map([["index.html", { sha: "hash1", mode: "100644" }]])
+      );
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [],
+        unchanged: [{ path: "index.html", sha: "hash1", mode: "100644" }],
+        deleted: [],
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      // promptLogin should have been called
+      expect(vi.mocked(promptLogin)).toHaveBeenCalled();
+    });
+
+    // Test F: REST API error returns helpful message
+    it("Test F: REST API error returns helpful message", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+      });
+
+      // deployViaAPI throws error with "Bad credentials"
+      vi.mocked(deployViaAPI).mockRejectedValue(
+        new Error("Bad credentials - authentication failed")
+      );
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(false);
+      // Error toast should contain helpful message
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const errorToasts = toastCalls.filter(
+        (call) => call[0]?.variant === "error"
+      );
+      expect(errorToasts.length).toBeGreaterThan(0);
+      expect(errorToasts[0][0].message).toContain("Authentication failed");
+    });
+
+    // Test G: Network failure during upload is handled gracefully
+    it("Test G: Network failure during upload is handled gracefully", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+      });
+
+      // deployViaAPI throws "Network error"
+      vi.mocked(deployViaAPI).mockRejectedValue(
+        new Error("Network connection failed")
+      );
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(false);
+      // Error message should mention failure
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const errorToasts = toastCalls.filter(
+        (call) => call[0]?.variant === "error"
+      );
+      expect(errorToasts.length).toBeGreaterThan(0);
+      expect(errorToasts[0][0].message).toContain("Network error");
+    });
+
+    // Test H: Unicode filenames work correctly
+    it("Test H: Unicode filenames work correctly", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:user/repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "unicode-commit-sha",
+      });
+
+      // Override fingerprint with unicode paths
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([
+          ["\u4e2d\u6587\u6587\u7ae0.html", "hash-chinese"],
+          ["\u65e5\u672c\u8a9e.html", "hash-japanese"],
+          ["caf\u00e9.html", "hash-cafe"],
+        ])
+      );
+
+      // Remote tree has one matching file
+      vi.mocked(getRemoteTree).mockResolvedValue(
+        new Map([
+          ["\u4e2d\u6587\u6587\u7ae0.html", { sha: "old-hash", mode: "100644" }],
+        ])
+      );
+
+      // diffFiles returns unicode paths as changed
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "\u4e2d\u6587\u6587\u7ae0.html", localHash: "hash-chinese" },
+          { path: "\u65e5\u672c\u8a9e.html", localHash: "hash-japanese" },
+          { path: "caf\u00e9.html", localHash: "hash-cafe" },
+        ],
+        unchanged: [],
+        deleted: [],
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+
+      // Verify diffFiles was called with unicode paths in the local fingerprint
+      expect(vi.mocked(diffFiles)).toHaveBeenCalled();
+      const diffCall = vi.mocked(diffFiles).mock.calls[0];
+      const localFingerprint = diffCall[0] as Map<string, string>;
+      expect(localFingerprint.has("\u4e2d\u6587\u6587\u7ae0.html")).toBe(true);
+      expect(localFingerprint.has("\u65e5\u672c\u8a9e.html")).toBe(true);
+      expect(localFingerprint.has("caf\u00e9.html")).toBe(true);
+
+      // Verify deployViaAPI received the unicode paths
+      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
+      const changedPaths = deployCall.changed.map(
+        (f: { path: string }) => f.path
+      );
+      expect(changedPaths).toContain("\u4e2d\u6587\u6587\u7ae0.html");
+      expect(changedPaths).toContain("\u65e5\u672c\u8a9e.html");
+      expect(changedPaths).toContain("caf\u00e9.html");
     });
   });
 });

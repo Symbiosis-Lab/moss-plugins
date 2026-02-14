@@ -2,6 +2,8 @@
  * Step definitions for GitHub Deployer validation tests
  *
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
+ *
+ * Updated for REST API deployment flow (replaces git CLI worktree+push).
  */
 
 import { loadFeature, describeFeature } from "@amiceli/vitest-cucumber";
@@ -24,10 +26,103 @@ vi.mock("../../src/utils", () => ({
   setCurrentHookName: vi.fn(),
   showToast: vi.fn().mockResolvedValue(undefined),
   dismissToast: vi.fn().mockResolvedValue(undefined),
+  closeBrowser: vi.fn().mockResolvedValue(undefined),
+  sleep: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the github-deploy module (REST API functions)
+vi.mock("../../src/github-deploy", () => ({
+  getGhPagesState: vi.fn(),
+  getRemoteTree: vi.fn(),
+  diffFiles: vi.fn(),
+  deployViaAPI: vi.fn(),
+}));
+
+// Mock the auth module
+vi.mock("../../src/auth", () => ({
+  promptLogin: vi.fn(),
+  checkAuthentication: vi.fn(),
+  validateToken: vi.fn(),
+  hasRequiredScopes: vi.fn(),
+}));
+
+// Mock the token module
+vi.mock("../../src/token", () => ({
+  getToken: vi.fn(),
+  getTokenFromGit: vi.fn(),
+  storeToken: vi.fn(),
+  clearToken: vi.fn(),
+}));
+
+// Mock the git module (only functions still imported by main.ts)
+vi.mock("../../src/git", () => ({
+  extractGitHubPagesUrl: vi.fn().mockImplementation((remoteUrl: string) => {
+    const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (m) return `https://${m[1]}.github.io/${m[2]}`;
+    return "https://user.github.io/repo";
+  }),
+  parseGitHubUrl: vi.fn().mockImplementation((remoteUrl: string) => {
+    const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (m) return { owner: m[1], repo: m[2] };
+    return null;
+  }),
+  tryGetRemoteUrl: vi.fn(),
+  getLocalSiteFingerprint: vi.fn(),
+  isGitRepository: vi.fn(),
+  isGitAvailable: vi.fn(),
+  getRemoteUrl: vi.fn(),
+  hasGitRemote: vi.fn(),
+  initGitRepository: vi.fn(),
+  addRemote: vi.fn(),
+  ensureRemote: vi.fn(),
+  hasUpstream: vi.fn(),
+  hasLocalCommits: vi.fn(),
+  remoteHasCommits: vi.fn(),
+  pushWithUpstream: vi.fn(),
+  pushWithRetry: vi.fn(),
+}));
+
+// Mock the validation module (main.ts imports from this)
+vi.mock("../../src/validation", () => ({
+  validateAll: vi.fn().mockImplementation(async (existingUrl?: string) => {
+    return existingUrl || "git@github.com:test-user/test-repo.git";
+  }),
+  isSSHRemote: vi.fn().mockImplementation((url: string) => {
+    return url.startsWith("git@") || url.startsWith("ssh://");
+  }),
+  isGitRepository: vi.fn().mockResolvedValue(true),
+  isGitAvailable: vi.fn().mockResolvedValue(true),
+  initGitRepository: vi.fn().mockResolvedValue(undefined),
+  ensureRemote: vi.fn().mockResolvedValue(undefined),
+  hasRemote: vi.fn().mockResolvedValue(true),
+  hasUpstream: vi.fn().mockResolvedValue(true),
+  hasLocalCommits: vi.fn().mockResolvedValue(true),
+  remoteHasCommits: vi.fn().mockResolvedValue(true),
+  pushWithUpstream: vi.fn().mockResolvedValue(undefined),
+  pushWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the repo-setup module
+vi.mock("../../src/repo-setup", () => ({
+  ensureGitHubRepo: vi.fn(),
+}));
+
+// Mock the github-api module
+vi.mock("../../src/github-api", () => ({
+  checkPagesStatus: vi.fn().mockResolvedValue({ status: "built" }),
+  getAuthenticatedUser: vi.fn(),
+  checkRepoExists: vi.fn(),
+  createRepository: vi.fn(),
 }));
 
 // Import after mocking
 const { on_deploy } = await import("../../src/main");
+const { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } = await import("../../src/github-deploy");
+const { getToken, getTokenFromGit } = await import("../../src/token");
+const { tryGetRemoteUrl, getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
+const { checkPagesStatus } = await import("../../src/github-api");
+const { validateAll, isGitRepository, isGitAvailable, isSSHRemote } = await import("../../src/validation");
+const { ensureGitHubRepo } = await import("../../src/repo-setup");
 
 describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) => {
   // Test state
@@ -62,6 +157,28 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     deployResult = null;
     scenarioSiteFiles = ["index.html"]; // Reset to default (Bug 13)
     vi.clearAllMocks();
+
+    // Restore default implementations after clearAllMocks
+    // (clearAllMocks removes mockImplementation set in factory functions)
+    vi.mocked(parseGitHubUrl).mockImplementation((remoteUrl: string) => {
+      const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+      if (m) return { owner: m[1], repo: m[2] };
+      return null;
+    });
+    vi.mocked(extractGitHubPagesUrl).mockImplementation((remoteUrl: string) => {
+      const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+      if (m) return `https://${m[1]}.github.io/${m[2]}`;
+      return "https://user.github.io/repo";
+    });
+    vi.mocked(validateAll).mockImplementation(async (existingUrl?: string) => {
+      return existingUrl || "git@github.com:test-user/test-repo.git";
+    });
+    vi.mocked(isSSHRemote).mockImplementation((url: string) => {
+      return url.startsWith("git@") || url.startsWith("ssh://");
+    });
+    vi.mocked(isGitRepository).mockResolvedValue(true);
+    vi.mocked(isGitAvailable).mockResolvedValue(true);
+    vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
   });
 
   AfterEachScenario(() => {
@@ -75,19 +192,14 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   Scenario("Deploy from non-git directory", ({ Given, When, Then, And }) => {
     Given("the directory is not a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: not a git repository",
-      });
-      // Git --version check passes (git is available)
-      ctx.binaryConfig.setResult("git --version", {
-        success: true,
-        exitCode: 0,
-        stdout: "git version 2.39.0",
-        stderr: "",
-      });
+      // Not a git repo
+      vi.mocked(isGitRepository).mockResolvedValue(false);
+      // Git is available
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
+      // tryGetRemoteUrl returns null
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // ensureGitHubRepo returns null (user cancelled)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
     });
 
     When("I attempt to deploy", async () => {
@@ -112,23 +224,15 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   Scenario("Deploy without any git remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
+      vi.mocked(isGitRepository).mockResolvedValue(true);
     });
 
     And("no git remote is configured", () => {
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: No such remote 'origin'",
-      });
-      // Set up site files so that validation proceeds to remote check
-      ctx.filesystem.setFile(`${projectPath}/.moss/site/index.html`, "<html></html>");
+      // No remote
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // ensureGitHubRepo returns null (user cancelled)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
     });
 
     When("I attempt to deploy", async () => {
@@ -156,21 +260,24 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   Scenario("Deploy with non-GitHub remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
+      vi.mocked(isGitRepository).mockResolvedValue(true);
     });
 
     And('the git remote is "git@gitlab.com:user/repo.git"', () => {
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@gitlab.com:user/repo.git",
-        stderr: "",
-      });
+      // Mock tryGetRemoteUrl to return gitlab URL
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:user/repo.git");
+      // parseGitHubUrl returns null for non-GitHub
+      vi.mocked(parseGitHubUrl).mockReturnValue(null);
+      // Token available
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      // validateAll throws for non-GitHub URL
+      vi.mocked(validateAll).mockRejectedValue(
+        new Error(
+          "Remote 'git@gitlab.com:user/repo.git' is not a GitHub URL.\n\n" +
+          "GitHub Pages deployment only works with GitHub repositories.\n" +
+          "Please add a GitHub remote or use a different deployment method."
+        )
+      );
     });
 
     And('the site is compiled with files in ".moss/site/"', () => {
@@ -200,21 +307,11 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   Scenario("Deploy with empty site directory", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
+      vi.mocked(isGitRepository).mockResolvedValue(true);
     });
 
     And('the git remote is "git@github.com:user/repo.git"', () => {
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:user/repo.git");
     });
 
     And("the site directory is empty", () => {
@@ -238,25 +335,17 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Successful deployment with SSH remote
+  // Updated for REST API flow
   // ============================================================================
 
   Scenario("Successful deployment with SSH remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
+      vi.mocked(isGitRepository).mockResolvedValue(true);
     });
 
     And('the git remote is "git@github.com:testuser/testrepo.git"', () => {
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:testuser/testrepo.git",
-        stderr: "",
-      });
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:testuser/testrepo.git");
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:testuser/testrepo.git");
     });
 
     And('the site is compiled with files in ".moss/site/"', () => {
@@ -264,46 +353,39 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow already exists", () => {
-      // With Bug 16 fix, we use gh-pages branch instead of workflow.
-      // "Workflow exists" now means "gh-pages branch exists" (returning user).
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
+      // REST API flow: token available, gh-pages exists
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      vi.mocked(getTokenFromGit).mockResolvedValue(null);
+
+      // gh-pages exists (returning user)
+      vi.mocked(getGhPagesState).mockResolvedValue({
+        exists: true,
+        commitSha: "abc123",
+        treeSha: "tree123",
       });
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
+
+      // Local fingerprint
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([["index.html", "hash1"]])
+      );
+
+      // Remote tree
+      vi.mocked(getRemoteTree).mockResolvedValue(
+        new Map([["index.html", { sha: "old-hash", mode: "100644" }]])
+      );
+
+      // diffFiles returns changes
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [{ path: "index.html", localHash: "hash1" }],
+        unchanged: [],
+        deleted: [],
       });
-      // Default success for other git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      // Default success for shell commands (rm, cp, find)
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
+
+      // deployViaAPI returns commit sha
+      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
+
+      // Pages status check
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
     });
 
     When("I attempt to deploy", async () => {
@@ -321,25 +403,17 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: First-time deployment creates workflow
+  // Updated for REST API flow
   // ============================================================================
 
   Scenario("First-time deployment creates workflow", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git",
-        stderr: "",
-      });
+      vi.mocked(isGitRepository).mockResolvedValue(true);
     });
 
     And('the git remote is "git@github.com:user/repo.git"', () => {
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git",
-        stderr: "",
-      });
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:user/repo.git");
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:user/repo.git");
     });
 
     And('the site is compiled with files in ".moss/site/"', () => {
@@ -348,58 +422,32 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow does not exist", () => {
-      // With Bug 16 fix, we now use gh-pages branch instead of workflow.
-      // First-time setup is detected when gh-pages branch doesn't exist.
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/heads/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
+      // REST API flow: token available, gh-pages does NOT exist (first-time)
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      vi.mocked(getTokenFromGit).mockResolvedValue(null);
+
+      // gh-pages does NOT exist (first-time deploy)
+      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
+
+      // Local fingerprint
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([["index.html", "hash1"]])
+      );
+
+      // No remote tree for first deploy (getRemoteTree should not be called)
+
+      // diffFiles returns all files as changed
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [{ path: "index.html", localHash: "hash1" }],
+        unchanged: [],
+        deleted: [],
       });
-      ctx.binaryConfig.setResult("git rev-parse --verify refs/remotes/origin/gh-pages", {
-        success: false,
-        exitCode: 128,
-        stdout: "",
-        stderr: "fatal: Needed a single revision",
-      });
-      ctx.binaryConfig.setResult("git branch --show-current", {
-        success: true,
-        exitCode: 0,
-        stdout: "main",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("git rev-parse HEAD", {
-        success: true,
-        exitCode: 0,
-        stdout: "abc123",
-        stderr: "",
-      });
-      // Default success for other git commands
-      ctx.binaryConfig.setResult("git", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      // Default success for shell commands (rm, cp, find)
-      ctx.binaryConfig.setResult("rm", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("sh", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("cp", {
-        success: true,
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-      });
+
+      // deployViaAPI returns commit sha
+      vi.mocked(deployViaAPI).mockResolvedValue("first-commit-sha");
+
+      // Pages status check
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
     });
 
     When("I attempt to deploy", async () => {

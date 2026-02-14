@@ -65,8 +65,8 @@ export interface PagesStatus {
 // API Constants
 // ============================================================================
 
-const GITHUB_API_BASE = "https://api.github.com";
-const GITHUB_API_HEADERS = {
+export const GITHUB_API_BASE = "https://api.github.com";
+export const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github.v3+json",
   "User-Agent": "Moss-GitHub-Deployer",
 };

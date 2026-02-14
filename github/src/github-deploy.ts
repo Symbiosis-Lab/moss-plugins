@@ -18,16 +18,7 @@
 
 import { executeBinary } from "@symbiosis-lab/moss-api";
 import type { Fingerprint } from "./git";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const GITHUB_API_BASE = "https://api.github.com";
-const GITHUB_API_HEADERS = {
-  Accept: "application/vnd.github.v3+json",
-  "User-Agent": "Moss-GitHub-Deployer",
-};
+import { GITHUB_API_BASE, GITHUB_API_HEADERS } from "./github-api";
 
 /** Maximum concurrent blob uploads to avoid rate limiting */
 const UPLOAD_CONCURRENCY = 5;

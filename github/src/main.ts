@@ -198,7 +198,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
       remoteUrl = repoInfo.sshUrl;
-      wasFirstSetup = true;
 
       // Close the plugin browser after repo setup completes
       // The browser was used to show the repo creation form (if needed)
@@ -259,6 +258,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Phase 3: Check gh-pages state via REST API
     await reportProgress("detecting", 4, 10, "Checking deployment status...");
     const ghPagesState = await getGhPagesState(parsed.owner, parsed.repo, token);
+    // First deploy = no gh-pages branch yet (includes brand-new repos)
     wasFirstSetup = !ghPagesState.exists;
 
     // Phase 4: Compare local vs remote

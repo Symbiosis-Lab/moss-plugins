@@ -1,9 +1,10 @@
 /**
  * GitHub Deployer Plugin
  *
- * Deploys sites to GitHub Pages via GitHub Actions.
- * This plugin extracts the deployment logic from the original Rust implementation
- * (src-tauri/src/preview/deploy.rs) into a TypeScript plugin.
+ * Deploys sites to GitHub Pages via the GitHub REST API (Git Data API).
+ * Uses per-file blob uploads instead of git CLI worktree+push for
+ * fine-grained progress reporting and elimination of git CLI as a
+ * runtime dependency for the deploy phase.
  *
  * Authentication:
  * - Uses OAuth Device Flow for browser-based GitHub login
@@ -13,12 +14,12 @@
 import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
-import { detectBranch, extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, deployToGhPages, branchExists, checkForChanges } from "./git";
-// Note: checkAuthentication and promptLogin removed - Bug 23 fix
-// For existing HTTPS remotes, git handles push auth via credential helper
+import { extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, getLocalSiteFingerprint } from "./git";
+import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } from "./github-deploy";
+import { promptLogin } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { checkPagesStatus } from "./github-api";
-import { getToken } from "./token";
+import { getToken, getTokenFromGit, storeToken } from "./token";
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -96,9 +97,7 @@ async function waitForPagesLive(
   for (let i = 0; i < maxAttempts; i++) {
     // Report progress FIRST to reset the 60-second inactivity timer
     // This must happen BEFORE sleep() to prevent timeout
-    if (i > 0) {
-      await reportProgress("deploying", 4, 5, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
-    }
+    await reportProgress("verifying", 9, 10, `Waiting for GitHub Pages... (${i + 1}/${maxAttempts})`);
 
     const status = await checkPagesStatus(owner, repo, token);
 
@@ -128,21 +127,24 @@ async function waitForPagesLive(
 // ============================================================================
 
 /**
- * deploy hook - Deploy to GitHub Pages via GitHub Actions
+ * deploy hook - Deploy to GitHub Pages via REST API
  *
  * This capability:
- * 0. Checks authentication (prompts login if needed for HTTPS remotes)
- * 1. Validates requirements (git repo, GitHub remote, compiled site)
- * 2. Creates GitHub Actions workflow if it doesn't exist
- * 3. Updates .gitignore to track .moss/site/
- * 4. Commits and pushes the workflow
- *
- * The actual deployment happens on GitHub when changes are pushed.
+ * 0. Validates requirements (git repo, GitHub remote, compiled site)
+ * 1. Ensures authentication (prompts login if needed)
+ * 2. Checks gh-pages branch state via REST API
+ * 3. Compares local files against remote tree
+ * 4. Uploads changed files as blobs via REST API
+ * 5. Creates tree, commit, and updates gh-pages ref
+ * 6. Verifies deployment is live
  */
 async function deploy(context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   await log("log", "GitHub Deployer: Starting deployment...");
+
+  // Site directory path from context (e.g., ".moss/site")
+  const siteDir = context.output_dir;
 
   try {
     // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
@@ -174,7 +176,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       }
 
       // Feature 20: Smart repo setup - auto-create or show UI
-      await reportProgress("setup", 0, 6, "Setting up GitHub repository...");
+      await reportProgress("setup", 0, 10, "Setting up GitHub repository...");
       const repoInfo = await ensureGitHubRepo();
 
       if (!repoInfo) {
@@ -185,13 +187,13 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       // Initialize git if needed
       if (needsGitInit) {
         await log("log", "   Initializing git repository...");
-        await reportProgress("setup", 1, 6, "Initializing git...");
+        await reportProgress("setup", 1, 10, "Initializing git...");
         await initGitRepository();
       }
 
       // Add remote
       await log("log", `   Configuring remote: ${repoInfo.sshUrl}`);
-      await reportProgress("setup", 2, 6, "Configuring remote...");
+      await reportProgress("setup", 2, 10, "Configuring remote...");
       await ensureRemote("origin", repoInfo.sshUrl);
 
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
@@ -221,97 +223,137 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Phase 1: Validate requirements (git repo and GitHub remote)
     // Note: Site validation already done early using context.site_files (Bug 13 fix)
-    await reportProgress("validating", useSSH ? 1 : 2, 6, "Validating requirements...");
+    await reportProgress("validating", useSSH ? 1 : 2, 10, "Validating requirements...");
     // Bug 17 fix: Pass existing remoteUrl to avoid duplicate git calls
     remoteUrl = await validateAll(remoteUrl);
 
-    // Phase 2: Detect default branch (for logging)
-    await reportProgress("configuring", 2, 5, "Detecting default branch...");
-    const branch = await detectBranch();
-    await log("log", `   Default branch: ${branch}`);
+    // Phase 2: Parse URL + ensure authentication (mandatory for REST API)
+    await reportProgress("configuring", 3, 10, "Checking repository...");
+    const parsed = parseGitHubUrl(remoteUrl);
+    if (!parsed) {
+      throw new Error("Could not parse GitHub URL from remote: " + remoteUrl);
+    }
 
-    // Phase 3: Check if gh-pages branch exists (first deploy or returning user)
-    await reportProgress("configuring", 3, 5, "Checking deployment status...");
-    const ghPagesExisted = await branchExists("gh-pages");
-    wasFirstSetup = !ghPagesExisted;
-
-    // Early change detection: If gh-pages exists, check if content has changed
-    // This avoids expensive worktree operations when there are no changes to deploy
-    let commitSha = "";
-    if (ghPagesExisted) {
-      const changeCheck = await checkForChanges();
-      if (!changeCheck.hasChanges) {
-        // No changes detected - skip worktree operations entirely
-        await reportProgress("complete", 5, 5, "No changes to deploy");
-        const pagesUrl = extractGitHubPagesUrl(remoteUrl);
-        await log("log", `   No changes to deploy`);
-        await log("log", `   🌐 Site URL: ${pagesUrl}`);
-
-        const parsed = parseGitHubUrl(remoteUrl);
-
-        const dnsTarget = parsed ? generateDnsTarget(parsed.owner) : { records: [] };
-
-        // Show toast with clickable URL (8s duration for clickable link)
-        await showToast({
-          message: "No changes to deploy",
-          variant: "info",
-          actions: [{ label: "View site", url: pagesUrl }],
-          duration: 8000,
-        });
-
-        // Return result - runtime handles completion
-        return {
-          success: true,
-          message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
-          deployment: {
-            method: "github-pages",
-            url: pagesUrl,
-            deployed_at: new Date().toISOString(),
-            metadata: {
-              branch,
-              was_first_setup: "false",
-              commit_sha: "", // Empty = no changes
-              is_live: "true", // Already deployed, should be live
-            },
-            dns_target: dnsTarget,
-          },
-        };
+    // Ensure we have a valid token (mandatory for REST API)
+    let token = await getToken();
+    if (!token) {
+      // Try git credential helper
+      const gitToken = await getTokenFromGit();
+      if (gitToken) {
+        await storeToken(gitToken);
+        token = gitToken;
+      } else {
+        // Must authenticate via OAuth
+        await reportProgress("authenticating", 3, 10, "Authentication required...");
+        const authResult = await promptLogin();
+        if (!authResult) {
+          return { success: false, message: "Authentication required for deployment. Please try again." };
+        }
+        token = await getToken();
+        if (!token) {
+          return { success: false, message: "Authentication failed. No valid token available." };
+        }
       }
     }
 
-    // Phase 4 & 5: Deploy to gh-pages branch using worktree (zero-config approach)
-    // Bug 16 fix: Use git worktree to deploy without switching current branch
-    await reportProgress("deploying", 4, 5, "Deploying to gh-pages...");
-    const deployResult = await deployToGhPages();
-    commitSha = deployResult.commitSha;
+    // Phase 3: Check gh-pages state via REST API
+    await reportProgress("detecting", 4, 10, "Checking deployment status...");
+    const ghPagesState = await getGhPagesState(parsed.owner, parsed.repo, token);
+    wasFirstSetup = !ghPagesState.exists;
+
+    // Phase 4: Compare local vs remote
+    await reportProgress("detecting", 5, 10, "Comparing files...");
+    const localFingerprint = await getLocalSiteFingerprint(siteDir);
+    if (!localFingerprint || localFingerprint.size === 0) {
+      throw new Error("No site files found in " + siteDir);
+    }
+
+    let remoteTree: Map<string, { sha: string; mode: string }> | null = null;
+    if (ghPagesState.exists) {
+      remoteTree = await getRemoteTree(parsed.owner, parsed.repo, ghPagesState.treeSha, token);
+    }
+
+    const { changed, deleted } = diffFiles(localFingerprint, remoteTree);
+
+    // No changes - early exit
+    let commitSha = "";
+    if (changed.length === 0 && deleted.length === 0) {
+      await reportProgress("complete", 10, 10, "No changes to deploy");
+      const pagesUrl = extractGitHubPagesUrl(remoteUrl);
+      await log("log", "   No changes to deploy");
+      await log("log", `   Site URL: ${pagesUrl}`);
+
+      const dnsTarget = generateDnsTarget(parsed.owner);
+
+      // Show toast with clickable URL (8s duration for clickable link)
+      await showToast({
+        message: "No changes to deploy",
+        variant: "info",
+        actions: [{ label: "View site", url: pagesUrl }],
+        duration: 8000,
+      });
+
+      // Return result - runtime handles completion
+      return {
+        success: true,
+        message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
+        deployment: {
+          method: "github-pages",
+          url: pagesUrl,
+          deployed_at: new Date().toISOString(),
+          metadata: {
+            branch: "gh-pages",
+            was_first_setup: "false",
+            commit_sha: "", // Empty = no changes
+            is_live: "true", // Already deployed, should be live
+          },
+          dns_target: dnsTarget,
+        },
+      };
+    }
+
+    // Phase 5-8: Deploy via REST API
+    await reportProgress("deploying", 6, 10, "Uploading files...");
+    await log("log", `   Deploying ${changed.length} changed, ${deleted.length} deleted files via REST API...`);
+    commitSha = await deployViaAPI({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      token,
+      siteDir,
+      changed,
+      deleted,
+      ghPagesState,
+      onProgress: (current, total, message) => {
+        // Map upload progress to steps 6-8 out of 10
+        const step = 6 + Math.floor((current / total) * 2);
+        reportProgress("deploying", Math.min(step, 8), 10, message);
+      },
+    });
 
     // Generate pages URL for logging and response
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);
 
-    // Bug 19 fix: Log the deployment result with URL immediately
+    // Log the deployment result with URL immediately
     if (commitSha) {
       await log("log", `   Deployed: ${commitSha.substring(0, 7)}`);
-      await log("log", `   🌐 Site URL: ${pagesUrl}`);
+      await log("log", `   Site URL: ${pagesUrl}`);
     } else {
-      await log("log", `   No changes to deploy`);
-      await log("log", `   🌐 Site URL: ${pagesUrl}`);
+      await log("log", "   No changes to deploy");
+      await log("log", `   Site URL: ${pagesUrl}`);
     }
-    const parsed = parseGitHubUrl(remoteUrl);
 
-    // Feature 21: Check if deployment is live (only if we pushed changes)
+    // Phase 9: Check if deployment is live (only if we pushed changes)
     let isLive = false;
-    if (commitSha && parsed) {
-      const token = await getToken();
+    if (commitSha) {
       const liveStatus = await waitForPagesLive(parsed.owner, parsed.repo, token, pagesUrl);
       isLive = liveStatus.isLive;
     }
 
     // Build DNS target for custom domain configuration
-    const dnsTarget = parsed ? generateDnsTarget(parsed.owner) : { records: [] };
+    const dnsTarget = generateDnsTarget(parsed.owner);
 
     // Build result message based on scenario
-    // Bug 16: Zero-config deployment - no manual steps needed
-    // Determine toast message based on scenario
+    // Zero-config deployment - no manual steps needed
     let message: string;
     let toastMessage: string;
     let toastVariant: "success" | "info" | "error";
@@ -344,13 +386,13 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       toastVariant = "info";
     }
 
-    // Final progress message based on scenario
+    // Phase 10: Final progress message based on scenario
     const progressMsg = wasFirstSetup
       ? "GitHub Pages configured!"
       : commitSha
         ? "Deployed!"
         : "No changes to deploy";
-    await reportProgress("complete", 5, 5, progressMsg);
+    await reportProgress("complete", 10, 10, progressMsg);
 
     const logMsg = wasFirstSetup
       ? "Setup complete"
@@ -367,11 +409,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       duration: 8000,
     });
 
-    // Cleanup worktree before returning
-    await deployResult.cleanup().catch(() => {
-      // Silent cleanup failure is OK - temp directory will be cleaned up eventually
-    });
-
     // Return result - runtime handles completion
     return {
       success: true,
@@ -381,7 +418,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         url: pagesUrl,
         deployed_at: new Date().toISOString(),
         metadata: {
-          branch,
+          branch: "gh-pages",
           was_first_setup: String(wasFirstSetup),
           commit_sha: commitSha,
           is_live: String(isLive),

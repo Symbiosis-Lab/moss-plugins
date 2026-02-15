@@ -36,10 +36,12 @@ import {
   updateRef,
   deployViaAPI,
   uploadWithConcurrency,
+  pushSourceToMain,
   type BranchState,
   type GhPagesState,
   type DiffResult,
   type DeployViaAPIOptions,
+  type PushSourceOptions,
 } from "../github-deploy";
 
 // ============================================================================
@@ -1168,6 +1170,275 @@ describe("github-deploy", () => {
           onProgress,
         })
       ).rejects.toThrow("Bad credentials");
+    });
+  });
+
+  // ==========================================================================
+  // pushSourceToMain
+  // ==========================================================================
+  describe("pushSourceToMain", () => {
+    it("skips when main branch already exists", async () => {
+      // Mock getBranchState returning exists: true (ref check + commit fetch)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["index.md", "hash1"],
+        ["config.yaml", "hash2"],
+      ]);
+      const onProgress = vi.fn();
+
+      const result = await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(result).toBe("");
+      // Only the getBranchState calls (ref + commit), no further API calls
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    it("skips when fingerprint is empty", async () => {
+      // Mock getBranchState returning 404 (main doesn't exist)
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      const sourceFingerprint: Map<string, string> = new Map();
+      const onProgress = vi.fn();
+
+      const result = await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(result).toBe("");
+      // Only the getBranchState call (404), nothing else
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    it("uploads all source files for first-time deploy", async () => {
+      // 1. getBranchState: main doesn't exist (404)
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      // 2. uploadBlob for index.md
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "aW5kZXg=\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
+
+      // 3. uploadBlob for config.yaml
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29uZmln\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
+
+      // 4. createTree
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
+
+      // 5. createCommit
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-commit-sha" }, 201));
+
+      // 6. updateRef (create main)
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["index.md", "hash1"],
+        ["config.yaml", "hash2"],
+      ]);
+      const onProgress = vi.fn();
+
+      const result = await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(result).toBe("new-commit-sha");
+
+      // Total fetch calls: 1 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 6
+      expect(mockFetch).toHaveBeenCalledTimes(6);
+    });
+
+    it("creates orphan commit with no parents", async () => {
+      // getBranchState: 404
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      // uploadBlob for one file
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29udGVudA==\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
+
+      // createTree
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
+
+      // createCommit
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "orphan-sha" }, 201));
+
+      // updateRef
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["readme.md", "hash1"],
+      ]);
+      const onProgress = vi.fn();
+
+      await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      // createCommit is the 4th fetch call (index 3): getBranchState(0), blob(1), tree(2), commit(3)
+      const createCommitCall = mockFetch.mock.calls[3];
+      const body = JSON.parse(createCommitCall[1].body);
+      expect(body.parents).toEqual([]);
+    });
+
+    it("creates main ref (not update)", async () => {
+      // getBranchState: 404
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      // uploadBlob for one file
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29udGVudA==\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
+
+      // createTree
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
+
+      // createCommit
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "commit-sha" }, 201));
+
+      // updateRef (POST, not PATCH)
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["readme.md", "hash1"],
+      ]);
+      const onProgress = vi.fn();
+
+      await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      // updateRef is the 5th fetch call (index 4)
+      const updateRefCall = mockFetch.mock.calls[4];
+      expect(updateRefCall[1].method).toBe("POST");
+      const body = JSON.parse(updateRefCall[1].body);
+      expect(body.ref).toBe("refs/heads/main");
+    });
+
+    it("reports progress during upload", async () => {
+      // getBranchState: 404
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      // uploadBlob for file1
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29udGVudDE=\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-1" }, 201));
+
+      // uploadBlob for file2
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29udGVudDI=\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-2" }, 201));
+
+      // createTree
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
+
+      // createCommit
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "commit-sha" }, 201));
+
+      // updateRef
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["file1.md", "hash1"],
+        ["file2.md", "hash2"],
+      ]);
+      const onProgress = vi.fn();
+
+      await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        projectRoot: "/project",
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(onProgress).toHaveBeenCalledTimes(2);
+      expect(onProgress).toHaveBeenNthCalledWith(1, 1, 2, expect.any(String));
+      expect(onProgress).toHaveBeenNthCalledWith(2, 2, 2, expect.any(String));
+    });
+
+    it("propagates API errors", async () => {
+      // getBranchState: 404 (main doesn't exist)
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      // uploadBlob fails with 403
+      mockExecuteBinary.mockResolvedValueOnce({
+        success: true, exitCode: 0,
+        stdout: "Y29udGVudA==\n", stderr: "",
+      });
+      mockFetch.mockResolvedValueOnce(
+        mockErrorResponse(403, "Repository access blocked")
+      );
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["file.md", "hash1"],
+      ]);
+      const onProgress = vi.fn();
+
+      await expect(
+        pushSourceToMain({
+          owner: OWNER,
+          repo: REPO,
+          token: TOKEN,
+          projectRoot: "/project",
+          sourceFingerprint,
+          onProgress,
+        })
+      ).rejects.toThrow("Repository access blocked");
     });
   });
 });

@@ -77,6 +77,18 @@ export interface TreeEntry {
 export type OnProgress = (current: number, total: number, message: string) => void;
 
 /**
+ * Options for pushing source files to the main branch.
+ */
+export interface PushSourceOptions {
+  owner: string;
+  repo: string;
+  token: string;
+  projectRoot: string;
+  sourceFingerprint: Fingerprint;
+  onProgress: OnProgress;
+}
+
+/**
  * Options for the main deployViaAPI entry point.
  */
 export interface DeployViaAPIOptions {
@@ -678,6 +690,75 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
 
   // Step 4: Update or create ref
   await updateRef(owner, repo, "gh-pages", commitSha, ghPagesState.exists, token);
+
+  return commitSha;
+}
+
+/**
+ * Push source files to the main branch for backup.
+ *
+ * Used on first-time deploy when the repo has no branches at all.
+ * Creates an orphan commit on main with all source files (markdown, config,
+ * assets) so the user's raw content is preserved alongside the compiled
+ * gh-pages deployment.
+ *
+ * Safety: skips if main already exists to avoid overwriting user content.
+ *
+ * @param options - Push source options
+ * @returns The commit SHA on success, or empty string if skipped
+ */
+export async function pushSourceToMain(options: PushSourceOptions): Promise<string> {
+  const { owner, repo, token, projectRoot, sourceFingerprint, onProgress } = options;
+
+  // 1. Check if main branch already exists — if so, skip (safety: don't overwrite)
+  const mainState = await getBranchState(owner, repo, "main", token);
+  if (mainState.exists) {
+    return "";
+  }
+
+  // 2. All files are "changed" (first deploy, no remote tree)
+  const files = [...sourceFingerprint.entries()].map(([path, hash]) => ({
+    path,
+    localHash: hash,
+  }));
+
+  if (files.length === 0) {
+    return "";
+  }
+
+  // 3. Upload blobs (reuse existing uploadChangedFiles)
+  const blobShas = await uploadChangedFiles(
+    files, projectRoot, owner, repo, token, onProgress
+  );
+
+  // 4. Create tree entries (all files, no base tree since it's a new branch)
+  const treeEntries: TreeEntry[] = [];
+  for (const file of files) {
+    const blobSha = blobShas.get(file.path);
+    if (blobSha) {
+      treeEntries.push({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        sha: blobSha,
+      });
+    }
+  }
+
+  // 5. Create tree (no base_tree — new branch)
+  const treeSha = await createTree(owner, repo, treeEntries, null, token);
+
+  // 6. Create orphan commit (no parents)
+  const commitSha = await createCommit(
+    owner, repo,
+    "Initial commit\n\nSource files uploaded by Moss",
+    treeSha,
+    [],
+    token
+  );
+
+  // 7. Create main ref
+  await updateRef(owner, repo, "main", commitSha, false, token);
 
   return commitSha;
 }

@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 // Skip all tests unless explicitly enabled
 const RUN_E2E = process.env.GITHUB_E2E_TEST === "1";
@@ -25,7 +25,7 @@ const GITHUB_API_BASE = "https://api.github.com";
 function getToken(): string {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
   try {
-    return execSync("gh auth token", { encoding: "utf8" }).trim();
+    return execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
   } catch {
     throw new Error("No GITHUB_TOKEN env var and gh auth token failed");
   }
@@ -84,7 +84,7 @@ async function deleteRepo(
 
   // Fall back to gh CLI
   try {
-    execSync(`gh repo delete ${owner}/${name} --yes`, {
+    execFileSync("gh", ["repo", "delete", `${owner}/${name}`, "--yes"], {
       encoding: "utf8",
       stdio: "pipe",
     });

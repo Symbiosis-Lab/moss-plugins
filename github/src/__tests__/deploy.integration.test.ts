@@ -33,6 +33,7 @@ vi.mock("../github-deploy", () => ({
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
   deployViaAPI: vi.fn(),
+  pushSourceToMain: vi.fn().mockResolvedValue("source-commit-sha"),
 }));
 
 // Mock the auth module
@@ -66,6 +67,7 @@ vi.mock("../git", () => ({
   }),
   tryGetRemoteUrl: vi.fn(),
   getLocalSiteFingerprint: vi.fn(),
+  getLocalSourceFingerprint: vi.fn().mockResolvedValue(new Map([["index.md", "hash1"]])),
   isGitRepository: vi.fn(),
   isGitAvailable: vi.fn(),
   getRemoteUrl: vi.fn(),
@@ -116,13 +118,13 @@ vi.mock("../github-api", () => ({
 
 // Import after mocking
 import { on_deploy } from "../main";
-import { reportProgress, showToast } from "../utils";
-import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } from "../github-deploy";
+import { log, reportProgress, showToast } from "../utils";
+import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "../github-deploy";
 import { promptLogin } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
-import { tryGetRemoteUrl, getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { tryGetRemoteUrl, getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
 import { checkPagesStatus } from "../github-api";
-import { validateAll, isGitRepository, isGitAvailable, isSSHRemote } from "../validation";
+import { validateAll, isGitRepository, isGitAvailable, isSSHRemote, initGitRepository, ensureRemote } from "../validation";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
@@ -1185,6 +1187,158 @@ describe("on_deploy integration", () => {
       expect(changedPaths).toContain("\u4e2d\u6587\u6587\u7ae0.html");
       expect(changedPaths).toContain("\u65e5\u672c\u8a9e.html");
       expect(changedPaths).toContain("caf\u00e9.html");
+    });
+  });
+
+  // ============================================================================
+  // Source Push to Main (first-time deploy backup)
+  // ============================================================================
+
+  describe("Source Push to Main", () => {
+    /**
+     * Helper: set up mocks for a first-time deploy scenario (needsGitInit=true).
+     * The repo doesn't exist yet, so isGitRepository returns false,
+     * ensureGitHubRepo creates it, and the full deploy flow succeeds.
+     */
+    function setupFirstTimeDeploy(ctx: MockTauriContext) {
+      // Not a git repo yet → needsGitInit = true
+      vi.mocked(isGitRepository).mockResolvedValue(false);
+      vi.mocked(isGitAvailable).mockResolvedValue(true);
+      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+
+      // Repo setup succeeds
+      vi.mocked(ensureGitHubRepo).mockResolvedValue({
+        name: "test-repo",
+        fullName: "test-user/test-repo",
+        htmlUrl: "https://github.com/test-user/test-repo",
+        sshUrl: "git@github.com:test-user/test-repo.git",
+        cloneUrl: "https://github.com/test-user/test-repo.git",
+      });
+      vi.mocked(initGitRepository).mockResolvedValue(undefined);
+      vi.mocked(ensureRemote).mockResolvedValue(undefined);
+
+      // Token available
+      vi.mocked(getToken).mockResolvedValue("test-token");
+      vi.mocked(getTokenFromGit).mockResolvedValue(null);
+
+      // gh-pages doesn't exist (first deploy)
+      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
+
+      // Site fingerprint
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([
+          ["index.html", "site-hash1"],
+          ["style.css", "site-hash2"],
+        ])
+      );
+
+      // All files are new (first deploy, no remote tree)
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [
+          { path: "index.html", localHash: "site-hash1" },
+          { path: "style.css", localHash: "site-hash2" },
+        ],
+        unchanged: [],
+        deleted: [],
+      });
+
+      // Deploy succeeds
+      vi.mocked(deployViaAPI).mockResolvedValue("deploy-commit-sha");
+
+      // Pages status
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+    }
+
+    it("pushes source to main on first-time deploy (needsGitInit=true)", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      // Source fingerprint returns 2 files
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
+        new Map([
+          ["index.md", "source-hash1"],
+          ["about.md", "source-hash2"],
+        ])
+      );
+
+      // pushSourceToMain succeeds
+      vi.mocked(pushSourceToMain).mockResolvedValue("source-commit-sha");
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(pushSourceToMain)).toHaveBeenCalledTimes(1);
+
+      // Verify it was called with correct parameters
+      const callArgs = vi.mocked(pushSourceToMain).mock.calls[0][0];
+      expect(callArgs.owner).toBe("test-user");
+      expect(callArgs.repo).toBe("test-repo");
+      expect(callArgs.token).toBe("test-token");
+      expect(callArgs.projectRoot).toBe("/test/project");
+      expect(callArgs.sourceFingerprint.size).toBe(2);
+    });
+
+    it("does NOT push source on subsequent deploy (needsGitInit=false)", async () => {
+      // Standard deploy: git repo already exists
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:test-user/test-repo.git",
+        ghPagesExists: true,
+        hasChanges: true,
+        commitSha: "subsequent-commit-sha",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
+      expect(vi.mocked(getLocalSourceFingerprint)).not.toHaveBeenCalled();
+    });
+
+    it("source push failure is non-fatal (gh-pages already succeeded)", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      // Source fingerprint returns files
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
+        new Map([["index.md", "source-hash1"]])
+      );
+
+      // pushSourceToMain throws an error
+      vi.mocked(pushSourceToMain).mockRejectedValue(new Error("GitHub API rate limited"));
+
+      const result = await on_deploy(createMockContext());
+
+      // Deploy should still succeed (source push is non-fatal)
+      expect(result.success).toBe(true);
+
+      // Verify the warning was logged
+      const logCalls = vi.mocked(log).mock.calls;
+      const warnCalls = logCalls.filter((call) => call[0] === "warn");
+      expect(warnCalls.length).toBeGreaterThan(0);
+      const warnMessages = warnCalls.map((call) => call[1]);
+      expect(warnMessages.some((msg) => msg.includes("Source push to main failed"))).toBe(true);
+    });
+
+    it("skips source push when no source files found", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      // Source fingerprint returns empty Map
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(new Map());
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
+    });
+
+    it("skips source push when fingerprint returns null", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      // Source fingerprint returns null
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(null);
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
     });
   });
 });

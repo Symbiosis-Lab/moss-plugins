@@ -507,3 +507,80 @@ export async function getLocalSiteFingerprint(siteDir: string): Promise<Fingerpr
   }
 }
 
+/**
+ * Patterns to exclude when fingerprinting source files.
+ * These are build artifacts, VCS metadata, and OS files that should not
+ * be included in the source fingerprint.
+ */
+export const SOURCE_EXCLUDE_PATTERNS = [
+  "*/.moss/*",
+  "*/.git/*",
+  "*/node_modules/*",
+  "*/.DS_Store",
+];
+
+/**
+ * Build a shell command that finds all source files in a project directory,
+ * excluding build artifacts and metadata directories.
+ *
+ * The command strips the projectRoot prefix from output paths and sorts
+ * for deterministic ordering.
+ *
+ * @param projectRoot - Root directory of the project
+ * @returns The shell command string
+ */
+export function buildFindSourceFilesCommand(projectRoot: string): string {
+  // Escape special regex characters in the path for sed
+  const escapedPath = projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `find "${projectRoot}" -type f -not -path "*/.moss/*" -not -path "*/.git/*" -not -path "*/node_modules/*" -not -name ".DS_Store" | sed "s|^${escapedPath}/||" | sort`;
+}
+
+/**
+ * Get content fingerprint of local source directory.
+ * Returns a Map of filename -> git blob hash.
+ *
+ * Uses batch hashing via `git hash-object --stdin-paths` for efficiency.
+ * Excludes build artifacts (.moss), VCS metadata (.git), dependencies
+ * (node_modules), and OS files (.DS_Store).
+ */
+export async function getLocalSourceFingerprint(projectRoot: string): Promise<Fingerprint | null> {
+  try {
+    // Get list of source files, excluding build artifacts
+    const filesResult = await runShellSilent([
+      "sh", "-c",
+      buildFindSourceFilesCommand(projectRoot)
+    ]);
+
+    const files = filesResult.split("\n").filter(Boolean);
+    if (files.length === 0) {
+      return new Map();
+    }
+
+    // Build full paths for hash-object
+    const fullPaths = files.map(f => `${projectRoot}/${f}`);
+
+    // Batch hash all files in one call using --stdin-paths
+    const hashResult = await executeBinary({
+      binaryPath: "git",
+      args: ["hash-object", "--stdin-paths"],
+      stdin: fullPaths.join("\n"),
+      timeoutMs: 60000,
+    });
+
+    if (!hashResult.success) {
+      return null;
+    }
+
+    // Parse hashes and build fingerprint map
+    const hashes = hashResult.stdout.trim().split("\n");
+    const fingerprint: Fingerprint = new Map();
+
+    for (let i = 0; i < files.length; i++) {
+      fingerprint.set(files[i], hashes[i]);
+    }
+
+    return fingerprint;
+  } catch {
+    return null; // Return null on error
+  }
+}

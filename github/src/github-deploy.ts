@@ -28,12 +28,18 @@ const UPLOAD_CONCURRENCY = 5;
 // ============================================================================
 
 /**
- * State of the gh-pages branch on GitHub.
+ * State of a branch on GitHub.
  * Either exists with commit/tree SHAs, or does not exist.
  */
-export type GhPagesState =
+export type BranchState =
   | { exists: true; commitSha: string; treeSha: string }
   | { exists: false };
+
+/**
+ * Backward-compatible alias for BranchState.
+ * @deprecated Use BranchState instead.
+ */
+export type GhPagesState = BranchState;
 
 /**
  * A remote tree entry: file SHA and mode from GitHub's tree API.
@@ -115,21 +121,23 @@ async function parseErrorMessage(response: Response): Promise<string> {
 // ============================================================================
 
 /**
- * Check the state of the gh-pages branch on GitHub.
+ * Check the state of a branch on GitHub.
  *
  * @param owner - Repository owner
  * @param repo - Repository name
+ * @param branch - Branch name (e.g., "gh-pages", "main")
  * @param token - GitHub access token
- * @returns GhPagesState indicating whether the branch exists and its SHAs
+ * @returns BranchState indicating whether the branch exists and its SHAs
  */
-export async function getGhPagesState(
+export async function getBranchState(
   owner: string,
   repo: string,
+  branch: string,
   token: string
-): Promise<GhPagesState> {
-  // Step 1: Check if gh-pages ref exists
+): Promise<BranchState> {
+  // Step 1: Check if branch ref exists
   const refResponse = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs/heads/gh-pages`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs/heads/${branch}`,
     { headers: authHeaders(token) }
   );
 
@@ -160,6 +168,24 @@ export async function getGhPagesState(
   const treeSha: string = commitData.tree.sha;
 
   return { exists: true, commitSha, treeSha };
+}
+
+/**
+ * Check the state of the gh-pages branch on GitHub.
+ *
+ * Convenience wrapper around getBranchState for the gh-pages branch.
+ *
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param token - GitHub access token
+ * @returns GhPagesState indicating whether the branch exists and its SHAs
+ */
+export async function getGhPagesState(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<GhPagesState> {
+  return getBranchState(owner, repo, "gh-pages", token);
 }
 
 /**

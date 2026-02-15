@@ -24,6 +24,7 @@ vi.mock("../utils", () => ({
 }));
 
 import {
+  getBranchState,
   getGhPagesState,
   getRemoteTree,
   diffFiles,
@@ -35,6 +36,7 @@ import {
   updateRef,
   deployViaAPI,
   uploadWithConcurrency,
+  type BranchState,
   type GhPagesState,
   type DiffResult,
   type DeployViaAPIOptions,
@@ -154,6 +156,148 @@ describe("github-deploy", () => {
       mockFetch.mockResolvedValueOnce(mockErrorResponse(500, "Server Error"));
 
       await expect(getGhPagesState(OWNER, REPO, TOKEN)).rejects.toThrow();
+    });
+  });
+
+  // ==========================================================================
+  // getBranchState
+  // ==========================================================================
+  describe("getBranchState", () => {
+    it("returns exists: true with commit and tree SHA when branch exists", async () => {
+      // First call: GET refs/heads/main
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "abc123commit", type: "commit" },
+        })
+      );
+      // Second call: GET commits/{sha} to get tree
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "abc123commit",
+          tree: { sha: "def456tree" },
+        })
+      );
+
+      const result = await getBranchState(OWNER, REPO, "main", TOKEN);
+
+      expect(result).toEqual({
+        exists: true,
+        commitSha: "abc123commit",
+        treeSha: "def456tree",
+      });
+
+      // Verify correct API calls with "main" branch
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        "https://api.github.com/repos/testuser/my-site/git/refs/heads/main",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer ghp_test-token-123",
+          }),
+        })
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        "https://api.github.com/repos/testuser/my-site/git/commits/abc123commit",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer ghp_test-token-123",
+          }),
+        })
+      );
+    });
+
+    it("returns exists: false when branch returns 404", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      const result = await getBranchState(OWNER, REPO, "nonexistent-branch", TOKEN);
+
+      expect(result).toEqual({ exists: false });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws error on API failure (non-404 error)", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(500, "Internal Server Error"));
+
+      await expect(
+        getBranchState(OWNER, REPO, "main", TOKEN)
+      ).rejects.toThrow("Internal Server Error");
+    });
+
+    it("works with different branch names", async () => {
+      const branches = ["main", "gh-pages", "feature/test"];
+
+      for (const branch of branches) {
+        mockFetch.mockReset();
+
+        // Mock refs call
+        mockFetch.mockResolvedValueOnce(
+          mockResponse({
+            ref: `refs/heads/${branch}`,
+            object: { sha: "commit-sha", type: "commit" },
+          })
+        );
+        // Mock commit call
+        mockFetch.mockResolvedValueOnce(
+          mockResponse({
+            sha: "commit-sha",
+            tree: { sha: "tree-sha" },
+          })
+        );
+
+        const result = await getBranchState(OWNER, REPO, branch, TOKEN);
+
+        expect(result).toEqual({
+          exists: true,
+          commitSha: "commit-sha",
+          treeSha: "tree-sha",
+        });
+
+        // Verify the branch name appears in the URL
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          1,
+          `https://api.github.com/repos/testuser/my-site/git/refs/heads/${branch}`,
+          expect.any(Object)
+        );
+      }
+    });
+
+    it("getGhPagesState delegates to getBranchState with 'gh-pages'", async () => {
+      // Mock refs call for gh-pages
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/gh-pages",
+          object: { sha: "ghp-commit", type: "commit" },
+        })
+      );
+      // Mock commit call
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "ghp-commit",
+          tree: { sha: "ghp-tree" },
+        })
+      );
+
+      const result = await getGhPagesState(OWNER, REPO, TOKEN);
+
+      expect(result).toEqual({
+        exists: true,
+        commitSha: "ghp-commit",
+        treeSha: "ghp-tree",
+      });
+
+      // Verify it called the gh-pages URL (same as getBranchState("gh-pages"))
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        "https://api.github.com/repos/testuser/my-site/git/refs/heads/gh-pages",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer ghp_test-token-123",
+          }),
+        })
+      );
     });
   });
 

@@ -392,7 +392,7 @@ describe("SOURCE_EXCLUDE_PATTERNS", () => {
     expect(SOURCE_EXCLUDE_PATTERNS).toContain("*/.DS_Store");
   });
 
-  it("is a frozen/readonly array with exactly 4 patterns", () => {
+  it("has exactly 4 patterns", () => {
     expect(SOURCE_EXCLUDE_PATTERNS).toHaveLength(4);
   });
 });

@@ -294,6 +294,23 @@ function textToBase64(text: string): string {
   return Buffer.from(text, "utf-8").toString("base64");
 }
 
+// Helper: get blob content (decoded from base64)
+async function getBlobContent(
+  token: string,
+  owner: string,
+  repo: string,
+  sha: string
+): Promise<string> {
+  const res = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/blobs/${sha}`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`getBlobContent failed: ${res.status}`);
+  const data = await res.json();
+  const base64 = data.content.replace(/\n/g, "");
+  return Buffer.from(base64, "base64").toString("utf-8");
+}
+
 // ============================================================================
 // Test Suites
 // ============================================================================
@@ -858,4 +875,255 @@ describe.skipIf(!RUN_E2E)("GitHub REST API Deploy E2E", () => {
       expect(blobData.content.replace(/\n/g, "")).toBe(pngBase64);
     }, 30000);
   });
+});
+
+// ============================================================================
+// Scenario 6: Unicode filenames (independent repo)
+// ============================================================================
+
+describe.skipIf(!RUN_E2E)("Scenario 6: Unicode filenames", () => {
+  let token: string;
+  let owner: string;
+  const repoName = `moss-e2e-unicode-${Date.now()}`;
+
+  beforeAll(async () => {
+    token = getToken();
+    owner = await getUsername(token);
+    await createEphemeralRepo(token, repoName);
+    await new Promise((r) => setTimeout(r, 2000));
+  }, 30000);
+
+  afterAll(async () => {
+    await deleteRepo(token, owner, repoName);
+  }, 15000);
+
+  it("handles Chinese and Japanese filenames", async () => {
+    // Upload files with unicode paths
+    const files = [
+      { path: "文章/hello.html", content: "<h1>你好世界</h1>" },
+      { path: "游记/旅行.html", content: "<h1>旅行日记</h1>" },
+      { path: "日本語/テスト.html", content: "<h1>テスト</h1>" },
+      { path: "café/résumé.html", content: "<h1>Résumé</h1>" },
+    ];
+
+    const blobShas: Record<string, string> = {};
+    for (const file of files) {
+      blobShas[file.path] = await uploadBlob(
+        token,
+        owner,
+        repoName,
+        textToBase64(file.content),
+        "base64"
+      );
+    }
+
+    // Create tree
+    const treeEntries = files.map((f) => ({
+      path: f.path,
+      mode: "100644",
+      type: "blob",
+      sha: blobShas[f.path],
+    }));
+
+    const treeSha = await createTree(
+      token,
+      owner,
+      repoName,
+      treeEntries,
+      null
+    );
+    const commitSha = await createCommit(
+      token,
+      owner,
+      repoName,
+      "Deploy site",
+      treeSha,
+      []
+    );
+    await updateRef(token, owner, repoName, "gh-pages", commitSha, false);
+
+    // Verify: tree has all 4 files with correct unicode paths
+    const tree = await getTree(token, owner, repoName, treeSha);
+    const blobs = tree.filter((e) => e.type === "blob");
+    expect(blobs).toHaveLength(4);
+
+    const paths = blobs.map((e) => e.path).sort();
+    expect(paths).toContain("文章/hello.html");
+    expect(paths).toContain("游记/旅行.html");
+    expect(paths).toContain("日本語/テスト.html");
+    expect(paths).toContain("café/résumé.html");
+
+    // Verify: content can be retrieved correctly
+    const helloSha = blobShas["文章/hello.html"];
+    const content = await getBlobContent(token, owner, repoName, helloSha);
+    expect(content).toBe("<h1>你好世界</h1>");
+  }, 30000);
+});
+
+// ============================================================================
+// Scenario 7: Large site (50+ files, independent repo)
+// ============================================================================
+
+describe.skipIf(!RUN_E2E)("Scenario 7: Large site (50+ files)", () => {
+  let token: string;
+  let owner: string;
+  const repoName = `moss-e2e-large-${Date.now()}`;
+
+  beforeAll(async () => {
+    token = getToken();
+    owner = await getUsername(token);
+    await createEphemeralRepo(token, repoName);
+    await new Promise((r) => setTimeout(r, 2000));
+  }, 30000);
+
+  afterAll(async () => {
+    await deleteRepo(token, owner, repoName);
+  }, 15000);
+
+  it("deploys 50 files without errors", async () => {
+    const FILE_COUNT = 50;
+
+    // Generate 50 files
+    const files = Array.from({ length: FILE_COUNT }, (_, i) => ({
+      path: `articles/article-${String(i + 1).padStart(3, "0")}/index.html`,
+      content: `<h1>Article ${i + 1}</h1><p>Content for article ${i + 1}.</p>`,
+    }));
+
+    // Upload all blobs
+    const blobShas: Record<string, string> = {};
+    for (const file of files) {
+      blobShas[file.path] = await uploadBlob(
+        token,
+        owner,
+        repoName,
+        textToBase64(file.content),
+        "base64"
+      );
+    }
+
+    // Create tree
+    const treeEntries = files.map((f) => ({
+      path: f.path,
+      mode: "100644",
+      type: "blob",
+      sha: blobShas[f.path],
+    }));
+
+    const treeSha = await createTree(
+      token,
+      owner,
+      repoName,
+      treeEntries,
+      null
+    );
+    const commitSha = await createCommit(
+      token,
+      owner,
+      repoName,
+      "Deploy site",
+      treeSha,
+      []
+    );
+    await updateRef(token, owner, repoName, "gh-pages", commitSha, false);
+
+    // Verify: tree has all 50 files
+    const tree = await getTree(token, owner, repoName, treeSha);
+    const blobs = tree.filter((e) => e.type === "blob");
+    expect(blobs).toHaveLength(FILE_COUNT);
+
+    // Verify first and last
+    expect(
+      blobs.find((e) => e.path === "articles/article-001/index.html")
+    ).toBeDefined();
+    expect(
+      blobs.find((e) => e.path === "articles/article-050/index.html")
+    ).toBeDefined();
+  }, 120000); // 2 minute timeout for 50 uploads
+});
+
+// ============================================================================
+// Scenario 8: Auth failure (independent repo)
+// ============================================================================
+
+describe.skipIf(!RUN_E2E)("Scenario 8: Auth failure", () => {
+  let token: string;
+  let owner: string;
+  const repoName = `moss-e2e-auth-${Date.now()}`;
+
+  beforeAll(async () => {
+    token = getToken();
+    owner = await getUsername(token);
+    await createEphemeralRepo(token, repoName);
+    await new Promise((r) => setTimeout(r, 2000));
+  }, 30000);
+
+  afterAll(async () => {
+    await deleteRepo(token, owner, repoName);
+  }, 15000);
+
+  it("returns 401 for invalid token", async () => {
+    const badToken = "ghp_invalidtoken123456789012345678901";
+
+    const res = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/refs/heads/gh-pages`,
+      {
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Moss-E2E-Tests",
+          Authorization: `Bearer ${badToken}`,
+        },
+      }
+    );
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.message).toContain("Bad credentials");
+  }, 15000);
+
+  it("returns structured error for blob upload with invalid token", async () => {
+    const badToken = "ghp_invalidtoken123456789012345678901";
+
+    const res = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/blobs`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Moss-E2E-Tests",
+          Authorization: `Bearer ${badToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: textToBase64("test"),
+          encoding: "base64",
+        }),
+      }
+    );
+
+    expect(res.status).toBe(401);
+  }, 15000);
+
+  it("succeeds after retrying with valid token", async () => {
+    // First, verify bad token fails
+    const badToken = "ghp_invalidtoken123456789012345678901";
+    const failRes = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/refs/heads/gh-pages`,
+      {
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Moss-E2E-Tests",
+          Authorization: `Bearer ${badToken}`,
+        },
+      }
+    );
+    expect(failRes.status).toBe(401);
+
+    // Then, verify good token succeeds
+    const goodRes = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/refs/heads/gh-pages`,
+      { headers: authHeaders(token) }
+    );
+    // 404 is expected (no gh-pages yet), but NOT 401
+    expect(goodRes.status).not.toBe(401);
+  }, 15000);
 });

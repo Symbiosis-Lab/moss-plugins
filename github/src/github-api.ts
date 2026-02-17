@@ -298,6 +298,66 @@ export async function checkPagesStatus(
 }
 
 /**
+ * Set a custom domain (CNAME) for GitHub Pages
+ *
+ * Uses the GitHub Pages API to configure a custom domain for the repository.
+ * This is the API equivalent of setting the "Custom domain" field in the
+ * repository's Pages settings.
+ *
+ * @see https://docs.github.com/en/rest/pages/pages#update-information-about-a-github-pages-site
+ *
+ * @param owner - GitHub username or organization
+ * @param repo - Repository name
+ * @param token - GitHub OAuth access token
+ * @param domain - Custom domain to configure (e.g., "example.com")
+ * @returns true if the domain was set successfully
+ */
+export async function setCustomDomain(
+  owner: string,
+  repo: string,
+  token: string,
+  domain: string,
+): Promise<boolean> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages`;
+  const headers = {
+    ...GITHUB_API_HEADERS,
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  // Try with HTTPS enforcement first
+  const response = await fetch(url, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ cname: domain, https_enforced: true }),
+  });
+
+  if (response.ok) return true;
+
+  // GitHub rejects https_enforced if DNS hasn't propagated yet (422).
+  // Retry without it — HTTPS can be enabled later in GitHub settings
+  // once DNS propagates and the certificate is provisioned.
+  if (response.status === 422) {
+    const retryResponse = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cname: domain }),
+    });
+    if (retryResponse.ok) return true;
+
+    const body = await retryResponse.text();
+    throw new Error(
+      `GitHub Pages API error (${retryResponse.status}): ${body}`
+    );
+  }
+
+  const body = await response.text();
+  throw new Error(
+    `GitHub Pages API error (${response.status}): ${body}`
+  );
+}
+
+/**
  * Add a remote to the local git repository
  *
  * @param remoteName - Name for the remote (usually "origin")

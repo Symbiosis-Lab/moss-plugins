@@ -34,6 +34,21 @@ describe("parseGitHubUrl", () => {
       const result = parseGitHubUrl("https://github.com/user/my_repo.git");
       expect(result).toEqual({ owner: "user", repo: "my_repo" });
     });
+
+    it("parses user site repo with dots (username.github.io)", () => {
+      const result = parseGitHubUrl("https://github.com/guoliu/guoliu.github.io.git");
+      expect(result).toEqual({ owner: "guoliu", repo: "guoliu.github.io" });
+    });
+
+    it("parses user site repo without .git suffix", () => {
+      const result = parseGitHubUrl("https://github.com/guoliu/guoliu.github.io");
+      expect(result).toEqual({ owner: "guoliu", repo: "guoliu.github.io" });
+    });
+
+    it("parses repo name with dots", () => {
+      const result = parseGitHubUrl("https://github.com/user/my.project.name.git");
+      expect(result).toEqual({ owner: "user", repo: "my.project.name" });
+    });
   });
 
   describe("SSH URLs", () => {
@@ -50,6 +65,16 @@ describe("parseGitHubUrl", () => {
     it("parses org repo SSH URL", () => {
       const result = parseGitHubUrl("git@github.com:anthropics/moss.git");
       expect(result).toEqual({ owner: "anthropics", repo: "moss" });
+    });
+
+    it("parses user site repo with dots (username.github.io) via SSH", () => {
+      const result = parseGitHubUrl("git@github.com:guoliu/guoliu.github.io.git");
+      expect(result).toEqual({ owner: "guoliu", repo: "guoliu.github.io" });
+    });
+
+    it("parses user site repo without .git suffix via SSH", () => {
+      const result = parseGitHubUrl("git@github.com:guoliu/guoliu.github.io");
+      expect(result).toEqual({ owner: "guoliu", repo: "guoliu.github.io" });
     });
   });
 
@@ -95,6 +120,21 @@ describe("extractGitHubPagesUrl", () => {
   it("generates correct Pages URL for org repos", () => {
     const result = extractGitHubPagesUrl("https://github.com/anthropics/moss.git");
     expect(result).toBe("https://anthropics.github.io/moss");
+  });
+
+  it("generates root URL for user site repo (SSH)", () => {
+    const result = extractGitHubPagesUrl("git@github.com:guoliu/guoliu.github.io.git");
+    expect(result).toBe("https://guoliu.github.io");
+  });
+
+  it("generates root URL for user site repo (HTTPS)", () => {
+    const result = extractGitHubPagesUrl("https://github.com/guoliu/guoliu.github.io.git");
+    expect(result).toBe("https://guoliu.github.io");
+  });
+
+  it("generates root URL for user site repo (case-insensitive)", () => {
+    const result = extractGitHubPagesUrl("git@github.com:GuoLiu/GuoLiu.github.io.git");
+    expect(result).toBe("https://GuoLiu.github.io");
   });
 
   it("throws for non-GitHub URLs", () => {

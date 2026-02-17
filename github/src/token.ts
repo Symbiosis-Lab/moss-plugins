@@ -7,8 +7,9 @@
  * 1. Primary: Plugin cookies (via moss-api getPluginCookie/setPluginCookie)
  * 2. Fallback: In-memory cache (for current session)
  *
- * For git push, tokens are used by temporarily rewriting the remote URL
- * to include the token (https://x-access-token:TOKEN@github.com/...)
+ * Tokens are used for GitHub REST API authentication.
+ * The git credential helper is checked opportunistically (works when git
+ * is installed, silently falls through to OAuth when it's not).
  */
 
 import { getPluginCookie, setPluginCookie, executeBinary } from "@symbiosis-lab/moss-api";
@@ -200,25 +201,3 @@ export async function clearToken(): Promise<boolean> {
   }
 }
 
-/**
- * Inject token into a GitHub HTTPS URL for authenticated operations
- *
- * Transforms: https://github.com/user/repo.git
- * Into: https://x-access-token:TOKEN@github.com/user/repo.git
- */
-export function injectTokenIntoUrl(url: string, token: string): string {
-  if (!url.startsWith("https://github.com/")) {
-    return url; // Don't modify non-GitHub or non-HTTPS URLs
-  }
-
-  // Insert token after https://
-  return url.replace("https://github.com/", `https://x-access-token:${token}@github.com/`);
-}
-
-/**
- * Remove token from a GitHub URL (for logging/display purposes)
- */
-export function sanitizeUrl(url: string): string {
-  // Remove any embedded tokens
-  return url.replace(/https:\/\/[^@]+@github\.com\//, "https://github.com/");
-}

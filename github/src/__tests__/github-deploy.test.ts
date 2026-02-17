@@ -12,11 +12,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock executeBinary from moss-api
-const mockExecuteBinary = vi.fn();
-vi.mock("@symbiosis-lab/moss-api", () => ({
-  executeBinary: (...args: unknown[]) => mockExecuteBinary(...args),
-}));
+/** Mock readFn that returns base64-encoded content for a given relative path */
+const mockReadFn = vi.fn<(path: string) => Promise<string>>();
 
 // Mock utils (log)
 vi.mock("../utils", () => ({
@@ -28,7 +25,6 @@ import {
   getGhPagesState,
   getRemoteTree,
   diffFiles,
-  readFileForUpload,
   uploadBlob,
   uploadChangedFiles,
   createTree,
@@ -80,7 +76,7 @@ function mockErrorResponse(status: number, message: string): Partial<Response> {
 describe("github-deploy", () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    mockExecuteBinary.mockReset();
+    mockReadFn.mockReset();
   });
 
   // ==========================================================================
@@ -517,44 +513,6 @@ describe("github-deploy", () => {
   });
 
   // ==========================================================================
-  // readFileForUpload
-  // ==========================================================================
-  describe("readFileForUpload", () => {
-    it("returns base64 encoded content on success", async () => {
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true,
-        exitCode: 0,
-        stdout: "SGVsbG8gV29ybGQ=\n", // "Hello World" in base64
-        stderr: "",
-      });
-
-      const result = await readFileForUpload("/path/to/file.txt");
-
-      expect(result).toEqual({
-        content: "SGVsbG8gV29ybGQ=",
-        encoding: "base64",
-      });
-
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "base64",
-          args: expect.arrayContaining(["/path/to/file.txt"]),
-        })
-      );
-    });
-
-    it("throws on file not found (executeBinary fails)", async () => {
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "No such file or directory",
-      });
-
-      await expect(readFileForUpload("/nonexistent/file.txt")).rejects.toThrow();
-    });
-  });
-
   // ==========================================================================
   // uploadBlob
   // ==========================================================================
@@ -621,16 +579,10 @@ describe("github-deploy", () => {
         { path: "style.css", localHash: "localhash2" },
       ];
 
-      // Mock readFileForUpload (executeBinary for base64)
-      mockExecuteBinary
-        .mockResolvedValueOnce({
-          success: true, exitCode: 0,
-          stdout: "PCFET0NUWVBFPg==\n", stderr: "",
-        })
-        .mockResolvedValueOnce({
-          success: true, exitCode: 0,
-          stdout: "Ym9keXt9\n", stderr: "",
-        });
+      // Mock readFn to return base64 content
+      mockReadFn
+        .mockResolvedValueOnce("PCFET0NUWVBFPg==")
+        .mockResolvedValueOnce("Ym9keXt9");
 
       // Mock uploadBlob (fetch for POST /git/blobs)
       mockFetch
@@ -639,7 +591,7 @@ describe("github-deploy", () => {
 
       const onProgress = vi.fn();
       const result = await uploadChangedFiles(
-        files, "/site/dir", OWNER, REPO, TOKEN, onProgress
+        files, mockReadFn, OWNER, REPO, TOKEN, onProgress
       );
 
       expect(result.size).toBe(2);
@@ -654,19 +606,15 @@ describe("github-deploy", () => {
         { path: "c.html", localHash: "h3" },
       ];
 
-      // Mock readFileForUpload
-      mockExecuteBinary
-        .mockResolvedValue({
-          success: true, exitCode: 0,
-          stdout: "Y29udGVudA==\n", stderr: "",
-        });
+      // Mock readFn
+      mockReadFn.mockResolvedValue("Y29udGVudA==");
 
       // Mock uploadBlob
       mockFetch
         .mockResolvedValue(mockResponse({ sha: "blob-sha" }, 201));
 
       const onProgress = vi.fn();
-      await uploadChangedFiles(files, "/site", OWNER, REPO, TOKEN, onProgress);
+      await uploadChangedFiles(files, mockReadFn, OWNER, REPO, TOKEN, onProgress);
 
       expect(onProgress).toHaveBeenCalledTimes(3);
       // Verify progress increments
@@ -678,7 +626,7 @@ describe("github-deploy", () => {
     it("handles empty file list", async () => {
       const onProgress = vi.fn();
       const result = await uploadChangedFiles(
-        [], "/site", OWNER, REPO, TOKEN, onProgress
+        [], mockReadFn, OWNER, REPO, TOKEN, onProgress
       );
 
       expect(result.size).toBe(0);
@@ -688,10 +636,7 @@ describe("github-deploy", () => {
     it("propagates upload errors", async () => {
       const files = [{ path: "fail.html", localHash: "h1" }];
 
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
 
       mockFetch.mockResolvedValueOnce(
         mockErrorResponse(401, "Bad credentials")
@@ -699,7 +644,7 @@ describe("github-deploy", () => {
 
       const onProgress = vi.fn();
       await expect(
-        uploadChangedFiles(files, "/site", OWNER, REPO, TOKEN, onProgress)
+        uploadChangedFiles(files, mockReadFn, OWNER, REPO, TOKEN, onProgress)
       ).rejects.toThrow("Bad credentials");
     });
   });
@@ -939,16 +884,10 @@ describe("github-deploy", () => {
       const ghPagesState: GhPagesState = { exists: false };
       const onProgress = vi.fn();
 
-      // Mock readFileForUpload (executeBinary) - one per file
-      mockExecuteBinary
-        .mockResolvedValueOnce({
-          success: true, exitCode: 0,
-          stdout: "aW5kZXg=\n", stderr: "",
-        })
-        .mockResolvedValueOnce({
-          success: true, exitCode: 0,
-          stdout: "c3R5bGU=\n", stderr: "",
-        });
+      // Mock readFn - one per file
+      mockReadFn
+        .mockResolvedValueOnce("aW5kZXg=")
+        .mockResolvedValueOnce("c3R5bGU=");
 
       // Mock uploadBlob - one per file
       mockFetch
@@ -974,7 +913,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        siteDir: "/path/to/site",
+        readFn: mockReadFn,
         changed,
         deleted: [],
         ghPagesState,
@@ -1010,11 +949,8 @@ describe("github-deploy", () => {
       };
       const onProgress = vi.fn();
 
-      // Mock readFileForUpload for the one changed file
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "aW5kZXg=\n", stderr: "",
-      });
+      // Mock readFn for the one changed file
+      mockReadFn.mockResolvedValueOnce("aW5kZXg=");
 
       // Mock uploadBlob for the one changed file
       mockFetch.mockResolvedValueOnce(
@@ -1040,7 +976,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        siteDir: "/path/to/site",
+        readFn: mockReadFn,
         changed,
         deleted: [],
         ghPagesState,
@@ -1075,11 +1011,8 @@ describe("github-deploy", () => {
       };
       const onProgress = vi.fn();
 
-      // readFileForUpload
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
+      // readFn
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
 
       // uploadBlob
       mockFetch.mockResolvedValueOnce(
@@ -1105,7 +1038,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        siteDir: "/path/to/site",
+        readFn: mockReadFn,
         changed,
         deleted,
         ghPagesState,
@@ -1130,7 +1063,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        siteDir: "/path/to/site",
+        readFn: mockReadFn,
         changed: [],
         deleted: [],
         ghPagesState: { exists: true, commitSha: "c", treeSha: "t" },
@@ -1145,11 +1078,8 @@ describe("github-deploy", () => {
     it("propagates error during file upload", async () => {
       const changed = [{ path: "fail.html", localHash: "h1" }];
 
-      // readFileForUpload succeeds
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
+      // readFn succeeds
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
 
       // uploadBlob fails
       mockFetch.mockResolvedValueOnce(
@@ -1163,7 +1093,7 @@ describe("github-deploy", () => {
           owner: OWNER,
           repo: REPO,
           token: TOKEN,
-          siteDir: "/site",
+          readFn: mockReadFn,
           changed,
           deleted: [],
           ghPagesState: { exists: false },
@@ -1202,7 +1132,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1224,7 +1154,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1239,27 +1169,24 @@ describe("github-deploy", () => {
       // 1. getBranchState: main doesn't exist (404)
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
 
-      // 2. uploadBlob for index.md
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "aW5kZXg=\n", stderr: "",
-      });
+      // 2. readFn for index.md and config.yaml
+      mockReadFn
+        .mockResolvedValueOnce("aW5kZXg=")
+        .mockResolvedValueOnce("Y29uZmln");
+
+      // 3. uploadBlob for index.md
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
 
-      // 3. uploadBlob for config.yaml
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29uZmln\n", stderr: "",
-      });
+      // 4. uploadBlob for config.yaml
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
 
-      // 4. createTree
+      // 5. createTree
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
 
-      // 5. createCommit
+      // 6. createCommit
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-commit-sha" }, 201));
 
-      // 6. updateRef (create main)
+      // 7. updateRef (create main)
       mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
 
       const sourceFingerprint: Map<string, string> = new Map([
@@ -1272,7 +1199,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1287,11 +1214,10 @@ describe("github-deploy", () => {
       // getBranchState: 404
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
 
-      // uploadBlob for one file
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
+      // readFn for one file
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
+
+      // uploadBlob
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
 
       // createTree
@@ -1312,7 +1238,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1327,11 +1253,10 @@ describe("github-deploy", () => {
       // getBranchState: 404
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
 
-      // uploadBlob for one file
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
+      // readFn for one file
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
+
+      // uploadBlob
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
 
       // createTree
@@ -1352,7 +1277,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1368,18 +1293,15 @@ describe("github-deploy", () => {
       // getBranchState: 404
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
 
+      // readFn for file1 and file2
+      mockReadFn
+        .mockResolvedValueOnce("Y29udGVudDE=")
+        .mockResolvedValueOnce("Y29udGVudDI=");
+
       // uploadBlob for file1
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudDE=\n", stderr: "",
-      });
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-1" }, 201));
 
       // uploadBlob for file2
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudDI=\n", stderr: "",
-      });
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-2" }, 201));
 
       // createTree
@@ -1401,7 +1323,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        projectRoot: "/project",
+        readFn: mockReadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1415,11 +1337,10 @@ describe("github-deploy", () => {
       // getBranchState: 404 (main doesn't exist)
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
 
+      // readFn succeeds
+      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
+
       // uploadBlob fails with 403
-      mockExecuteBinary.mockResolvedValueOnce({
-        success: true, exitCode: 0,
-        stdout: "Y29udGVudA==\n", stderr: "",
-      });
       mockFetch.mockResolvedValueOnce(
         mockErrorResponse(403, "Repository access blocked")
       );
@@ -1434,7 +1355,7 @@ describe("github-deploy", () => {
           owner: OWNER,
           repo: REPO,
           token: TOKEN,
-          projectRoot: "/project",
+          readFn: mockReadFn,
           sourceFingerprint,
           onProgress,
         })

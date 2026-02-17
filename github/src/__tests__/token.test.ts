@@ -10,8 +10,6 @@ import {
 import {
   formatCredentialInput,
   parseCredentialOutput,
-  injectTokenIntoUrl,
-  sanitizeUrl,
   getTokenFromGit,
 } from "../token";
 
@@ -84,52 +82,6 @@ describe("token", () => {
       const result = parseCredentialOutput(output);
       expect(result.username).toBe("user");
       expect(result.password).toBe("pass");
-    });
-  });
-
-  describe("injectTokenIntoUrl", () => {
-    it("injects token into HTTPS GitHub URL", () => {
-      const url = "https://github.com/user/repo.git";
-      const result = injectTokenIntoUrl(url, "ghp_abc123");
-      expect(result).toBe("https://x-access-token:ghp_abc123@github.com/user/repo.git");
-    });
-
-    it("does not modify SSH URLs", () => {
-      const url = "git@github.com:user/repo.git";
-      const result = injectTokenIntoUrl(url, "ghp_abc123");
-      expect(result).toBe(url);
-    });
-
-    it("does not modify non-GitHub URLs", () => {
-      const url = "https://gitlab.com/user/repo.git";
-      const result = injectTokenIntoUrl(url, "ghp_abc123");
-      expect(result).toBe(url);
-    });
-
-    it("handles URLs without .git extension", () => {
-      const url = "https://github.com/user/repo";
-      const result = injectTokenIntoUrl(url, "ghp_abc123");
-      expect(result).toBe("https://x-access-token:ghp_abc123@github.com/user/repo");
-    });
-  });
-
-  describe("sanitizeUrl", () => {
-    it("removes token from URL", () => {
-      const url = "https://x-access-token:ghp_abc123@github.com/user/repo.git";
-      const result = sanitizeUrl(url);
-      expect(result).toBe("https://github.com/user/repo.git");
-    });
-
-    it("handles URLs without tokens", () => {
-      const url = "https://github.com/user/repo.git";
-      const result = sanitizeUrl(url);
-      expect(result).toBe(url);
-    });
-
-    it("handles URLs with different username formats", () => {
-      const url = "https://user:pass@github.com/owner/repo.git";
-      const result = sanitizeUrl(url);
-      expect(result).toBe("https://github.com/owner/repo.git");
     });
   });
 

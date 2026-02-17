@@ -357,26 +357,6 @@ export async function setCustomDomain(
   );
 }
 
-/**
- * Add a remote to the local git repository
- *
- * @param remoteName - Name for the remote (usually "origin")
- * @param url - Remote URL (SSH or HTTPS)
- */
-export async function addGitRemote(remoteName: string, url: string): Promise<void> {
-  // Import executeBinary dynamically to avoid circular dependencies
-  const { executeBinary } = await import("@symbiosis-lab/moss-api");
-
-  const result = await executeBinary({
-    binaryPath: "git",
-    args: ["remote", "add", remoteName, url],
-  });
-
-  if (!result.success) {
-    throw new Error(`Failed to add remote: ${result.stderr}`);
-  }
-}
-
 // ============================================================================
 // Validation Helpers
 // ============================================================================

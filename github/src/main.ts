@@ -13,11 +13,13 @@
 
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
-import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
-import { extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
+import { validateAll, isSSHRemote } from "./validation";
+import { extractGitHubPagesUrl, parseGitHubUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
 import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "./github-deploy";
+import { readSiteFile, readProjectFileBase64, listSourceFiles } from "@symbiosis-lab/moss-api";
 import { promptLogin } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
+import { getRepoConfig, saveRepoConfig } from "./config";
 import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
@@ -143,9 +145,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
   await log("log", "GitHub Deployer: Starting deployment...");
 
-  // Site directory path from context (e.g., ".moss/site")
-  const siteDir = context.output_dir;
-
   try {
     // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
     // The plugin trusts moss to provide site_files - no need to call listFiles()
@@ -156,25 +155,17 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
     await log("log", `   Site files: ${context.site_files.length} files ready`);
 
-    // Phase 0: Check if we have a git repo and remote
+    // Phase 0: Check if we have a repo config
     // If not, automatically create a repository (Feature 20)
     let remoteUrl: string;
 
     let wasFirstSetup = false;
 
-    // Check if we need to set up a repository
-    // Use tryGetRemoteUrl to check and get URL in one call (avoids duplicate git calls)
-    const needsGitInit = !await isGitRepository();
-    const existingRemoteUrl = needsGitInit ? null : await tryGetRemoteUrl();
-    const needsRemote = !needsGitInit && !existingRemoteUrl;
+    // Check if we have a stored repo config (replaces git CLI checks)
+    const existingConfig = await getRepoConfig();
+    const needsSetup = !existingConfig;
 
-    if (needsGitInit || needsRemote) {
-      // Check if git CLI is available
-      if (!await isGitAvailable()) {
-        await reportError("Git is not installed. Please install git to continue.", "validation", true);
-        return { success: false, message: "Git is not installed. Please install git first." };
-      }
-
+    if (needsSetup) {
       // Feature 20: Smart repo setup - auto-create or show UI
       await reportProgress("setup", 0, 10, "Setting up GitHub repository...");
       const repoInfo = await ensureGitHubRepo();
@@ -184,17 +175,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         return { success: false, message: "Repository setup cancelled." };
       }
 
-      // Initialize git if needed
-      if (needsGitInit) {
-        await log("log", "   Initializing git repository...");
-        await reportProgress("setup", 1, 10, "Initializing git...");
-        await initGitRepository();
+      // Save repo config (replaces git init + remote add)
+      const parsed = parseGitHubUrl(repoInfo.sshUrl);
+      if (parsed) {
+        await saveRepoConfig({ owner: parsed.owner, repo: parsed.repo });
       }
-
-      // Add remote
-      await log("log", `   Configuring remote: ${repoInfo.sshUrl}`);
-      await reportProgress("setup", 2, 10, "Configuring remote...");
-      await ensureRemote("origin", repoInfo.sshUrl);
 
       await log("log", `   Repository configured: ${repoInfo.fullName}`);
       remoteUrl = repoInfo.sshUrl;
@@ -205,8 +190,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       await closeBrowser();
       await log("log", "   Browser closed - continuing deployment in background");
     } else {
-      // Use the URL we already fetched
-      remoteUrl = existingRemoteUrl || "";
+      // Build remote URL from stored config
+      remoteUrl = `git@github.com:${existingConfig.owner}/${existingConfig.repo}.git`;
     }
 
     const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
@@ -263,9 +248,9 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Phase 4: Compare local vs remote
     await reportProgress("detecting", 5, 10, "Comparing files...");
-    const localFingerprint = await getLocalSiteFingerprint(siteDir);
+    const localFingerprint = await getLocalSiteFingerprint(context.site_files, readSiteFile);
     if (!localFingerprint || localFingerprint.size === 0) {
-      throw new Error("No site files found in " + siteDir);
+      throw new Error("No site files found");
     }
 
     let remoteTree: Map<string, { sha: string; mode: string }> | null = null;
@@ -319,7 +304,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       owner: parsed.owner,
       repo: parsed.repo,
       token,
-      siteDir,
+      readFn: readSiteFile,
       changed,
       deleted,
       ghPagesState,
@@ -331,18 +316,19 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     });
 
     // Push source files to main (first-time deploy only)
-    // When needsGitInit was true, the repo was just created with auto_init=false
+    // When needsSetup was true, the repo was just created with auto_init=false
     // (completely empty - no branches). Source push backs up the user's markdown files.
-    if (needsGitInit && commitSha) {
+    if (needsSetup && commitSha) {
       try {
         await reportProgress("deploying", 8, 10, "Backing up source files...");
-        const sourceFingerprint = await getLocalSourceFingerprint(context.project_path);
+        const sourceFiles = await listSourceFiles();
+        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, readProjectFileBase64);
         if (sourceFingerprint && sourceFingerprint.size > 0) {
           await pushSourceToMain({
             owner: parsed.owner,
             repo: parsed.repo,
             token,
-            projectRoot: context.project_path,
+            readFn: readProjectFileBase64,
             sourceFingerprint,
             onProgress: (_current, _total, message) => {
               reportProgress("deploying", 8, 10, message);
@@ -511,22 +497,16 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
   await log("log", `GitHub Deployer: Configuring custom domain "${domain}"...`);
 
   try {
-    // Get the remote URL to determine owner/repo
-    const remoteUrl = await tryGetRemoteUrl();
-    if (!remoteUrl) {
+    // Get repo config to determine owner/repo
+    const repoConfig = await getRepoConfig();
+    if (!repoConfig) {
       return {
         success: false,
-        message: "No git remote configured. Cannot set custom domain on GitHub Pages.",
+        message: "No GitHub repository configured. Cannot set custom domain on GitHub Pages.",
       };
     }
 
-    const parsed = parseGitHubUrl(remoteUrl);
-    if (!parsed) {
-      return {
-        success: false,
-        message: `Could not parse GitHub URL from remote: ${remoteUrl}`,
-      };
-    }
+    const parsed = repoConfig;
 
     // Get authentication token (should already be stored from deploy)
     let token = await getToken();

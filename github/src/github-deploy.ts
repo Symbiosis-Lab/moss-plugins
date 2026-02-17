@@ -16,7 +16,6 @@
  * @module github-deploy
  */
 
-import { executeBinary } from "@symbiosis-lab/moss-api";
 import type { Fingerprint } from "./git";
 import { GITHUB_API_BASE, GITHUB_API_HEADERS } from "./github-api";
 
@@ -83,7 +82,7 @@ export interface PushSourceOptions {
   owner: string;
   repo: string;
   token: string;
-  projectRoot: string;
+  readFn: ReadFileFn;
   sourceFingerprint: Fingerprint;
   onProgress: OnProgress;
 }
@@ -95,7 +94,7 @@ export interface DeployViaAPIOptions {
   owner: string;
   repo: string;
   token: string;
-  siteDir: string;
+  readFn: ReadFileFn;
   changed: Array<{ path: string; localHash: string }>;
   deleted: string[];
   ghPagesState: GhPagesState;
@@ -300,32 +299,9 @@ export function diffFiles(
 }
 
 /**
- * Read a file and encode it as base64 for GitHub blob upload.
- *
- * Uses the `base64` CLI command (macOS-only for now).
- *
- * @param filePath - Absolute path to the file
- * @returns Object with base64 content and encoding type
+ * Function that reads a file by relative path and returns base64-encoded content.
  */
-export async function readFileForUpload(
-  filePath: string
-): Promise<{ content: string; encoding: "base64" }> {
-  const result = await executeBinary({
-    binaryPath: "base64",
-    args: [filePath],
-    timeoutMs: 30000,
-  });
-
-  if (!result.success) {
-    const error = result.stderr || `Failed to read file: ${filePath}`;
-    throw new Error(error);
-  }
-
-  // Strip trailing whitespace/newlines from base64 output
-  const content = result.stdout.trim();
-
-  return { content, encoding: "base64" };
-}
+export type ReadFileFn = (relativePath: string) => Promise<string>;
 
 /**
  * Upload a single blob to GitHub.
@@ -369,7 +345,7 @@ export async function uploadBlob(
  * Upload changed files to GitHub as blobs with concurrency limiting.
  *
  * @param files - Array of changed files with path and local hash
- * @param siteDir - Path to the site directory
+ * @param readFn - Function that reads a file by relative path and returns base64 content
  * @param owner - Repository owner
  * @param repo - Repository name
  * @param token - GitHub access token
@@ -378,7 +354,7 @@ export async function uploadBlob(
  */
 export async function uploadChangedFiles(
   files: Array<{ path: string; localHash: string }>,
-  siteDir: string,
+  readFn: ReadFileFn,
   owner: string,
   repo: string,
   token: string,
@@ -396,12 +372,11 @@ export async function uploadChangedFiles(
   const uploadResults = await uploadWithConcurrency(
     files,
     async (file) => {
-      // Read and encode the file
-      const filePath = `${siteDir}/${file.path}`;
-      const { content, encoding } = await readFileForUpload(filePath);
+      // Read file as base64 via SDK
+      const content = await readFn(file.path);
 
       // Upload as blob
-      const blobSha = await uploadBlob(owner, repo, content, encoding, token);
+      const blobSha = await uploadBlob(owner, repo, content, "base64", token);
 
       // Report progress
       completed++;
@@ -633,7 +608,7 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
     owner,
     repo,
     token,
-    siteDir,
+    readFn,
     changed,
     deleted,
     ghPagesState,
@@ -647,7 +622,7 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
 
   // Step 1: Upload changed files as blobs
   const blobShas = await uploadChangedFiles(
-    changed, siteDir, owner, repo, token, onProgress
+    changed, readFn, owner, repo, token, onProgress
   );
 
   // Step 2: Build tree entries
@@ -708,7 +683,7 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
  * @returns The commit SHA on success, or empty string if skipped
  */
 export async function pushSourceToMain(options: PushSourceOptions): Promise<string> {
-  const { owner, repo, token, projectRoot, sourceFingerprint, onProgress } = options;
+  const { owner, repo, token, readFn, sourceFingerprint, onProgress } = options;
 
   // 1. Check if main branch already exists — if so, skip (safety: don't overwrite)
   const mainState = await getBranchState(owner, repo, "main", token);
@@ -728,7 +703,7 @@ export async function pushSourceToMain(options: PushSourceOptions): Promise<stri
 
   // 3. Upload blobs (reuse existing uploadChangedFiles)
   const blobShas = await uploadChangedFiles(
-    files, projectRoot, owner, repo, token, onProgress
+    files, readFn, owner, repo, token, onProgress
   );
 
   // 4. Create tree entries (all files, no base tree since it's a new branch)

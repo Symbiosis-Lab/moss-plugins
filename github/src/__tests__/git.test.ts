@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl, buildFindFilesCommand, fingerprintsMatch, parseLsTreeOutput, compareFingerprints, buildFindSourceFilesCommand, SOURCE_EXCLUDE_PATTERNS } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, fingerprintsMatch, parseLsTreeOutput, compareFingerprints, SOURCE_EXCLUDE_PATTERNS } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -147,29 +147,6 @@ describe("extractGitHubPagesUrl", () => {
     expect(() => {
       extractGitHubPagesUrl("not-a-url");
     }).toThrow("Could not parse GitHub URL from remote");
-  });
-});
-
-describe("buildFindFilesCommand", () => {
-  it("builds command that strips siteDir prefix correctly", () => {
-    const cmd = buildFindFilesCommand(".moss/site");
-    // The sed pattern must contain the actual siteDir value, not a literal ${siteDir}
-    expect(cmd).not.toContain("${siteDir}");
-    expect(cmd).toContain(".moss/site");
-    // The sed pattern should strip the prefix
-    expect(cmd).toMatch(/sed.*\.moss\/site/);
-  });
-
-  it("escapes special regex characters in path", () => {
-    const cmd = buildFindFilesCommand("path/with.dots");
-    // Dots should be escaped for sed regex
-    expect(cmd).toContain("path/with\\.dots");
-  });
-
-  it("handles paths with spaces", () => {
-    const cmd = buildFindFilesCommand("path with spaces");
-    // Path should be quoted
-    expect(cmd).toContain('"path with spaces"');
   });
 });
 
@@ -437,44 +414,3 @@ describe("SOURCE_EXCLUDE_PATTERNS", () => {
   });
 });
 
-describe("buildFindSourceFilesCommand", () => {
-  it("builds command that strips projectRoot prefix", () => {
-    const cmd = buildFindSourceFilesCommand("/Users/test/my-project");
-    // The sed pattern must contain the actual projectRoot value
-    expect(cmd).not.toContain("${projectRoot}");
-    expect(cmd).toContain("/Users/test/my-project");
-    // The sed pattern should strip the prefix
-    expect(cmd).toMatch(/sed.*\/Users\/test\/my-project/);
-  });
-
-  it("includes exclusion patterns for .moss, .git, and node_modules using -not -path", () => {
-    const cmd = buildFindSourceFilesCommand("/Users/test/project");
-    expect(cmd).toContain('-not -path "*/.moss/*"');
-    expect(cmd).toContain('-not -path "*/.git/*"');
-    expect(cmd).toContain('-not -path "*/node_modules/*"');
-  });
-
-  it("uses -not -name for .DS_Store", () => {
-    const cmd = buildFindSourceFilesCommand("/Users/test/project");
-    expect(cmd).toContain('-not -name ".DS_Store"');
-    // Should NOT use -not -path for .DS_Store
-    expect(cmd).not.toContain('-not -path "*/.DS_Store"');
-  });
-
-  it("escapes special regex characters in path", () => {
-    const cmd = buildFindSourceFilesCommand("path/with.dots");
-    // Dots should be escaped for sed regex
-    expect(cmd).toContain("path/with\\.dots");
-  });
-
-  it("handles paths with spaces", () => {
-    const cmd = buildFindSourceFilesCommand("path with spaces");
-    // Path should be quoted in the find command
-    expect(cmd).toContain('"path with spaces"');
-  });
-
-  it("ends with sort for deterministic output", () => {
-    const cmd = buildFindSourceFilesCommand("/tmp/project");
-    expect(cmd).toMatch(/\| sort$/);
-  });
-});

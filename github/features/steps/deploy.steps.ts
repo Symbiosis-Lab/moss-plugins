@@ -4,6 +4,7 @@
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
  *
  * Updated for REST API deployment flow (replaces git CLI worktree+push).
+ * Updated for config-based repo identity (replaces git CLI checks).
  */
 
 import { loadFeature, describeFeature } from "@amiceli/vitest-cucumber";
@@ -36,6 +37,7 @@ vi.mock("../../src/github-deploy", () => ({
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
   deployViaAPI: vi.fn(),
+  pushSourceToMain: vi.fn(),
 }));
 
 // Mock the auth module
@@ -54,7 +56,7 @@ vi.mock("../../src/token", () => ({
   clearToken: vi.fn(),
 }));
 
-// Mock the git module (only functions still imported by main.ts)
+// Mock the git module (only pure functions still imported by main.ts)
 vi.mock("../../src/git", () => ({
   extractGitHubPagesUrl: vi.fn().mockImplementation((remoteUrl: string) => {
     const m = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
@@ -66,23 +68,17 @@ vi.mock("../../src/git", () => ({
     if (m) return { owner: m[1], repo: m[2] };
     return null;
   }),
-  tryGetRemoteUrl: vi.fn(),
   getLocalSiteFingerprint: vi.fn(),
-  isGitRepository: vi.fn(),
-  isGitAvailable: vi.fn(),
-  getRemoteUrl: vi.fn(),
-  hasGitRemote: vi.fn(),
-  initGitRepository: vi.fn(),
-  addRemote: vi.fn(),
-  ensureRemote: vi.fn(),
-  hasUpstream: vi.fn(),
-  hasLocalCommits: vi.fn(),
-  remoteHasCommits: vi.fn(),
-  pushWithUpstream: vi.fn(),
-  pushWithRetry: vi.fn(),
+  getLocalSourceFingerprint: vi.fn(),
 }));
 
-// Mock the validation module (main.ts imports from this)
+// Mock the config module (replaces git CLI repo identity)
+vi.mock("../../src/config", () => ({
+  getRepoConfig: vi.fn(),
+  saveRepoConfig: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the validation module (only validateAll and isSSHRemote remain)
 vi.mock("../../src/validation", () => ({
   validateAll: vi.fn().mockImplementation(async (existingUrl?: string) => {
     return existingUrl || "git@github.com:test-user/test-repo.git";
@@ -90,16 +86,6 @@ vi.mock("../../src/validation", () => ({
   isSSHRemote: vi.fn().mockImplementation((url: string) => {
     return url.startsWith("git@") || url.startsWith("ssh://");
   }),
-  isGitRepository: vi.fn().mockResolvedValue(true),
-  isGitAvailable: vi.fn().mockResolvedValue(true),
-  initGitRepository: vi.fn().mockResolvedValue(undefined),
-  ensureRemote: vi.fn().mockResolvedValue(undefined),
-  hasRemote: vi.fn().mockResolvedValue(true),
-  hasUpstream: vi.fn().mockResolvedValue(true),
-  hasLocalCommits: vi.fn().mockResolvedValue(true),
-  remoteHasCommits: vi.fn().mockResolvedValue(true),
-  pushWithUpstream: vi.fn().mockResolvedValue(undefined),
-  pushWithRetry: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the repo-setup module
@@ -113,16 +99,18 @@ vi.mock("../../src/github-api", () => ({
   getAuthenticatedUser: vi.fn(),
   checkRepoExists: vi.fn(),
   createRepository: vi.fn(),
+  setCustomDomain: vi.fn(),
 }));
 
 // Import after mocking
 const { on_deploy } = await import("../../src/main");
 const { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } = await import("../../src/github-deploy");
 const { getToken, getTokenFromGit } = await import("../../src/token");
-const { tryGetRemoteUrl, getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
+const { getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
 const { checkPagesStatus } = await import("../../src/github-api");
-const { validateAll, isGitRepository, isGitAvailable, isSSHRemote } = await import("../../src/validation");
+const { validateAll, isSSHRemote } = await import("../../src/validation");
 const { ensureGitHubRepo } = await import("../../src/repo-setup");
+const { getRepoConfig, saveRepoConfig } = await import("../../src/config");
 
 describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) => {
   // Test state
@@ -176,9 +164,10 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     vi.mocked(isSSHRemote).mockImplementation((url: string) => {
       return url.startsWith("git@") || url.startsWith("ssh://");
     });
-    vi.mocked(isGitRepository).mockResolvedValue(true);
-    vi.mocked(isGitAvailable).mockResolvedValue(true);
     vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+    // Default: no repo config (first-time user)
+    vi.mocked(getRepoConfig).mockResolvedValue(null);
+    vi.mocked(saveRepoConfig).mockResolvedValue(undefined);
   });
 
   AfterEachScenario(() => {
@@ -187,24 +176,19 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Deploy from non-git directory shows repo setup UI
-  // The new behavior shows a browser UI for repo setup instead of an error
+  // New behavior: no stored config -> needsSetup -> ensureGitHubRepo
+  // When ensureGitHubRepo returns null, deploy fails with "cancelled"
   // ============================================================================
 
   Scenario("Deploy from non-git directory", ({ Given, When, Then, And }) => {
     Given("the directory is not a git repository", () => {
-      // Not a git repo
-      vi.mocked(isGitRepository).mockResolvedValue(false);
-      // Git is available
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
-      // tryGetRemoteUrl returns null
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // No stored config (no previous deploy, no .git/config to migrate from)
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
       // ensureGitHubRepo returns null (user cancelled)
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
     });
 
     When("I attempt to deploy", async () => {
-      // The deploy hook will try to show repo-setup browser, which times out or cancels
-      // in test environment since there's no UI interaction
       deployResult = await on_deploy(createMockContext());
     });
 
@@ -220,19 +204,18 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Deploy without any git remote
+  // Same as above in the new flow: no config -> needsSetup -> ensureGitHubRepo
   // ============================================================================
 
   Scenario("Deploy without any git remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      vi.mocked(isGitRepository).mockResolvedValue(true);
+      // No stored config (git repo exists but no remote configured)
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
     });
 
     And("no git remote is configured", () => {
-      // No remote
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
       // ensureGitHubRepo returns null (user cancelled)
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
     });
 
     When("I attempt to deploy", async () => {
@@ -256,16 +239,18 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Deploy with non-GitHub remote
+  // In new flow: config exists but validateAll rejects the URL
   // ============================================================================
 
   Scenario("Deploy with non-GitHub remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      vi.mocked(isGitRepository).mockResolvedValue(true);
+      // Config exists (migrated from .git/config with non-GitHub remote)
+      // In practice this shouldn't happen since migration filters non-GitHub,
+      // but validateAll is the safety net
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
     });
 
     And('the git remote is "git@gitlab.com:user/repo.git"', () => {
-      // Mock tryGetRemoteUrl to return gitlab URL
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:user/repo.git");
       // parseGitHubUrl returns null for non-GitHub
       vi.mocked(parseGitHubUrl).mockReturnValue(null);
       // Token available
@@ -307,11 +292,12 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   Scenario("Deploy with empty site directory", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      vi.mocked(isGitRepository).mockResolvedValue(true);
+      // Config exists (has a GitHub remote)
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
     });
 
     And('the git remote is "git@github.com:user/repo.git"', () => {
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:user/repo.git");
+      // Config already set in Given step
     });
 
     And("the site directory is empty", () => {
@@ -335,16 +321,16 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Successful deployment with SSH remote
-  // Updated for REST API flow
+  // Updated for config-based flow + REST API
   // ============================================================================
 
   Scenario("Successful deployment with SSH remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      vi.mocked(isGitRepository).mockResolvedValue(true);
+      // Config exists with testuser/testrepo
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "testuser", repo: "testrepo" });
     });
 
     And('the git remote is "git@github.com:testuser/testrepo.git"', () => {
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:testuser/testrepo.git");
       vi.mocked(validateAll).mockResolvedValue("git@github.com:testuser/testrepo.git");
     });
 
@@ -364,7 +350,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
         treeSha: "tree123",
       });
 
-      // Local fingerprint
+      // Local fingerprint - new signature: (siteFiles, readFn)
       vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
         new Map([["index.html", "hash1"]])
       );
@@ -403,16 +389,22 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: First-time deployment creates workflow
-  // Updated for REST API flow
+  // Updated for config-based flow + REST API
   // ============================================================================
 
   Scenario("First-time deployment creates workflow", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
-      vi.mocked(isGitRepository).mockResolvedValue(true);
+      // No config (first-time deploy)
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
     });
 
     And('the git remote is "git@github.com:user/repo.git"', () => {
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@github.com:user/repo.git");
+      // ensureGitHubRepo returns repo info (auto-created or via UI)
+      vi.mocked(ensureGitHubRepo).mockResolvedValue({
+        name: "repo",
+        sshUrl: "git@github.com:user/repo.git",
+        fullName: "user/repo",
+      });
       vi.mocked(validateAll).mockResolvedValue("git@github.com:user/repo.git");
     });
 
@@ -429,7 +421,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       // gh-pages does NOT exist (first-time deploy)
       vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
 
-      // Local fingerprint
+      // Local fingerprint - new signature: (siteFiles, readFn)
       vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
         new Map([["index.html", "hash1"]])
       );

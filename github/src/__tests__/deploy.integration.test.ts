@@ -65,21 +65,8 @@ vi.mock("../git", () => ({
     if (m) return { owner: m[1], repo: m[2] };
     return null;
   }),
-  tryGetRemoteUrl: vi.fn(),
   getLocalSiteFingerprint: vi.fn(),
   getLocalSourceFingerprint: vi.fn().mockResolvedValue(new Map([["index.md", "hash1"]])),
-  isGitRepository: vi.fn(),
-  isGitAvailable: vi.fn(),
-  getRemoteUrl: vi.fn(),
-  hasGitRemote: vi.fn(),
-  initGitRepository: vi.fn(),
-  addRemote: vi.fn(),
-  ensureRemote: vi.fn(),
-  hasUpstream: vi.fn(),
-  hasLocalCommits: vi.fn(),
-  remoteHasCommits: vi.fn(),
-  pushWithUpstream: vi.fn(),
-  pushWithRetry: vi.fn(),
 }));
 
 // Mock the validation module (main.ts imports from this)
@@ -91,16 +78,12 @@ vi.mock("../validation", () => ({
   isSSHRemote: vi.fn().mockImplementation((url: string) => {
     return url.startsWith("git@") || url.startsWith("ssh://");
   }),
-  isGitRepository: vi.fn().mockResolvedValue(true),
-  isGitAvailable: vi.fn().mockResolvedValue(true),
-  initGitRepository: vi.fn().mockResolvedValue(undefined),
-  ensureRemote: vi.fn().mockResolvedValue(undefined),
-  hasRemote: vi.fn().mockResolvedValue(true),
-  hasUpstream: vi.fn().mockResolvedValue(true),
-  hasLocalCommits: vi.fn().mockResolvedValue(true),
-  remoteHasCommits: vi.fn().mockResolvedValue(true),
-  pushWithUpstream: vi.fn().mockResolvedValue(undefined),
-  pushWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the config module
+vi.mock("../config", () => ({
+  getRepoConfig: vi.fn().mockResolvedValue({ owner: "test-user", repo: "test-repo" }),
+  saveRepoConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the repo-setup module
@@ -122,9 +105,10 @@ import { log, reportProgress, showToast } from "../utils";
 import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "../github-deploy";
 import { promptLogin } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
-import { tryGetRemoteUrl, getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
 import { checkPagesStatus } from "../github-api";
-import { validateAll, isGitRepository, isGitAvailable, isSSHRemote, initGitRepository, ensureRemote } from "../validation";
+import { validateAll, isSSHRemote } from "../validation";
+import { getRepoConfig, saveRepoConfig } from "../config";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
@@ -172,10 +156,11 @@ function setupDeployMocks(
   vi.mocked(getToken).mockResolvedValue(token);
   vi.mocked(getTokenFromGit).mockResolvedValue(null);
 
-  // Git repo exists with remote
-  vi.mocked(isGitRepository).mockResolvedValue(true);
-  vi.mocked(isGitAvailable).mockResolvedValue(true);
-  vi.mocked(tryGetRemoteUrl).mockResolvedValue(remoteUrl);
+  // Repo config exists (replaces git repo + remote checks)
+  const parsed = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+  if (parsed) {
+    vi.mocked(getRepoConfig).mockResolvedValue({ owner: parsed[1], repo: parsed[2] });
+  }
 
   // Validation passes and returns the remote URL
   vi.mocked(validateAll).mockResolvedValue(remoteUrl);
@@ -266,8 +251,7 @@ describe("on_deploy integration", () => {
     vi.mocked(isSSHRemote).mockImplementation((url: string) => {
       return url.startsWith("git@") || url.startsWith("ssh://");
     });
-    vi.mocked(isGitRepository).mockResolvedValue(true);
-    vi.mocked(isGitAvailable).mockResolvedValue(true);
+    vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
     vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
   });
 
@@ -275,62 +259,50 @@ describe("on_deploy integration", () => {
     ctx.cleanup();
   });
 
-  describe("Git Repository Validation", () => {
-    it("shows repo setup UI when not a git repository", async () => {
-      // Not a git repo
-      vi.mocked(isGitRepository).mockResolvedValue(false);
-      // Git is available
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
-      // tryGetRemoteUrl returns null (no remote)
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+  describe("Repository Config Validation", () => {
+    it("shows repo setup UI when no config exists", async () => {
+      // No repo config (first-time user)
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
       // ensureGitHubRepo returns null (user cancelled)
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
 
       const result = await on_deploy(createMockContext());
 
-      // New behavior: shows repo setup browser UI, returns cancelled when no interaction
+      // Shows repo setup browser UI, returns cancelled when no interaction
       expect(result.success).toBe(false);
       expect(result.message).toContain("cancelled");
     });
 
     it("returns cancelled when repo setup browser is dismissed", async () => {
-      // Not a git repo
-      vi.mocked(isGitRepository).mockResolvedValue(false);
-      // Git is available
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
-      // tryGetRemoteUrl returns null (no remote)
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+      // No repo config
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
       // ensureGitHubRepo returns null (user cancelled)
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
 
       const result = await on_deploy(createMockContext());
 
-      // New behavior: repo setup UI is shown, returns cancelled when dismissed
+      // Repo setup UI is shown, returns cancelled when dismissed
       expect(result.success).toBe(false);
       expect(result.message).toContain("cancelled");
     });
   });
 
   describe("Remote Validation", () => {
-    it("fails when no git remote is configured", async () => {
-      // Git repo exists but no remote
-      vi.mocked(isGitRepository).mockResolvedValue(true);
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+    it("fails when no repo config exists and setup is cancelled", async () => {
+      // No repo config
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
       // ensureGitHubRepo returns null (user cancelled)
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
-      // Feature 20: Consolidated repo setup - simplified messaging
       expect(result.message).toContain("Repository setup cancelled");
     });
 
-    it("fails when remote is not GitHub (SSH protocol path)", async () => {
-      // Git repo exists with GitLab remote
-      vi.mocked(isGitRepository).mockResolvedValue(true);
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:user/repo.git");
+    it("fails when validation rejects non-GitHub URL", async () => {
+      // Config has a non-GitHub URL pattern (edge case)
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
       // Token is available
       vi.mocked(getToken).mockResolvedValue("test-token");
       // validateAll throws for non-GitHub URL
@@ -350,9 +322,8 @@ describe("on_deploy integration", () => {
     });
 
     it("includes actual URL in error message for non-GitHub remote", async () => {
-      // Git repo exists with GitLab remote
-      vi.mocked(isGitRepository).mockResolvedValue(true);
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue("git@gitlab.com:myorg/myrepo.git");
+      // Config exists
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "myorg", repo: "myrepo" });
       // Token is available
       vi.mocked(getToken).mockResolvedValue("test-token");
       // validateAll throws with URL in message
@@ -1029,22 +1000,8 @@ describe("on_deploy integration", () => {
 
     // Test E: Auth required before REST API deploy
     it("Test E: Auth required before REST API deploy", async () => {
-      // Setup with git repo and valid remote
-      ctx.binaryConfig.setResult("git rev-parse --git-dir", {
-        success: true,
-        exitCode: 0,
-        stdout: ".git\n",
-        stderr: "",
-      });
-      ctx.binaryConfig.setResult("git remote get-url origin", {
-        success: true,
-        exitCode: 0,
-        stdout: "git@github.com:user/repo.git\n",
-        stderr: "",
-      });
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(
-        "git@github.com:user/repo.git"
-      );
+      // Repo config exists
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
 
       // No token available from any source
       vi.mocked(getToken).mockResolvedValue(null);
@@ -1196,26 +1153,21 @@ describe("on_deploy integration", () => {
 
   describe("Source Push to Main", () => {
     /**
-     * Helper: set up mocks for a first-time deploy scenario (needsGitInit=true).
-     * The repo doesn't exist yet, so isGitRepository returns false,
-     * ensureGitHubRepo creates it, and the full deploy flow succeeds.
+     * Helper: set up mocks for a first-time deploy scenario (needsSetup=true).
+     * No repo config exists, so ensureGitHubRepo creates it,
+     * and the full deploy flow succeeds.
      */
-    function setupFirstTimeDeploy(ctx: MockTauriContext) {
-      // Not a git repo yet → needsGitInit = true
-      vi.mocked(isGitRepository).mockResolvedValue(false);
-      vi.mocked(isGitAvailable).mockResolvedValue(true);
-      vi.mocked(tryGetRemoteUrl).mockResolvedValue(null);
+    function setupFirstTimeDeploy(_ctx: MockTauriContext) {
+      // No repo config → needsSetup = true
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
 
       // Repo setup succeeds
       vi.mocked(ensureGitHubRepo).mockResolvedValue({
         name: "test-repo",
         fullName: "test-user/test-repo",
-        htmlUrl: "https://github.com/test-user/test-repo",
         sshUrl: "git@github.com:test-user/test-repo.git",
-        cloneUrl: "https://github.com/test-user/test-repo.git",
       });
-      vi.mocked(initGitRepository).mockResolvedValue(undefined);
-      vi.mocked(ensureRemote).mockResolvedValue(undefined);
+      vi.mocked(saveRepoConfig).mockResolvedValue(undefined);
 
       // Token available
       vi.mocked(getToken).mockResolvedValue("test-token");
@@ -1249,7 +1201,7 @@ describe("on_deploy integration", () => {
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
     }
 
-    it("pushes source to main on first-time deploy (needsGitInit=true)", async () => {
+    it("pushes source to main on first-time deploy (needsSetup=true)", async () => {
       setupFirstTimeDeploy(ctx);
 
       // Source fingerprint returns 2 files
@@ -1273,11 +1225,11 @@ describe("on_deploy integration", () => {
       expect(callArgs.owner).toBe("test-user");
       expect(callArgs.repo).toBe("test-repo");
       expect(callArgs.token).toBe("test-token");
-      expect(callArgs.projectRoot).toBe("/test/project");
+      expect(callArgs.readFn).toBeDefined();
       expect(callArgs.sourceFingerprint.size).toBe(2);
     });
 
-    it("does NOT push source on subsequent deploy (needsGitInit=false)", async () => {
+    it("does NOT push source on subsequent deploy (needsSetup=false)", async () => {
       // Standard deploy: git repo already exists
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:test-user/test-repo.git",

@@ -8,6 +8,7 @@
 // Re-export SDK types for convenience
 export type {
   OnDeployContext,
+  OnConfigureDomainContext,
   HookResult,
   DeploymentInfo,
   ProjectInfo,

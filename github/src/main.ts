@@ -11,14 +11,14 @@
  * - Stores tokens in git credential helper for persistence
  */
 
-import type { OnDeployContext, HookResult, DnsTarget, DnsRecord } from "./types";
+import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote, isGitRepository, isGitAvailable, initGitRepository, ensureRemote } from "./validation";
 import { extractGitHubPagesUrl, parseGitHubUrl, tryGetRemoteUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
 import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "./github-deploy";
 import { promptLogin } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { checkPagesStatus } from "./github-api";
+import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
 // ============================================================================
@@ -489,6 +489,84 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 }
 
 // ============================================================================
+// configure_domain Hook Implementation
+// ============================================================================
+
+/**
+ * configure_domain hook - Set custom domain on GitHub Pages via API
+ *
+ * Called after moss-oracle configures DNS records. This hook tells GitHub
+ * about the custom domain so GitHub Pages serves content on it.
+ *
+ * Uses the GitHub Pages API: PUT /repos/{owner}/{repo}/pages { cname: domain }
+ *
+ * This is NON-FATAL from moss's perspective - DNS is already configured.
+ * If this fails, the user can retry or set the domain manually in GitHub settings.
+ */
+async function configure_domain(context: OnConfigureDomainContext): Promise<HookResult> {
+  setCurrentHookName("configure_domain");
+
+  const { domain } = context;
+
+  await log("log", `GitHub Deployer: Configuring custom domain "${domain}"...`);
+
+  try {
+    // Get the remote URL to determine owner/repo
+    const remoteUrl = await tryGetRemoteUrl();
+    if (!remoteUrl) {
+      return {
+        success: false,
+        message: "No git remote configured. Cannot set custom domain on GitHub Pages.",
+      };
+    }
+
+    const parsed = parseGitHubUrl(remoteUrl);
+    if (!parsed) {
+      return {
+        success: false,
+        message: `Could not parse GitHub URL from remote: ${remoteUrl}`,
+      };
+    }
+
+    // Get authentication token (should already be stored from deploy)
+    let token = await getToken();
+    if (!token) {
+      // Try git credential helper as fallback
+      token = await getTokenFromGit();
+      if (token) {
+        await storeToken(token);
+      }
+    }
+
+    if (!token) {
+      return {
+        success: false,
+        message: "No GitHub authentication token available. Please deploy first to authenticate.",
+      };
+    }
+
+    // Call GitHub Pages API to set the custom domain
+    await log("log", `   Setting CNAME to "${domain}" on ${parsed.owner}/${parsed.repo}...`);
+    await setCustomDomain(parsed.owner, parsed.repo, token, domain);
+
+    await log("log", `   Custom domain "${domain}" configured on GitHub Pages`);
+
+    return {
+      success: true,
+      message: `Custom domain "${domain}" configured on GitHub Pages for ${parsed.owner}/${parsed.repo}`,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await log("error", `GitHub Deployer: Failed to configure domain - ${errorMessage}`);
+
+    return {
+      success: false,
+      message: `Failed to set custom domain on GitHub Pages: ${errorMessage}`,
+    };
+  }
+}
+
+// ============================================================================
 // Plugin Export
 // ============================================================================
 
@@ -497,11 +575,12 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
  */
 const GitHubDeployer = {
   deploy,
+  configure_domain,
 };
 
 // Register plugin globally for the plugin runtime
 (window as unknown as { GitHubDeployer: typeof GitHubDeployer }).GitHubDeployer = GitHubDeployer;
 
 // Also export for module usage
-export { deploy, deploy as on_deploy };
+export { deploy, deploy as on_deploy, configure_domain, configure_domain as on_configure_domain };
 export default GitHubDeployer;

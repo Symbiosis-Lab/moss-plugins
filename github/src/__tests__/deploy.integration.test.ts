@@ -101,6 +101,9 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn(),
   pluginFileExists: vi.fn(),
+  hashSiteFile: vi.fn().mockResolvedValue("mock-hash"),
+  listSiteFilesWithSizes: vi.fn().mockResolvedValue([]),
+  httpPostSiteFile: vi.fn().mockResolvedValue({ status: 201, ok: true, body_base64: "", content_type: null }),
 }));
 
 // Mock the github-api module (checkPagesStatus used by waitForPagesLive)
@@ -234,7 +237,7 @@ function setupDeployMocks(
   }
 
   // Deploy result (REST API upload)
-  vi.mocked(deployViaAPI).mockResolvedValue(hasChanges ? commitSha : "");
+  vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: hasChanges ? commitSha : "", skippedFiles: [] });
 
   // Pages status check (polling)
   vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -1210,7 +1213,7 @@ describe("on_deploy integration", () => {
       });
 
       // Deploy succeeds
-      vi.mocked(deployViaAPI).mockResolvedValue("deploy-commit-sha");
+      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "deploy-commit-sha", skippedFiles: [] });
 
       // Pages status
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -1477,7 +1480,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
+      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "new-commit-sha", skippedFiles: [] });
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());
@@ -1514,7 +1517,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue("commit-sha");
+      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "commit-sha", skippedFiles: [] });
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());

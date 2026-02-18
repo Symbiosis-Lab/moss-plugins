@@ -23,6 +23,12 @@ import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
 import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
+// Text file extensions for source backup (binary assets are already on gh-pages)
+const SOURCE_EXTENSIONS = new Set([
+  ".md", ".txt", ".toml", ".yaml", ".yml", ".json",
+  ".html", ".css", ".js", ".ts", ".xml", ".csv",
+]);
+
 // ============================================================================
 // GitHub Pages DNS Configuration
 // ============================================================================
@@ -338,11 +344,20 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Push source files to main (first-time deploy only)
     // When needsSetup was true, the repo was just created with auto_init=true
     // (main has initial commit). Source push backs up the user's markdown files.
+    // Only text files are pushed — binary assets are already on gh-pages.
     if (needsSetup) {
       try {
         await reportProgress("deploying", 6, 10, "Backing up source files...");
-        const sourceFiles = await listSourceFiles();
-        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, readProjectFileBase64);
+        const allSourceFiles = await listSourceFiles();
+        const sourceFiles = allSourceFiles.filter((f) => {
+          const dot = f.lastIndexOf(".");
+          const ext = dot >= 0 ? f.slice(dot).toLowerCase() : "";
+          return SOURCE_EXTENSIONS.has(ext);
+        });
+        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, async (path) => {
+          await reportProgress("deploying", 6, 10, `Reading ${path}...`);
+          return readProjectFileBase64(path);
+        });
         if (sourceFingerprint && sourceFingerprint.size > 0) {
           await pushSourceToMain({
             owner: parsed.owner,

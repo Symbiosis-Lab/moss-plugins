@@ -93,6 +93,16 @@ vi.mock("../repo-setup", () => ({
   ensureGitHubRepo: vi.fn(),
 }));
 
+// Mock @symbiosis-lab/moss-api (listSourceFiles, readProjectFileBase64, readSiteFile)
+vi.mock("@symbiosis-lab/moss-api", () => ({
+  listSourceFiles: vi.fn().mockResolvedValue([]),
+  readProjectFileBase64: vi.fn().mockResolvedValue("base64content"),
+  readSiteFile: vi.fn().mockResolvedValue("filecontent"),
+  readPluginFile: vi.fn(),
+  writePluginFile: vi.fn(),
+  pluginFileExists: vi.fn(),
+}));
+
 // Mock the github-api module (checkPagesStatus used by waitForPagesLive)
 vi.mock("../github-api", () => ({
   checkPagesStatus: vi.fn().mockResolvedValue({ status: "built" }),
@@ -112,6 +122,7 @@ import { checkPagesStatus } from "../github-api";
 import { validateAll, isSSHRemote } from "../validation";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "../config";
 import { ensureGitHubRepo } from "../repo-setup";
+import { listSourceFiles, readProjectFileBase64 } from "@symbiosis-lab/moss-api";
 
 /**
  * Create a mock OnDeployContext for testing
@@ -1308,6 +1319,74 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
+    });
+
+    it("filters source files to text extensions only (Step 5a)", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      // listSourceFiles returns mixed text + binary files
+      vi.mocked(listSourceFiles).mockResolvedValue([
+        "index.md",
+        "about.md",
+        "config.toml",
+        "data.json",
+        "styles.css",
+        "assets/photo.jpg",
+        "assets/logo.png",
+        "assets/video.mp4",
+        "assets/font.woff2",
+        "assets/diagram.svg",
+      ]);
+
+      // Source fingerprint returns results
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
+        new Map([
+          ["index.md", "hash1"],
+          ["about.md", "hash2"],
+          ["config.toml", "hash3"],
+        ])
+      );
+      vi.mocked(pushSourceToMain).mockResolvedValue("source-sha");
+
+      const result = await on_deploy(createMockContext());
+      expect(result.success).toBe(true);
+
+      // Verify getLocalSourceFingerprint received only text files
+      const sourceFilesArg = vi.mocked(getLocalSourceFingerprint).mock.calls[0][0];
+      expect(sourceFilesArg).toContain("index.md");
+      expect(sourceFilesArg).toContain("about.md");
+      expect(sourceFilesArg).toContain("config.toml");
+      expect(sourceFilesArg).toContain("data.json");
+      expect(sourceFilesArg).toContain("styles.css");
+      // Binary files should be filtered out
+      expect(sourceFilesArg).not.toContain("assets/photo.jpg");
+      expect(sourceFilesArg).not.toContain("assets/logo.png");
+      expect(sourceFilesArg).not.toContain("assets/video.mp4");
+      expect(sourceFilesArg).not.toContain("assets/font.woff2");
+      expect(sourceFilesArg).not.toContain("assets/diagram.svg");
+    });
+
+    it("reports progress during source fingerprinting (Step 5b)", async () => {
+      setupFirstTimeDeploy(ctx);
+
+      vi.mocked(listSourceFiles).mockResolvedValue(["index.md", "about.md"]);
+      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
+        new Map([["index.md", "hash1"], ["about.md", "hash2"]])
+      );
+      vi.mocked(pushSourceToMain).mockResolvedValue("source-sha");
+
+      const result = await on_deploy(createMockContext());
+      expect(result.success).toBe(true);
+
+      // Extract the readFn passed to getLocalSourceFingerprint
+      const readFn = vi.mocked(getLocalSourceFingerprint).mock.calls[0][1];
+      // Clear progress calls accumulated during deploy
+      vi.mocked(reportProgress).mockClear();
+      // Call the readFn manually to test it reports progress
+      await readFn("index.md");
+      expect(vi.mocked(reportProgress)).toHaveBeenCalledWith(
+        "deploying", 6, 10, expect.stringContaining("index.md")
+      );
     });
   });
 

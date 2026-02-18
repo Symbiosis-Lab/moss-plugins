@@ -370,7 +370,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
 
       // deployViaAPI returns commit sha
-      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
+      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "new-commit-sha", skippedFiles: [] });
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -438,7 +438,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
 
       // deployViaAPI returns commit sha
-      vi.mocked(deployViaAPI).mockResolvedValue("first-commit-sha");
+      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "first-commit-sha", skippedFiles: [] });
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });

@@ -268,6 +268,26 @@ describe("GitHub API", () => {
       expect(body.private).toBe(false);
     });
 
+    it("creates repository with auto_init enabled", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            name: "my-repo",
+            full_name: "user/my-repo",
+            html_url: "",
+            ssh_url: "",
+            clone_url: "",
+          }),
+      });
+
+      await createRepository("my-repo", "test-token");
+
+      const [, options] = mockFetch.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.auto_init).toBe(true);
+    });
+
     it("throws error on failure", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,

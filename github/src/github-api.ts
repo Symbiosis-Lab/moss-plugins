@@ -188,7 +188,7 @@ export async function createRepository(
       name,
       description: description ?? "Created with Moss",
       private: false, // Always public for GitHub Pages
-      auto_init: false, // We'll push our own content
+      auto_init: true, // Initializes repo so Git Data API works immediately
     }),
   });
 

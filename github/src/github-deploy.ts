@@ -731,12 +731,11 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
 /**
  * Push source files to the main branch for backup.
  *
- * Used on first-time deploy when the repo has no branches at all.
- * Creates an orphan commit on main with all source files (markdown, config,
- * assets) so the user's raw content is preserved alongside the compiled
- * gh-pages deployment.
+ * Updates the existing main branch (created by auto_init) with source files
+ * (markdown, config, assets) so the user's raw content is preserved alongside
+ * the compiled gh-pages deployment.
  *
- * Safety: skips if main already exists to avoid overwriting user content.
+ * Skips if main does not exist (shouldn't happen with auto_init: true).
  *
  * @param options - Push source options
  * @returns The commit SHA on success, or empty string if skipped
@@ -744,13 +743,13 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
 export async function pushSourceToMain(options: PushSourceOptions): Promise<string> {
   const { owner, repo, token, readFn, sourceFingerprint, onProgress } = options;
 
-  // 1. Check if main branch already exists — if so, skip (safety: don't overwrite)
+  // 1. Check if main branch exists — skip if it doesn't (shouldn't happen with auto_init)
   const mainState = await getBranchState(owner, repo, "main", token);
-  if (mainState.exists) {
+  if (!mainState.exists) {
     return "";
   }
 
-  // 2. All files are "changed" (first deploy, no remote tree)
+  // 2. All source files
   const files = [...sourceFingerprint.entries()].map(([path, hash]) => ({
     path,
     localHash: hash,
@@ -765,7 +764,7 @@ export async function pushSourceToMain(options: PushSourceOptions): Promise<stri
     files, readFn, owner, repo, token, onProgress
   );
 
-  // 4. Create tree entries (all files, no base tree since it's a new branch)
+  // 4. Create tree entries
   const treeEntries: TreeEntry[] = [];
   for (const file of files) {
     const blobSha = blobShas.get(file.path);
@@ -779,20 +778,20 @@ export async function pushSourceToMain(options: PushSourceOptions): Promise<stri
     }
   }
 
-  // 5. Create tree (no base_tree — new branch)
-  const treeSha = await createTree(owner, repo, treeEntries, null, token);
+  // 5. Create tree WITH base_tree (incremental update on existing main)
+  const treeSha = await createTree(owner, repo, treeEntries, mainState.treeSha, token);
 
-  // 6. Create orphan commit (no parents)
+  // 6. Create commit WITH parent (child of existing main HEAD)
   const commitSha = await createCommit(
     owner, repo,
-    "Initial commit\n\nSource files uploaded by Moss",
+    "Add source files\n\nSource files uploaded by Moss",
     treeSha,
-    [],
+    [mainState.commitSha],
     token
   );
 
-  // 7. Create main ref
-  await updateRef(owner, repo, "main", commitSha, false, token);
+  // 7. Update existing main ref (PATCH, not POST)
+  await updateRef(owner, repo, "main", commitSha, true, token);
 
   return commitSha;
 }

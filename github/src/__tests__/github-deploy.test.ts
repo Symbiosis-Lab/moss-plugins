@@ -1184,7 +1184,7 @@ describe("github-deploy", () => {
   // pushSourceToMain
   // ==========================================================================
   describe("pushSourceToMain", () => {
-    it("skips when main branch already exists", async () => {
+    it("updates existing main branch with source files", async () => {
       // Mock getBranchState returning exists: true (ref check + commit fetch)
       mockFetch.mockResolvedValueOnce(
         mockResponse({
@@ -1199,72 +1199,25 @@ describe("github-deploy", () => {
         })
       );
 
-      const sourceFingerprint: Map<string, string> = new Map([
-        ["index.md", "hash1"],
-        ["config.yaml", "hash2"],
-      ]);
-      const onProgress = vi.fn();
-
-      const result = await pushSourceToMain({
-        owner: OWNER,
-        repo: REPO,
-        token: TOKEN,
-        readFn: mockReadFn,
-        sourceFingerprint,
-        onProgress,
-      });
-
-      expect(result).toBe("");
-      // Only the getBranchState calls (ref + commit), no further API calls
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(onProgress).not.toHaveBeenCalled();
-    });
-
-    it("skips when fingerprint is empty", async () => {
-      // Mock getBranchState returning 404 (main doesn't exist)
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
-
-      const sourceFingerprint: Map<string, string> = new Map();
-      const onProgress = vi.fn();
-
-      const result = await pushSourceToMain({
-        owner: OWNER,
-        repo: REPO,
-        token: TOKEN,
-        readFn: mockReadFn,
-        sourceFingerprint,
-        onProgress,
-      });
-
-      expect(result).toBe("");
-      // Only the getBranchState call (404), nothing else
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(onProgress).not.toHaveBeenCalled();
-    });
-
-    it("uploads all source files for first-time deploy", async () => {
-      // 1. getBranchState: main doesn't exist (404)
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
-
-      // 2. readFn for index.md and config.yaml
+      // readFn for index.md and config.yaml
       mockReadFn
         .mockResolvedValueOnce("aW5kZXg=")
         .mockResolvedValueOnce("Y29uZmln");
 
-      // 3. uploadBlob for index.md
+      // uploadBlob for index.md
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
 
-      // 4. uploadBlob for config.yaml
+      // uploadBlob for config.yaml
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
 
-      // 5. createTree
+      // createTree (with base_tree)
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
 
-      // 6. createCommit
+      // createCommit (with parent)
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-commit-sha" }, 201));
 
-      // 7. updateRef (create main)
-      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+      // updateRef (PATCH existing)
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }));
 
       const sourceFingerprint: Map<string, string> = new Map([
         ["index.md", "hash1"],
@@ -1283,35 +1236,44 @@ describe("github-deploy", () => {
 
       expect(result).toBe("new-commit-sha");
 
-      // Total fetch calls: 1 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 6
-      expect(mockFetch).toHaveBeenCalledTimes(6);
+      // Total: 2 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 7
+      expect(mockFetch).toHaveBeenCalledTimes(7);
+
+      // createTree was called with base_tree = "existing-tree"
+      const createTreeCall = mockFetch.mock.calls[4]; // index 4: ref(0), commit(1), blob(2), blob(3), tree(4)
+      const treeBody = JSON.parse(createTreeCall[1].body);
+      expect(treeBody.base_tree).toBe("existing-tree");
+
+      // createCommit was called with parents = ["existing-commit"]
+      const createCommitCall = mockFetch.mock.calls[5]; // index 5
+      const commitBody = JSON.parse(createCommitCall[1].body);
+      expect(commitBody.parents).toEqual(["existing-commit"]);
+
+      // updateRef used PATCH (not POST)
+      const updateRefCall = mockFetch.mock.calls[6]; // index 6
+      expect(updateRefCall[1].method).toBe("PATCH");
+      expect(updateRefCall[0]).toContain("/git/refs/heads/main");
     });
 
-    it("creates orphan commit with no parents", async () => {
-      // getBranchState: 404
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+    it("skips when fingerprint is empty", async () => {
+      // Mock getBranchState returning exists: true (main exists)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
 
-      // readFn for one file
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      // uploadBlob
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
-
-      // createTree
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
-
-      // createCommit
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "orphan-sha" }, 201));
-
-      // updateRef
-      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
-
-      const sourceFingerprint: Map<string, string> = new Map([
-        ["readme.md", "hash1"],
-      ]);
+      const sourceFingerprint: Map<string, string> = new Map();
       const onProgress = vi.fn();
 
-      await pushSourceToMain({
+      const result = await pushSourceToMain({
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
@@ -1320,15 +1282,106 @@ describe("github-deploy", () => {
         onProgress,
       });
 
-      // createCommit is the 4th fetch call (index 3): getBranchState(0), blob(1), tree(2), commit(3)
-      const createCommitCall = mockFetch.mock.calls[3];
-      const body = JSON.parse(createCommitCall[1].body);
-      expect(body.parents).toEqual([]);
+      expect(result).toBe("");
+      // Only the getBranchState calls (ref + commit), nothing else
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(onProgress).not.toHaveBeenCalled();
     });
 
-    it("creates main ref (not update)", async () => {
-      // getBranchState: 404
+    it("uploads all source files with base_tree and parent commit", async () => {
+      // 1. getBranchState: main exists (ref + commit fetch)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
+
+      // 2. readFn for index.md and config.yaml
+      mockReadFn
+        .mockResolvedValueOnce("aW5kZXg=")
+        .mockResolvedValueOnce("Y29uZmln");
+
+      // 3. uploadBlob for index.md
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
+
+      // 4. uploadBlob for config.yaml
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
+
+      // 5. createTree (with base_tree)
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
+
+      // 6. createCommit (with parent)
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-commit-sha" }, 201));
+
+      // 7. updateRef (PATCH existing main)
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["index.md", "hash1"],
+        ["config.yaml", "hash2"],
+      ]);
+      const onProgress = vi.fn();
+
+      const result = await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        readFn: mockReadFn,
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(result).toBe("new-commit-sha");
+
+      // Total fetch calls: 2 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 7
+      expect(mockFetch).toHaveBeenCalledTimes(7);
+    });
+
+    it("skips when main does not exist", async () => {
+      // getBranchState: 404 (main doesn't exist)
       mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      const sourceFingerprint: Map<string, string> = new Map([
+        ["readme.md", "hash1"],
+      ]);
+      const onProgress = vi.fn();
+
+      const result = await pushSourceToMain({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        readFn: mockReadFn,
+        sourceFingerprint,
+        onProgress,
+      });
+
+      expect(result).toBe("");
+      // Only the getBranchState call (404), nothing else
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    it("updates existing main ref (PATCH)", async () => {
+      // getBranchState: main exists (ref + commit fetch)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
 
       // readFn for one file
       mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
@@ -1342,8 +1395,8 @@ describe("github-deploy", () => {
       // createCommit
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "commit-sha" }, 201));
 
-      // updateRef (POST, not PATCH)
-      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+      // updateRef (PATCH, not POST)
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }));
 
       const sourceFingerprint: Map<string, string> = new Map([
         ["readme.md", "hash1"],
@@ -1359,16 +1412,26 @@ describe("github-deploy", () => {
         onProgress,
       });
 
-      // updateRef is the 5th fetch call (index 4)
-      const updateRefCall = mockFetch.mock.calls[4];
-      expect(updateRefCall[1].method).toBe("POST");
-      const body = JSON.parse(updateRefCall[1].body);
-      expect(body.ref).toBe("refs/heads/main");
+      // updateRef is the 6th fetch call (index 5): ref(0), commit(1), blob(2), tree(3), commit(4), ref(5)
+      const updateRefCall = mockFetch.mock.calls[5];
+      expect(updateRefCall[1].method).toBe("PATCH");
+      expect(updateRefCall[0]).toContain("/git/refs/heads/main");
     });
 
     it("reports progress during upload", async () => {
-      // getBranchState: 404
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      // getBranchState: main exists (ref + commit fetch)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
 
       // readFn for file1 and file2
       mockReadFn
@@ -1388,7 +1451,7 @@ describe("github-deploy", () => {
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "commit-sha" }, 201));
 
       // updateRef
-      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }, 201));
+      mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }));
 
       const sourceFingerprint: Map<string, string> = new Map([
         ["file1.md", "hash1"],
@@ -1411,8 +1474,19 @@ describe("github-deploy", () => {
     });
 
     it("propagates API errors", async () => {
-      // getBranchState: 404 (main doesn't exist)
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      // getBranchState: main exists (ref + commit fetch)
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          ref: "refs/heads/main",
+          object: { sha: "existing-commit", type: "commit" },
+        })
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          sha: "existing-commit",
+          tree: { sha: "existing-tree" },
+        })
+      );
 
       // readFn succeeds
       mockReadFn.mockResolvedValueOnce("Y29udGVudA==");

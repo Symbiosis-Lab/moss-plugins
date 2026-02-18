@@ -34,6 +34,7 @@ vi.mock("../github-deploy", () => ({
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
   deployViaAPI: vi.fn(),
+  deployViaGitPush: vi.fn(),
   pushSourceToMain: vi.fn().mockResolvedValue("source-commit-sha"),
 }));
 
@@ -117,7 +118,7 @@ vi.mock("../github-api", () => ({
 // Import after mocking
 import { on_deploy } from "../main";
 import { log, reportProgress, showToast } from "../utils";
-import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "../github-deploy";
+import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, deployViaGitPush, pushSourceToMain } from "../github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
@@ -236,8 +237,8 @@ function setupDeployMocks(
     });
   }
 
-  // Deploy result (REST API upload)
-  vi.mocked(deployViaAPI).mockResolvedValue(hasChanges ? commitSha : "");
+  // Deploy result (git push)
+  vi.mocked(deployViaGitPush).mockResolvedValue(hasChanges ? commitSha : "");
 
   // Pages status check (polling)
   vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -506,7 +507,7 @@ describe("on_deploy integration", () => {
 
       // Should succeed - REST API doesn't need upstream
       expect(result.success).toBe(true);
-      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
 
     it("deploys via REST API with token auth (no SSH needed)", async () => {
@@ -597,7 +598,7 @@ describe("on_deploy integration", () => {
       expect(vi.mocked(getGhPagesState)).toHaveBeenCalled();
       expect(vi.mocked(getLocalSiteFingerprint)).toHaveBeenCalled();
       expect(vi.mocked(diffFiles)).toHaveBeenCalled();
-      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
 
     it("uses existing gh-pages branch (not orphan) when branch already exists", async () => {
@@ -700,8 +701,8 @@ describe("on_deploy integration", () => {
         hasChanges: true,
       });
 
-      // deployViaAPI throws an error
-      vi.mocked(deployViaAPI).mockRejectedValue(new Error("GitHub API error: 500"));
+      // deployViaGitPush throws an error
+      vi.mocked(deployViaGitPush).mockRejectedValue(new Error("GitHub API error: 500"));
 
       const result = await on_deploy(createMockContext());
 
@@ -778,8 +779,8 @@ describe("on_deploy integration", () => {
       expect(result.message).toContain("No changes to deploy");
       expect(result.deployment?.metadata?.commit_sha).toBe("");
 
-      // deployViaAPI should NOT have been called
-      expect(vi.mocked(deployViaAPI)).not.toHaveBeenCalled();
+      // deployViaGitPush should NOT have been called
+      expect(vi.mocked(deployViaGitPush)).not.toHaveBeenCalled();
 
       // Toast is shown via showToast()
       expect(showToast).toHaveBeenCalled();
@@ -801,7 +802,7 @@ describe("on_deploy integration", () => {
 
       // Should succeed with changes deployed
       expect(result.success).toBe(true);
-      expect(vi.mocked(deployViaAPI)).toHaveBeenCalled();
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
 
     it("handles getLocalSiteFingerprint returning null gracefully", async () => {
@@ -862,8 +863,8 @@ describe("on_deploy integration", () => {
         hasChanges: true,
       });
 
-      // Make deployViaAPI fail with timeout error
-      vi.mocked(deployViaAPI).mockRejectedValue(
+      // Make deployViaGitPush fail with timeout error
+      vi.mocked(deployViaGitPush).mockRejectedValue(
         new Error("Request timed out after 300000 ms")
       );
 
@@ -887,8 +888,8 @@ describe("on_deploy integration", () => {
         hasChanges: true,
       });
 
-      // Make deployViaAPI fail with SSH permission denied
-      vi.mocked(deployViaAPI).mockRejectedValue(
+      // Make deployViaGitPush fail with SSH permission denied
+      vi.mocked(deployViaGitPush).mockRejectedValue(
         new Error("Permission denied (publickey).")
       );
 
@@ -932,14 +933,11 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // Verify deployViaAPI was called with the correct changed/deleted arrays
-      expect(vi.mocked(deployViaAPI)).toHaveBeenCalledTimes(1);
-      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
-      expect(deployCall.changed).toEqual([
-        { path: "index.html", localHash: "new-hash-1" },
-        { path: "new-page.html", localHash: "new-hash-2" },
-      ]);
-      expect(deployCall.deleted).toEqual(["old-page.html"]);
+      // Verify deployViaGitPush was called (git push handles all files)
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
+      const deployCall = vi.mocked(deployViaGitPush).mock.calls[0][0];
+      expect(deployCall.owner).toBe("user");
+      expect(deployCall.repo).toBe("repo");
     });
 
     // Test B: REST API deploy first-time creates branch
@@ -964,9 +962,8 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // Verify ghPagesState.exists = false was passed to deployViaAPI
-      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
-      expect(deployCall.ghPagesState).toEqual({ exists: false });
+      // Verify deployViaGitPush was called (git push doesn't need ghPagesState)
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
       // getRemoteTree should NOT have been called (no remote tree for first deploy)
       expect(vi.mocked(getRemoteTree)).not.toHaveBeenCalled();
     });
@@ -983,8 +980,8 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain("No changes");
-      // deployViaAPI should NOT have been called
-      expect(vi.mocked(deployViaAPI)).not.toHaveBeenCalled();
+      // deployViaGitPush should NOT have been called
+      expect(vi.mocked(deployViaGitPush)).not.toHaveBeenCalled();
     });
 
     // Test D: Progress is monotonically increasing
@@ -1064,8 +1061,8 @@ describe("on_deploy integration", () => {
         hasChanges: true,
       });
 
-      // deployViaAPI throws error with "Bad credentials"
-      vi.mocked(deployViaAPI).mockRejectedValue(
+      // deployViaGitPush throws error with "Bad credentials"
+      vi.mocked(deployViaGitPush).mockRejectedValue(
         new Error("Bad credentials - authentication failed")
       );
 
@@ -1089,8 +1086,8 @@ describe("on_deploy integration", () => {
         hasChanges: true,
       });
 
-      // deployViaAPI throws "Network error"
-      vi.mocked(deployViaAPI).mockRejectedValue(
+      // deployViaGitPush throws "Network error"
+      vi.mocked(deployViaGitPush).mockRejectedValue(
         new Error("Network connection failed")
       );
 
@@ -1154,14 +1151,11 @@ describe("on_deploy integration", () => {
       expect(localFingerprint.has("\u65e5\u672c\u8a9e.html")).toBe(true);
       expect(localFingerprint.has("caf\u00e9.html")).toBe(true);
 
-      // Verify deployViaAPI received the unicode paths
-      const deployCall = vi.mocked(deployViaAPI).mock.calls[0][0];
-      const changedPaths = deployCall.changed.map(
-        (f: { path: string }) => f.path
-      );
-      expect(changedPaths).toContain("\u4e2d\u6587\u6587\u7ae0.html");
-      expect(changedPaths).toContain("\u65e5\u672c\u8a9e.html");
-      expect(changedPaths).toContain("caf\u00e9.html");
+      // Verify deployViaGitPush was called (git push handles all files)
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
+      const deployCall = vi.mocked(deployViaGitPush).mock.calls[0][0];
+      expect(deployCall.owner).toBe("user");
+      expect(deployCall.repo).toBe("repo");
     });
   });
 
@@ -1213,7 +1207,7 @@ describe("on_deploy integration", () => {
       });
 
       // Deploy succeeds
-      vi.mocked(deployViaAPI).mockResolvedValue("deploy-commit-sha");
+      vi.mocked(deployViaGitPush).mockResolvedValue("deploy-commit-sha");
 
       // Pages status
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -1248,7 +1242,7 @@ describe("on_deploy integration", () => {
 
       // Verify source push happens BEFORE gh-pages deploy
       const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
-      const deployOrder = vi.mocked(deployViaAPI).mock.invocationCallOrder[0];
+      const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
       expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
 
@@ -1291,12 +1285,12 @@ describe("on_deploy integration", () => {
       const warnMessages = warnCalls.map((call) => call[1]);
       expect(warnMessages.some((msg) => msg.includes("Source push to main failed"))).toBe(true);
 
-      // Verify deployViaAPI was still called even though source push failed
-      expect(vi.mocked(deployViaAPI)).toHaveBeenCalledTimes(1);
+      // Verify deployViaGitPush was still called even though source push failed
+      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
 
       // Verify source push was attempted BEFORE deploy
       const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
-      const deployOrder = vi.mocked(deployViaAPI).mock.invocationCallOrder[0];
+      const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
       expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
 
@@ -1480,7 +1474,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
+      vi.mocked(deployViaGitPush).mockResolvedValue("new-commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());
@@ -1517,7 +1511,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue("commit-sha");
+      vi.mocked(deployViaGitPush).mockResolvedValue("commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());

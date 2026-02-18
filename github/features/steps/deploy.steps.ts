@@ -3,7 +3,7 @@
  *
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
  *
- * Updated for REST API deployment flow (replaces git CLI worktree+push).
+ * Updated for git-push-only deployment flow (no REST API fingerprinting/diffing).
  * Updated for config-based repo identity (replaces git CLI checks).
  */
 
@@ -31,15 +31,11 @@ vi.mock("../../src/utils", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock the github-deploy module (REST API functions)
+// Mock the github-deploy module
 vi.mock("../../src/github-deploy", () => ({
   verifyRepoExists: vi.fn().mockResolvedValue(undefined),
-  getGhPagesState: vi.fn(),
-  getRemoteTree: vi.fn(),
-  diffFiles: vi.fn(),
-  deployViaAPI: vi.fn(),
   deployViaGitPush: vi.fn(),
-  pushSourceToMain: vi.fn(),
+  pushSourceViaGitPush: vi.fn().mockResolvedValue("source-sha"),
 }));
 
 // Mock the auth module
@@ -70,8 +66,6 @@ vi.mock("../../src/git", () => ({
     if (m) return { owner: m[1], repo: m[2] };
     return null;
   }),
-  getLocalSiteFingerprint: vi.fn(),
-  getLocalSourceFingerprint: vi.fn(),
 }));
 
 // Mock the config module (replaces git CLI repo identity)
@@ -107,9 +101,9 @@ vi.mock("../../src/github-api", () => ({
 
 // Import after mocking
 const { on_deploy } = await import("../../src/main");
-const { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, deployViaGitPush } = await import("../../src/github-deploy");
+const { deployViaGitPush, pushSourceViaGitPush } = await import("../../src/github-deploy");
 const { getToken, getTokenFromGit } = await import("../../src/token");
-const { getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
+const { parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
 const { checkPagesStatus } = await import("../../src/github-api");
 const { validateAll, isSSHRemote } = await import("../../src/validation");
 const { ensureGitHubRepo } = await import("../../src/repo-setup");
@@ -248,8 +242,6 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
   Scenario("Deploy with non-GitHub remote", ({ Given, When, Then, And }) => {
     Given("the directory is a git repository", () => {
       // Config exists (migrated from .git/config with non-GitHub remote)
-      // In practice this shouldn't happen since migration filters non-GitHub,
-      // but validateAll is the safety net
       vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
     });
 
@@ -324,7 +316,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: Successful deployment with SSH remote
-  // Updated for config-based flow + REST API
+  // Updated for config-based flow + git push deploy
   // ============================================================================
 
   Scenario("Successful deployment with SSH remote", ({ Given, When, Then, And }) => {
@@ -342,33 +334,9 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow already exists", () => {
-      // REST API flow: token available, gh-pages exists
+      // Token available
       vi.mocked(getToken).mockResolvedValue("test-token");
       vi.mocked(getTokenFromGit).mockResolvedValue(null);
-
-      // gh-pages exists (returning user)
-      vi.mocked(getGhPagesState).mockResolvedValue({
-        exists: true,
-        commitSha: "abc123",
-        treeSha: "tree123",
-      });
-
-      // Local fingerprint - new signature: (siteFiles, readFn)
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([["index.html", "hash1"]])
-      );
-
-      // Remote tree
-      vi.mocked(getRemoteTree).mockResolvedValue(
-        new Map([["index.html", { sha: "old-hash", mode: "100644" }]])
-      );
-
-      // diffFiles returns changes
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [{ path: "index.html", localHash: "hash1" }],
-        unchanged: [],
-        deleted: [],
-      });
 
       // deployViaGitPush returns commit sha string
       vi.mocked(deployViaGitPush).mockResolvedValue("new-commit-sha");
@@ -392,7 +360,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
 
   // ============================================================================
   // Scenario: First-time deployment creates workflow
-  // Updated for config-based flow + REST API
+  // Updated for config-based flow + git push deploy
   // ============================================================================
 
   Scenario("First-time deployment creates workflow", ({ Given, When, Then, And }) => {
@@ -417,29 +385,15 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     });
 
     And("the GitHub Actions workflow does not exist", () => {
-      // REST API flow: token available, gh-pages does NOT exist (first-time)
+      // Token available
       vi.mocked(getToken).mockResolvedValue("test-token");
       vi.mocked(getTokenFromGit).mockResolvedValue(null);
 
-      // gh-pages does NOT exist (first-time deploy)
-      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
-
-      // Local fingerprint - new signature: (siteFiles, readFn)
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([["index.html", "hash1"]])
-      );
-
-      // No remote tree for first deploy (getRemoteTree should not be called)
-
-      // diffFiles returns all files as changed
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [{ path: "index.html", localHash: "hash1" }],
-        unchanged: [],
-        deleted: [],
-      });
-
       // deployViaGitPush returns commit sha string
       vi.mocked(deployViaGitPush).mockResolvedValue("first-commit-sha");
+
+      // pushSourceViaGitPush returns source sha
+      vi.mocked(pushSourceViaGitPush).mockResolvedValue("source-sha");
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });

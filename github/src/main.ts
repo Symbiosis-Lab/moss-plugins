@@ -1,10 +1,8 @@
 /**
  * GitHub Deployer Plugin
  *
- * Deploys sites to GitHub Pages via git push (isomorphic-git).
- * Uses REST API for fingerprinting/diffing and git push for the
- * actual deploy, providing fine-grained progress reporting without
- * requiring git CLI as a runtime dependency.
+ * Deploys sites to GitHub Pages via git push to the gh-pages branch.
+ * On first-time deploy, also pushes source files to the main branch.
  *
  * Authentication:
  * - Uses OAuth Device Flow for browser-based GitHub login
@@ -14,20 +12,13 @@
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote } from "./validation";
-import { extractGitHubPagesUrl, parseGitHubUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
-import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaGitPush, pushSourceToMain } from "./github-deploy";
-import { readSiteFile, readProjectFileBase64, listSourceFiles, hashSiteFile } from "@symbiosis-lab/moss-api";
+import { extractGitHubPagesUrl, parseGitHubUrl } from "./git";
+import { verifyRepoExists, deployViaGitPush, pushSourceViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
-import { checkPagesStatus, setCustomDomain, GITHUB_API_BASE, GITHUB_API_HEADERS } from "./github-api";
+import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
-
-// Text file extensions for source backup (binary assets are already on gh-pages)
-const SOURCE_EXTENSIONS = new Set([
-  ".md", ".txt", ".toml", ".yaml", ".yml", ".json",
-  ".html", ".css", ".js", ".ts", ".xml", ".csv",
-]);
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -135,16 +126,14 @@ async function waitForPagesLive(
 // ============================================================================
 
 /**
- * deploy hook - Deploy to GitHub Pages via REST API
+ * deploy hook - Deploy to GitHub Pages via git push
  *
  * This capability:
  * 0. Validates requirements (git repo, GitHub remote, compiled site)
  * 1. Ensures authentication (prompts login if needed)
- * 2. Checks gh-pages branch state via REST API
- * 3. Compares local files against remote tree
- * 4. Uploads changed files as blobs via REST API
- * 5. Creates tree, commit, and updates gh-pages ref
- * 6. Verifies deployment is live
+ * 2. Pushes source files to main branch (first-time only, non-fatal)
+ * 3. Force-pushes compiled site to gh-pages via git CLI
+ * 4. Verifies deployment is live
  */
 async function deploy(context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
@@ -284,161 +273,47 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Phase 2.5: Verify the repository exists (fail fast with clear error)
     await verifyRepoExists(parsed.owner, parsed.repo, token);
 
-    // Phase 3: Check gh-pages state via REST API
-    await reportProgress("detecting", 4, 10, "Checking deployment status...");
-    const ghPagesState = await getGhPagesState(parsed.owner, parsed.repo, token);
-    // First deploy = no gh-pages branch yet (includes brand-new repos)
-    wasFirstSetup = !ghPagesState.exists;
+    wasFirstSetup = needsSetup;
 
     // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
-    // Covers both fingerprinting and deploy phases
     let commitSha = "";
     const heartbeat = setInterval(() => {
       reportProgress("deploying", 4, 10, "Deploy in progress...");
     }, 30_000);
 
     try {
-    // Phase 4: Fingerprint local files and compare with remote
-    await reportProgress("detecting", 5, 10, "Comparing files...");
-
-    // All site file hashing goes through Rust (no base64 crossing IPC)
-    // Wrap hashSiteFile with progress reporting
-    let hashCount = 0;
-    const totalFiles = context.site_files.length;
-    const hashWithProgress = async (path: string): Promise<string> => {
-      hashCount++;
-      if (hashCount % 20 === 0 || hashCount === totalFiles) {
-        await reportProgress("deploying", 4, 10, `Comparing file ${hashCount}/${totalFiles}...`);
-      }
-      return hashSiteFile(path);
-    };
-
-    const localFingerprint = await getLocalSiteFingerprint(
-      context.site_files, readSiteFile, hashWithProgress
-    );
-    if (!localFingerprint || localFingerprint.size === 0) {
-      throw new Error("No site files found");
-    }
-
-    let remoteTree: Map<string, { sha: string; mode: string }> | null = null;
-    if (ghPagesState.exists) {
-      remoteTree = await getRemoteTree(parsed.owner, parsed.repo, ghPagesState.treeSha, token);
-    }
-
-    const { changed, deleted } = diffFiles(localFingerprint, remoteTree);
-
-    // No changes - early exit
-    if (changed.length === 0 && deleted.length === 0) {
-      clearInterval(heartbeat);
-      await reportProgress("complete", 10, 10, "No changes to deploy");
-      const pagesUrl = extractGitHubPagesUrl(remoteUrl);
-      await log("log", "   No changes to deploy");
-      await log("log", `   Site URL: ${pagesUrl}`);
-
-      const dnsTarget = generateDnsTarget(parsed.owner);
-
-      // Show toast with clickable URL (8s duration for clickable link)
-      await showToast({
-        message: "No changes to deploy",
-        variant: "info",
-        actions: [{ label: "View site", url: pagesUrl }],
-        duration: 8000,
-      });
-
-      // Return result - runtime handles completion
-      return {
-        success: true,
-        message: `No changes to deploy.\n\nYour site: ${pagesUrl}\n\nYour local site is already up to date.`,
-        deployment: {
-          method: "github-pages",
-          url: pagesUrl,
-          deployed_at: new Date().toISOString(),
-          metadata: {
-            branch: "gh-pages",
-            was_first_setup: "false",
-            commit_sha: "", // Empty = no changes
-            is_live: "true", // Already deployed, should be live
-          },
-          dns_target: dnsTarget,
-        },
-      };
-    }
-
-    // Push source files to main (first-time deploy only)
-    // When needsSetup was true, the repo was just created with auto_init=true
-    // (main has initial commit). Source push backs up the user's markdown files.
-    // Only text files are pushed — binary assets are already on gh-pages.
-    if (needsSetup) {
-      try {
-        await reportProgress("deploying", 6, 10, "Backing up source files...");
-        const allSourceFiles = await listSourceFiles();
-        const sourceFiles = allSourceFiles.filter((f) => {
-          const dot = f.lastIndexOf(".");
-          const ext = dot >= 0 ? f.slice(dot).toLowerCase() : "";
-          return SOURCE_EXTENSIONS.has(ext);
-        });
-        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, async (path) => {
-          await reportProgress("deploying", 6, 10, `Reading ${path}...`);
-          return readProjectFileBase64(path);
-        });
-        if (sourceFingerprint && sourceFingerprint.size > 0) {
-          // Source files use Rust upload (httpPostSiteFile reads from project root
-          // indirectly via the site path — but source files are tiny text files,
-          // so we use readProjectFileBase64 + JS fetch for the blob upload)
-          const sourceUploadFn = async (relativePath: string): Promise<string> => {
-            const content = await readProjectFileBase64(relativePath);
-            const response = await fetch(
-              `${GITHUB_API_BASE}/repos/${parsed.owner}/${parsed.repo}/git/blobs`,
-              {
-                method: "POST",
-                headers: {
-                  ...GITHUB_API_HEADERS,
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ content, encoding: "base64" }),
-              }
-            );
-            if (!response.ok) {
-              const body = await response.json().catch(() => ({}));
-              throw new Error(body.message || `GitHub API error: ${response.status}`);
-            }
-            const data = await response.json();
-            return data.sha;
-          };
-
-          await pushSourceToMain({
+      // Push source files to main (first-time deploy only, non-fatal)
+      // Backs up the user's raw content alongside the compiled gh-pages deployment
+      if (needsSetup) {
+        try {
+          await pushSourceViaGitPush({
             owner: parsed.owner,
             repo: parsed.repo,
             token,
-            uploadFn: sourceUploadFn,
-            sourceFingerprint,
             onProgress: (_current, _total, message) => {
-              reportProgress("deploying", 6, 10, message);
+              reportProgress("deploying", 5, 10, message);
             },
           });
-          await log("log", `   Source files pushed to main (${sourceFingerprint.size} files)`);
+        } catch (error) {
+          // Non-fatal: gh-pages deploy can still proceed
+          await log("warn", `   Source push to main failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
         }
-      } catch (error) {
-        // Non-fatal: gh-pages deploy can still proceed
-        await log("warn", `   Source push to main failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
 
-    // Deploy site to gh-pages via git push
-    await reportProgress("deploying", 6, 10, "Deploying via git push...");
-    await log("log", `   Deploying ${changed.length} changed, ${deleted.length} deleted files via git push...`);
+      // Deploy site to gh-pages via git push
+      // deployViaGitPush handles change detection internally (git diff --cached --quiet)
+      // Returns "" if nothing changed, commit SHA if deployed
+      await reportProgress("deploying", 6, 10, "Deploying via git push...");
 
-    commitSha = await deployViaGitPush({
-      owner: parsed.owner,
-      repo: parsed.repo,
-      token,
-      onProgress: (current, total, message) => {
-        // Map upload progress to steps 6-8 out of 10
-        const step = 6 + Math.floor((current / Math.max(total, 1)) * 2);
-        reportProgress("deploying", Math.min(step, 8), 10, message);
-      },
-    });
+      commitSha = await deployViaGitPush({
+        owner: parsed.owner,
+        repo: parsed.repo,
+        token,
+        onProgress: (current, total, message) => {
+          const step = 6 + Math.floor((current / Math.max(total, 1)) * 2);
+          reportProgress("deploying", Math.min(step, 8), 10, message);
+        },
+      });
     } finally {
       clearInterval(heartbeat);
     }

@@ -4,7 +4,7 @@
  * Uses @symbiosis-lab/moss-api/testing to mock Tauri IPC commands
  * and test the full deployment flow with various scenarios.
  *
- * Updated for REST API deployment flow (replaces git CLI worktree+push).
+ * Updated for git-push-only deployment flow (no REST API fingerprinting/diffing).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -27,15 +27,11 @@ vi.mock("../utils", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock the github-deploy module (REST API functions)
+// Mock the github-deploy module
 vi.mock("../github-deploy", () => ({
   verifyRepoExists: vi.fn().mockResolvedValue(undefined),
-  getGhPagesState: vi.fn(),
-  getRemoteTree: vi.fn(),
-  diffFiles: vi.fn(),
-  deployViaAPI: vi.fn(),
   deployViaGitPush: vi.fn(),
-  pushSourceToMain: vi.fn().mockResolvedValue("source-commit-sha"),
+  pushSourceViaGitPush: vi.fn().mockResolvedValue("source-commit-sha"),
 }));
 
 // Mock the auth module
@@ -67,8 +63,6 @@ vi.mock("../git", () => ({
     if (m) return { owner: m[1], repo: m[2] };
     return null;
   }),
-  getLocalSiteFingerprint: vi.fn(),
-  getLocalSourceFingerprint: vi.fn().mockResolvedValue(new Map([["index.md", "hash1"]])),
 }));
 
 // Mock the validation module (main.ts imports from this)
@@ -94,15 +88,11 @@ vi.mock("../repo-setup", () => ({
   ensureGitHubRepo: vi.fn(),
 }));
 
-// Mock @symbiosis-lab/moss-api (listSourceFiles, readProjectFileBase64, readSiteFile)
+// Mock @symbiosis-lab/moss-api
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  listSourceFiles: vi.fn().mockResolvedValue([]),
-  readProjectFileBase64: vi.fn().mockResolvedValue("base64content"),
-  readSiteFile: vi.fn().mockResolvedValue("filecontent"),
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn(),
   pluginFileExists: vi.fn(),
-  hashSiteFile: vi.fn().mockResolvedValue("mock-hash"),
   listSiteFilesWithSizes: vi.fn().mockResolvedValue([]),
   httpPostSiteFile: vi.fn().mockResolvedValue({ status: 201, ok: true, body_base64: "", content_type: null }),
 }));
@@ -118,15 +108,14 @@ vi.mock("../github-api", () => ({
 // Import after mocking
 import { on_deploy } from "../main";
 import { log, reportProgress, showToast } from "../utils";
-import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, deployViaGitPush, pushSourceToMain } from "../github-deploy";
+import { verifyRepoExists, deployViaGitPush, pushSourceViaGitPush } from "../github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
-import { getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
 import { checkPagesStatus } from "../github-api";
 import { validateAll, isSSHRemote } from "../validation";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "../config";
 import { ensureGitHubRepo } from "../repo-setup";
-import { listSourceFiles, readProjectFileBase64 } from "@symbiosis-lab/moss-api";
 
 /**
  * Create a mock OnDeployContext for testing
@@ -149,24 +138,24 @@ function createMockContext(overrides?: Partial<OnDeployContext>): OnDeployContex
 }
 
 /**
- * Set up common mocks for a successful REST API deployment flow
+ * Set up common mocks for a successful deployment flow
  */
 function setupDeployMocks(
-  ctx: MockTauriContext,
+  _ctx: MockTauriContext,
   options?: {
-    ghPagesExists?: boolean;
     hasChanges?: boolean;
     commitSha?: string;
     token?: string;
     remoteUrl?: string;
+    needsSetup?: boolean;
   }
 ) {
   const {
-    ghPagesExists = true,
     hasChanges = true,
     commitSha = "abc1234def5678",
     token = "test-token",
     remoteUrl = "git@github.com:test-user/test-repo.git",
+    needsSetup = false,
   } = options ?? {};
 
   // Token is available
@@ -176,69 +165,26 @@ function setupDeployMocks(
   // Repo config exists (replaces git repo + remote checks)
   const parsed = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
   if (parsed) {
-    vi.mocked(getRepoConfig).mockResolvedValue({ owner: parsed[1], repo: parsed[2] });
+    if (needsSetup) {
+      vi.mocked(getRepoConfig).mockResolvedValue(null);
+      vi.mocked(ensureGitHubRepo).mockResolvedValue({
+        name: parsed[2],
+        fullName: `${parsed[1]}/${parsed[2]}`,
+        sshUrl: remoteUrl,
+      });
+    } else {
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: parsed[1], repo: parsed[2] });
+    }
   }
 
   // Validation passes and returns the remote URL
   vi.mocked(validateAll).mockResolvedValue(remoteUrl);
 
-  // gh-pages state via REST API
-  if (ghPagesExists) {
-    vi.mocked(getGhPagesState).mockResolvedValue({
-      exists: true,
-      commitSha: "existing-commit-sha",
-      treeSha: "existing-tree-sha",
-    });
-  } else {
-    vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
-  }
-
-  // Local fingerprint (file hashing)
-  vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-    new Map([
-      ["index.html", "hash1"],
-      ["style.css", "hash2"],
-    ])
-  );
-
-  // Remote tree (if gh-pages exists)
-  if (ghPagesExists) {
-    vi.mocked(getRemoteTree).mockResolvedValue(
-      new Map([
-        [
-          "index.html",
-          { sha: hasChanges ? "old-hash" : "hash1", mode: "100644" },
-        ],
-        ...(hasChanges
-          ? []
-          : [["style.css", { sha: "hash2", mode: "100644" }] as [string, { sha: string; mode: string }]]),
-      ])
-    );
-  }
-
-  // Diff result
-  if (hasChanges) {
-    vi.mocked(diffFiles).mockReturnValue({
-      changed: [
-        { path: "index.html", localHash: "hash1" },
-        { path: "style.css", localHash: "hash2" },
-      ],
-      unchanged: [],
-      deleted: [],
-    });
-  } else {
-    vi.mocked(diffFiles).mockReturnValue({
-      changed: [],
-      unchanged: [
-        { path: "index.html", sha: "hash1", mode: "100644" },
-        { path: "style.css", sha: "hash2", mode: "100644" },
-      ],
-      deleted: [],
-    });
-  }
-
   // Deploy result (git push)
   vi.mocked(deployViaGitPush).mockResolvedValue(hasChanges ? commitSha : "");
+
+  // Source push (for first-time deploys)
+  vi.mocked(pushSourceViaGitPush).mockResolvedValue("source-commit-sha");
 
   // Pages status check (polling)
   vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -376,7 +322,6 @@ describe("on_deploy integration", () => {
       // Setup full deploy mocks
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -396,7 +341,6 @@ describe("on_deploy integration", () => {
       // Setup full deploy mocks
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -417,7 +361,6 @@ describe("on_deploy integration", () => {
     it("skips OAuth for SSH remotes and proceeds with deployment", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -433,7 +376,6 @@ describe("on_deploy integration", () => {
       // Bug 23: For existing HTTPS remotes, token from cookie/git-credential is used
       setupDeployMocks(ctx, {
         remoteUrl: "https://github.com/user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -441,7 +383,6 @@ describe("on_deploy integration", () => {
 
       // Should not have opened browser for OAuth
       expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(0);
-      // Deployment proceeds (may still fail due to other mocks, but not auth)
     });
   });
 
@@ -449,7 +390,6 @@ describe("on_deploy integration", () => {
     it("returns success with deployment info for SSH remote", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:testuser/testrepo.git",
-        ghPagesExists: true,
         hasChanges: true,
         commitSha: "abc123def",
       });
@@ -463,22 +403,12 @@ describe("on_deploy integration", () => {
     });
 
     it("indicates first-time setup in message", async () => {
-      // Set up for first-time deployment (gh-pages doesn't exist)
+      // Set up for first-time deployment (needsSetup = true)
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: false,
+        needsSetup: true,
         hasChanges: true,
         commitSha: "abc123",
-      });
-
-      // First deploy: diffFiles returns all files as changed (no remote tree)
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "hash1" },
-          { path: "style.css", localHash: "hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
@@ -489,56 +419,26 @@ describe("on_deploy integration", () => {
     });
   });
 
-  // ============================================================================
-  // Smart Push tests are no longer needed because we use REST API now,
-  // but we keep the test descriptions and adapt them to the new flow.
-  // ============================================================================
-
-  describe("Smart Push (Bug 14 Fix) - REST API equivalent", () => {
-    it("deploys via REST API regardless of upstream configuration", async () => {
-      // REST API deployment doesn't depend on upstream configuration
+  describe("Deployment via git push", () => {
+    it("deploys via git push", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
 
-      // Should succeed - REST API doesn't need upstream
+      // Should succeed
       expect(result.success).toBe(true);
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
 
-    it("deploys via REST API with token auth (no SSH needed)", async () => {
+    it("handles first-time setup (needsSetup)", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
-        hasChanges: true,
-      });
-
-      const result = await on_deploy(createMockContext());
-
-      // Should succeed with regular REST API deploy
-      expect(result.success).toBe(true);
-    });
-
-    it("handles first-time setup (gh-pages branch doesn't exist)", async () => {
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: false,
+        needsSetup: true,
         hasChanges: true,
         commitSha: "new-commit-sha",
-      });
-
-      // First deploy: all files are new
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "hash1" },
-          { path: "style.css", localHash: "hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
@@ -549,15 +449,10 @@ describe("on_deploy integration", () => {
     });
   });
 
-  // ============================================================================
-  // Subsequent Deploys (now use REST API diff instead of worktree)
-  // ============================================================================
-
-  describe("Subsequent Deploys (Bug 15 Fix)", () => {
-    it("succeeds when gh-pages already exists (returning user)", async () => {
+  describe("Subsequent Deploys", () => {
+    it("succeeds when repo already exists (returning user)", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -568,10 +463,9 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.method).toBe("github-pages");
     });
 
-    it("reports no changes when site is up to date", async () => {
+    it("reports no changes when deployViaGitPush returns empty string", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: false,
       });
 
@@ -583,10 +477,9 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.metadata?.commit_sha).toBe("");
     });
 
-    it("uses REST API approach (not worktree) for deployment", async () => {
+    it("calls deployViaGitPush for deployment", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -594,62 +487,42 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(result.deployment?.method).toBe("github-pages");
-      // Verify REST API functions were called
-      expect(vi.mocked(getGhPagesState)).toHaveBeenCalled();
-      expect(vi.mocked(getLocalSiteFingerprint)).toHaveBeenCalled();
-      expect(vi.mocked(diffFiles)).toHaveBeenCalled();
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
 
-    it("uses existing gh-pages branch (not orphan) when branch already exists", async () => {
+    it("was_first_setup is false for subsequent deploys", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // was_first_setup should be false since gh-pages already existed
+      // was_first_setup should be false since needsSetup is false
       expect(result.deployment?.metadata?.was_first_setup).toBe("false");
     });
   });
 
-  // ============================================================================
-  // Zero-Config gh-pages Deployment (now via REST API)
-  // ============================================================================
-
-  describe("Zero-Config gh-pages Deployment (Bug 16 Fix)", () => {
-    it("deploys successfully when gh-pages branch does not exist (first time)", async () => {
+  describe("First-time Deployment", () => {
+    it("deploys successfully on first time (needsSetup=true)", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: false,
+        needsSetup: true,
         hasChanges: true,
         commitSha: "abc123def",
-      });
-
-      // First deploy: all files changed
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "hash1" },
-          { path: "style.css", localHash: "hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // First time deploy (gh-pages didn't exist before)
+      // First time deploy
       expect(result.deployment?.metadata?.was_first_setup).toBe("true");
     });
 
-    it("deploys successfully when gh-pages branch already exists (returning user)", async () => {
+    it("subsequent deploys succeed normally", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
         commitSha: "def456ghi",
       });
@@ -661,10 +534,9 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.metadata?.was_first_setup).toBe("false");
     });
 
-    it("reports no changes when site content is identical", async () => {
+    it("reports no changes when deployViaGitPush returns empty", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: false,
       });
 
@@ -675,16 +547,10 @@ describe("on_deploy integration", () => {
     });
   });
 
-  // ============================================================================
-  // Stale Worktree Recovery tests are no longer needed (REST API doesn't use
-  // worktrees), but we keep equivalent tests for REST API error recovery.
-  // ============================================================================
-
-  describe("REST API Error Recovery (replaces Stale Worktree Recovery)", () => {
-    it("succeeds with normal REST API deployment", async () => {
+  describe("Error Recovery", () => {
+    it("succeeds with normal deployment", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -694,37 +560,27 @@ describe("on_deploy integration", () => {
       expect(result.deployment?.method).toBe("github-pages");
     });
 
-    it("handles REST API errors gracefully", async () => {
+    it("handles git push errors gracefully", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
       // deployViaGitPush throws an error
-      vi.mocked(deployViaGitPush).mockRejectedValue(new Error("GitHub API error: 500"));
+      vi.mocked(deployViaGitPush).mockRejectedValue(new Error("git push failed: remote rejected"));
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain("500");
+      expect(result.message).toContain("remote rejected");
     });
 
-    it("handles first-time deployment via REST API (orphan branch equivalent)", async () => {
+    it("handles first-time deployment (needsSetup)", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: false,
+        needsSetup: true,
         hasChanges: true,
         commitSha: "abc123def",
-      });
-
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "hash1" },
-          { path: "style.css", localHash: "hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
@@ -739,7 +595,6 @@ describe("on_deploy integration", () => {
       // Setup: token available from plugin cookies
       setupDeployMocks(ctx, {
         remoteUrl: "https://github.com/user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
         token: "test-token",
       });
@@ -756,15 +611,10 @@ describe("on_deploy integration", () => {
     });
   });
 
-  // ============================================================================
-  // Early Change Detection (now built into REST API flow via diffFiles)
-  // ============================================================================
-
-  describe("Early Change Detection", () => {
-    it("skips deployment when no changes detected", async () => {
+  describe("No Changes Detection", () => {
+    it("reports no changes when deployViaGitPush returns empty string", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: false,
       });
 
@@ -779,17 +629,13 @@ describe("on_deploy integration", () => {
       expect(result.message).toContain("No changes to deploy");
       expect(result.deployment?.metadata?.commit_sha).toBe("");
 
-      // deployViaGitPush should NOT have been called
-      expect(vi.mocked(deployViaGitPush)).not.toHaveBeenCalled();
-
       // Toast is shown via showToast()
       expect(showToast).toHaveBeenCalled();
     });
 
-    it("proceeds with deployment when changes detected", async () => {
+    it("proceeds with deployment when changes exist", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
         commitSha: "newcommitsha789",
       });
@@ -804,33 +650,12 @@ describe("on_deploy integration", () => {
       expect(result.success).toBe(true);
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalled();
     });
-
-    it("handles getLocalSiteFingerprint returning null gracefully", async () => {
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
-        hasChanges: true,
-      });
-
-      // Override: fingerprint fails
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(null);
-
-      const result = await on_deploy(
-        createMockContext({
-          site_files: ["index.html"],
-        })
-      );
-
-      // Should fail gracefully
-      expect(result.success).toBe(false);
-    });
   });
 
   describe("Progress Visibility", () => {
-    it("reports progress during REST API deployment", async () => {
+    it("reports progress during deployment", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -859,7 +684,6 @@ describe("on_deploy integration", () => {
     it("shows helpful message for timeout errors", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -884,7 +708,6 @@ describe("on_deploy integration", () => {
     it("shows SSH auth message for permission denied errors", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -906,73 +729,41 @@ describe("on_deploy integration", () => {
     });
   });
 
-  // ============================================================================
-  // New REST API-specific tests (Tests A-H)
-  // ============================================================================
-
-  describe("REST API Deploy - New Tests", () => {
-    // Test A: REST API deploy with changes uploads only changed files
-    it("Test A: REST API deploy with changes uploads only changed files", async () => {
+  describe("Git Push Deploy Tests", () => {
+    it("Test A: deployViaGitPush is called with correct owner/repo", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
         commitSha: "new-commit-sha",
-      });
-
-      // Override diffFiles to return specific changed/unchanged/deleted sets
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "new-hash-1" },
-          { path: "new-page.html", localHash: "new-hash-2" },
-        ],
-        unchanged: [{ path: "style.css", sha: "unchanged-hash", mode: "100644" }],
-        deleted: ["old-page.html"],
       });
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // Verify deployViaGitPush was called (git push handles all files)
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
       const deployCall = vi.mocked(deployViaGitPush).mock.calls[0][0];
       expect(deployCall.owner).toBe("user");
       expect(deployCall.repo).toBe("repo");
     });
 
-    // Test B: REST API deploy first-time creates branch
-    it("Test B: REST API deploy first-time creates branch", async () => {
+    it("Test B: first-time deploy calls pushSourceViaGitPush then deployViaGitPush", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: false,
+        needsSetup: true,
         hasChanges: true,
         commitSha: "first-commit-sha",
-      });
-
-      // First deploy: all files are changed (no remote tree)
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "hash1" },
-          { path: "style.css", localHash: "hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
       });
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // Verify deployViaGitPush was called (git push doesn't need ghPagesState)
+      expect(vi.mocked(pushSourceViaGitPush)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
-      // getRemoteTree should NOT have been called (no remote tree for first deploy)
-      expect(vi.mocked(getRemoteTree)).not.toHaveBeenCalled();
     });
 
-    // Test C: REST API deploy no changes exits early
-    it("Test C: REST API deploy no changes exits early", async () => {
+    it("Test C: no changes exits with appropriate message", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: false,
       });
 
@@ -980,15 +771,11 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain("No changes");
-      // deployViaGitPush should NOT have been called
-      expect(vi.mocked(deployViaGitPush)).not.toHaveBeenCalled();
     });
 
-    // Test D: Progress is monotonically increasing
     it("Test D: Progress is monotonically increasing", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -1011,8 +798,7 @@ describe("on_deploy integration", () => {
       }
     });
 
-    // Test E: Auth required before REST API deploy
-    it("Test E: Auth required before REST API deploy", async () => {
+    it("Test E: Auth required before deploy", async () => {
       // Repo config exists
       vi.mocked(getRepoConfig).mockResolvedValue({ owner: "user", repo: "repo" });
 
@@ -1022,30 +808,13 @@ describe("on_deploy integration", () => {
 
       // promptLogin succeeds and then token is available
       vi.mocked(promptLogin).mockResolvedValue(true);
-      // After promptLogin, getToken returns a token
-      // Note: getToken is called 3 times: preflight, Phase 2, and after promptLogin
       vi.mocked(getToken)
         .mockResolvedValueOnce(null) // preflight check
         .mockResolvedValueOnce(null) // Phase 2 token check
         .mockResolvedValueOnce("new-token"); // after promptLogin
 
       // Set up rest of the deploy flow
-      vi.mocked(getGhPagesState).mockResolvedValue({
-        exists: true,
-        commitSha: "commit-sha",
-        treeSha: "tree-sha",
-      });
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([["index.html", "hash1"]])
-      );
-      vi.mocked(getRemoteTree).mockResolvedValue(
-        new Map([["index.html", { sha: "hash1", mode: "100644" }]])
-      );
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [],
-        unchanged: [{ path: "index.html", sha: "hash1", mode: "100644" }],
-        deleted: [],
-      });
+      vi.mocked(deployViaGitPush).mockResolvedValue("");
 
       const result = await on_deploy(createMockContext());
 
@@ -1053,11 +822,9 @@ describe("on_deploy integration", () => {
       expect(vi.mocked(promptLogin)).toHaveBeenCalled();
     });
 
-    // Test F: REST API error returns helpful message
-    it("Test F: REST API error returns helpful message", async () => {
+    it("Test F: auth error returns helpful message", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -1078,11 +845,9 @@ describe("on_deploy integration", () => {
       expect(errorToasts[0][0].message).toContain("Authentication failed");
     });
 
-    // Test G: Network failure during upload is handled gracefully
-    it("Test G: Network failure during upload is handled gracefully", async () => {
+    it("Test G: Network failure during push is handled gracefully", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
         hasChanges: true,
       });
 
@@ -1102,61 +867,6 @@ describe("on_deploy integration", () => {
       expect(errorToasts.length).toBeGreaterThan(0);
       expect(errorToasts[0][0].message).toContain("Network error");
     });
-
-    // Test H: Unicode filenames work correctly
-    it("Test H: Unicode filenames work correctly", async () => {
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:user/repo.git",
-        ghPagesExists: true,
-        hasChanges: true,
-        commitSha: "unicode-commit-sha",
-      });
-
-      // Override fingerprint with unicode paths
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([
-          ["\u4e2d\u6587\u6587\u7ae0.html", "hash-chinese"],
-          ["\u65e5\u672c\u8a9e.html", "hash-japanese"],
-          ["caf\u00e9.html", "hash-cafe"],
-        ])
-      );
-
-      // Remote tree has one matching file
-      vi.mocked(getRemoteTree).mockResolvedValue(
-        new Map([
-          ["\u4e2d\u6587\u6587\u7ae0.html", { sha: "old-hash", mode: "100644" }],
-        ])
-      );
-
-      // diffFiles returns unicode paths as changed
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "\u4e2d\u6587\u6587\u7ae0.html", localHash: "hash-chinese" },
-          { path: "\u65e5\u672c\u8a9e.html", localHash: "hash-japanese" },
-          { path: "caf\u00e9.html", localHash: "hash-cafe" },
-        ],
-        unchanged: [],
-        deleted: [],
-      });
-
-      const result = await on_deploy(createMockContext());
-
-      expect(result.success).toBe(true);
-
-      // Verify diffFiles was called with unicode paths in the local fingerprint
-      expect(vi.mocked(diffFiles)).toHaveBeenCalled();
-      const diffCall = vi.mocked(diffFiles).mock.calls[0];
-      const localFingerprint = diffCall[0] as Map<string, string>;
-      expect(localFingerprint.has("\u4e2d\u6587\u6587\u7ae0.html")).toBe(true);
-      expect(localFingerprint.has("\u65e5\u672c\u8a9e.html")).toBe(true);
-      expect(localFingerprint.has("caf\u00e9.html")).toBe(true);
-
-      // Verify deployViaGitPush was called (git push handles all files)
-      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
-      const deployCall = vi.mocked(deployViaGitPush).mock.calls[0][0];
-      expect(deployCall.owner).toBe("user");
-      expect(deployCall.repo).toBe("repo");
-    });
   });
 
   // ============================================================================
@@ -1164,84 +874,27 @@ describe("on_deploy integration", () => {
   // ============================================================================
 
   describe("Source Push to Main", () => {
-    /**
-     * Helper: set up mocks for a first-time deploy scenario (needsSetup=true).
-     * No repo config exists, so ensureGitHubRepo creates it,
-     * and the full deploy flow succeeds.
-     */
-    function setupFirstTimeDeploy(_ctx: MockTauriContext) {
-      // No repo config → needsSetup = true
-      vi.mocked(getRepoConfig).mockResolvedValue(null);
-
-      // Repo setup succeeds
-      vi.mocked(ensureGitHubRepo).mockResolvedValue({
-        name: "test-repo",
-        fullName: "test-user/test-repo",
-        sshUrl: "git@github.com:test-user/test-repo.git",
+    it("pushes source via git on first-time deploy (needsSetup=true)", async () => {
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:test-user/test-repo.git",
+        needsSetup: true,
+        hasChanges: true,
+        commitSha: "deploy-commit-sha",
       });
-      vi.mocked(saveRepoConfig).mockResolvedValue(undefined);
-
-      // Token available
-      vi.mocked(getToken).mockResolvedValue("test-token");
-      vi.mocked(getTokenFromGit).mockResolvedValue(null);
-
-      // gh-pages doesn't exist (first deploy)
-      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
-
-      // Site fingerprint
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([
-          ["index.html", "site-hash1"],
-          ["style.css", "site-hash2"],
-        ])
-      );
-
-      // All files are new (first deploy, no remote tree)
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [
-          { path: "index.html", localHash: "site-hash1" },
-          { path: "style.css", localHash: "site-hash2" },
-        ],
-        unchanged: [],
-        deleted: [],
-      });
-
-      // Deploy succeeds
-      vi.mocked(deployViaGitPush).mockResolvedValue("deploy-commit-sha");
-
-      // Pages status
-      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
-    }
-
-    it("pushes source to main on first-time deploy (needsSetup=true)", async () => {
-      setupFirstTimeDeploy(ctx);
-
-      // Source fingerprint returns 2 files
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
-        new Map([
-          ["index.md", "source-hash1"],
-          ["about.md", "source-hash2"],
-        ])
-      );
-
-      // pushSourceToMain succeeds
-      vi.mocked(pushSourceToMain).mockResolvedValue("source-commit-sha");
 
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceToMain)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(pushSourceViaGitPush)).toHaveBeenCalledTimes(1);
 
       // Verify it was called with correct parameters
-      const callArgs = vi.mocked(pushSourceToMain).mock.calls[0][0];
+      const callArgs = vi.mocked(pushSourceViaGitPush).mock.calls[0][0];
       expect(callArgs.owner).toBe("test-user");
       expect(callArgs.repo).toBe("test-repo");
       expect(callArgs.token).toBe("test-token");
-      expect(callArgs.uploadFn).toBeDefined();
-      expect(callArgs.sourceFingerprint.size).toBe(2);
 
       // Verify source push happens BEFORE gh-pages deploy
-      const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
+      const pushSourceOrder = vi.mocked(pushSourceViaGitPush).mock.invocationCallOrder[0];
       const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
       expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
@@ -1250,7 +903,6 @@ describe("on_deploy integration", () => {
       // Standard deploy: git repo already exists
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:test-user/test-repo.git",
-        ghPagesExists: true,
         hasChanges: true,
         commitSha: "subsequent-commit-sha",
       });
@@ -1258,20 +910,19 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
-      expect(vi.mocked(getLocalSourceFingerprint)).not.toHaveBeenCalled();
+      expect(vi.mocked(pushSourceViaGitPush)).not.toHaveBeenCalled();
     });
 
     it("source push failure is non-fatal (gh-pages deploy still proceeds)", async () => {
-      setupFirstTimeDeploy(ctx);
+      setupDeployMocks(ctx, {
+        remoteUrl: "git@github.com:test-user/test-repo.git",
+        needsSetup: true,
+        hasChanges: true,
+        commitSha: "deploy-commit-sha",
+      });
 
-      // Source fingerprint returns files
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
-        new Map([["index.md", "source-hash1"]])
-      );
-
-      // pushSourceToMain throws an error
-      vi.mocked(pushSourceToMain).mockRejectedValue(new Error("GitHub API rate limited"));
+      // pushSourceViaGitPush throws an error
+      vi.mocked(pushSourceViaGitPush).mockRejectedValue(new Error("git push failed: permission denied"));
 
       const result = await on_deploy(createMockContext());
 
@@ -1289,101 +940,9 @@ describe("on_deploy integration", () => {
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
 
       // Verify source push was attempted BEFORE deploy
-      const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
+      const pushSourceOrder = vi.mocked(pushSourceViaGitPush).mock.invocationCallOrder[0];
       const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
       expect(pushSourceOrder).toBeLessThan(deployOrder);
-    });
-
-    it("skips source push when no source files found", async () => {
-      setupFirstTimeDeploy(ctx);
-
-      // Source fingerprint returns empty Map
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(new Map());
-
-      const result = await on_deploy(createMockContext());
-
-      expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
-    });
-
-    it("skips source push when fingerprint returns null", async () => {
-      setupFirstTimeDeploy(ctx);
-
-      // Source fingerprint returns null
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(null);
-
-      const result = await on_deploy(createMockContext());
-
-      expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
-    });
-
-    it("filters source files to text extensions only (Step 5a)", async () => {
-      setupFirstTimeDeploy(ctx);
-
-      // listSourceFiles returns mixed text + binary files
-      vi.mocked(listSourceFiles).mockResolvedValue([
-        "index.md",
-        "about.md",
-        "config.toml",
-        "data.json",
-        "styles.css",
-        "assets/photo.jpg",
-        "assets/logo.png",
-        "assets/video.mp4",
-        "assets/font.woff2",
-        "assets/diagram.svg",
-      ]);
-
-      // Source fingerprint returns results
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
-        new Map([
-          ["index.md", "hash1"],
-          ["about.md", "hash2"],
-          ["config.toml", "hash3"],
-        ])
-      );
-      vi.mocked(pushSourceToMain).mockResolvedValue("source-sha");
-
-      const result = await on_deploy(createMockContext());
-      expect(result.success).toBe(true);
-
-      // Verify getLocalSourceFingerprint received only text files
-      const sourceFilesArg = vi.mocked(getLocalSourceFingerprint).mock.calls[0][0];
-      expect(sourceFilesArg).toContain("index.md");
-      expect(sourceFilesArg).toContain("about.md");
-      expect(sourceFilesArg).toContain("config.toml");
-      expect(sourceFilesArg).toContain("data.json");
-      expect(sourceFilesArg).toContain("styles.css");
-      // Binary files should be filtered out
-      expect(sourceFilesArg).not.toContain("assets/photo.jpg");
-      expect(sourceFilesArg).not.toContain("assets/logo.png");
-      expect(sourceFilesArg).not.toContain("assets/video.mp4");
-      expect(sourceFilesArg).not.toContain("assets/font.woff2");
-      expect(sourceFilesArg).not.toContain("assets/diagram.svg");
-    });
-
-    it("reports progress during source fingerprinting (Step 5b)", async () => {
-      setupFirstTimeDeploy(ctx);
-
-      vi.mocked(listSourceFiles).mockResolvedValue(["index.md", "about.md"]);
-      vi.mocked(getLocalSourceFingerprint).mockResolvedValue(
-        new Map([["index.md", "hash1"], ["about.md", "hash2"]])
-      );
-      vi.mocked(pushSourceToMain).mockResolvedValue("source-sha");
-
-      const result = await on_deploy(createMockContext());
-      expect(result.success).toBe(true);
-
-      // Extract the readFn passed to getLocalSourceFingerprint
-      const readFn = vi.mocked(getLocalSourceFingerprint).mock.calls[0][1];
-      // Clear progress calls accumulated during deploy
-      vi.mocked(reportProgress).mockClear();
-      // Call the readFn manually to test it reports progress
-      await readFn("index.md");
-      expect(vi.mocked(reportProgress)).toHaveBeenCalledWith(
-        "deploying", 6, 10, expect.stringContaining("index.md")
-      );
     });
   });
 
@@ -1400,7 +959,7 @@ describe("on_deploy integration", () => {
         new Error('Repository "stale-user/deleted-repo" not found')
       );
 
-      // ensureGitHubRepo runs because config was cleared → user cancels
+      // ensureGitHubRepo runs because config was cleared -> user cancels
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
 
       const result = await on_deploy(createMockContext());
@@ -1432,7 +991,7 @@ describe("on_deploy integration", () => {
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 
-      // Preflight fails → config cleared
+      // Preflight fails -> config cleared
       vi.mocked(verifyRepoExists).mockRejectedValueOnce(new Error("Not found"));
 
       // Setup cancelled
@@ -1441,12 +1000,11 @@ describe("on_deploy integration", () => {
       await on_deploy(createMockContext());
 
       // Key assertion: getRepoConfig called ONCE (preflight), NOT twice
-      // If called twice, the second call could re-trigger .git/config migration
       expect(vi.mocked(getRepoConfig)).toHaveBeenCalledTimes(1);
     });
 
     it("clears config and succeeds when setup flow completes after stale config", async () => {
-      // Stale config on first read — flag prevents second read
+      // Stale config on first read
       vi.mocked(getRepoConfig)
         .mockResolvedValueOnce({ owner: "stale", repo: "gone" });
 
@@ -1465,15 +1023,6 @@ describe("on_deploy integration", () => {
       });
 
       // Rest of deploy succeeds
-      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
-        new Map([["index.html", "hash1"]])
-      );
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [{ path: "index.html", localHash: "hash1" }],
-        unchanged: [],
-        deleted: [],
-      });
       vi.mocked(deployViaGitPush).mockResolvedValue("new-commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
@@ -1504,13 +1053,6 @@ describe("on_deploy integration", () => {
       vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
 
       // Set up remaining mocks for a successful deploy
-      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
-      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(new Map([["index.html", "hash1"]]));
-      vi.mocked(diffFiles).mockReturnValue({
-        changed: [{ path: "index.html", localHash: "hash1" }],
-        unchanged: [],
-        deleted: [],
-      });
       vi.mocked(deployViaGitPush).mockResolvedValue("commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 

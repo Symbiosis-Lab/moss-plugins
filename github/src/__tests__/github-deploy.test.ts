@@ -35,6 +35,7 @@ import {
   pushSourceToMain,
   type BranchState,
   type GhPagesState,
+  verifyRepoExists,
   type DiffResult,
   type DeployViaAPIOptions,
   type PushSourceOptions,
@@ -295,6 +296,73 @@ describe("github-deploy", () => {
             Authorization: "Bearer ghp_test-token-123",
           }),
         })
+      );
+    });
+  });
+
+  // ==========================================================================
+  // verifyRepoExists
+  // ==========================================================================
+  describe("verifyRepoExists", () => {
+    it("succeeds silently when repo exists (200)", async () => {
+      mockFetch.mockResolvedValueOnce(mockResponse({ id: 123, name: "my-site" }));
+
+      await expect(verifyRepoExists(OWNER, REPO, TOKEN)).resolves.toBeUndefined();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/my-site",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer ghp_test-token-123",
+          }),
+        })
+      );
+    });
+
+    it("throws repo-not-found error when 404 and owner exists", async () => {
+      // First call: GET /repos/{owner}/{repo} → 404
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      // Second call: GET /users/{owner} → 200 (owner exists)
+      mockFetch.mockResolvedValueOnce(mockResponse({ login: OWNER }));
+
+      await expect(verifyRepoExists(OWNER, REPO, TOKEN)).rejects.toThrow(
+        `Repository "${OWNER}/${REPO}" not found`
+      );
+      // Should have made the disambiguation call
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        `https://api.github.com/users/${OWNER}`,
+        expect.objectContaining({
+          headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+        })
+      );
+    });
+
+    it("throws owner-not-found error when 404 and owner does not exist", async () => {
+      // First call: GET /repos/{owner}/{repo} → 404
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      // Second call: GET /users/{owner} → 404 (owner doesn't exist)
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      await expect(verifyRepoExists(OWNER, REPO, TOKEN)).rejects.toThrow(
+        `GitHub user or organization "${OWNER}" not found`
+      );
+    });
+
+    it("throws invalid token error on 401", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(401, "Unauthorized"));
+
+      await expect(verifyRepoExists(OWNER, REPO, TOKEN)).rejects.toThrow(
+        "GitHub token is invalid or expired"
+      );
+    });
+
+    it("throws access denied error on 403", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(403, "Forbidden"));
+
+      await expect(verifyRepoExists(OWNER, REPO, TOKEN)).rejects.toThrow(
+        `Access denied to "${OWNER}/${REPO}"`
       );
     });
   });

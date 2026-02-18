@@ -74,6 +74,21 @@ export async function saveRepoConfig(
 }
 
 /**
+ * Clear the stored repository config.
+ *
+ * Used when preflight validation detects stale config
+ * (e.g., repo no longer exists or token lacks access).
+ * After clearing, the next deploy will re-run the setup flow.
+ */
+export async function clearRepoConfig(): Promise<void> {
+  try {
+    await writePluginFile(CONFIG_FILE, "");
+  } catch {
+    // Best-effort clear
+  }
+}
+
+/**
  * Migrate from .git/config for existing users.
  *
  * Reads the .git/config file as text and extracts the remote origin URL.

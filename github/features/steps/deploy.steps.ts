@@ -33,6 +33,7 @@ vi.mock("../../src/utils", () => ({
 
 // Mock the github-deploy module (REST API functions)
 vi.mock("../../src/github-deploy", () => ({
+  verifyRepoExists: vi.fn().mockResolvedValue(undefined),
   getGhPagesState: vi.fn(),
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
@@ -76,6 +77,7 @@ vi.mock("../../src/git", () => ({
 vi.mock("../../src/config", () => ({
   getRepoConfig: vi.fn(),
   saveRepoConfig: vi.fn().mockResolvedValue(undefined),
+  clearRepoConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the validation module (only validateAll and isSSHRemote remain)

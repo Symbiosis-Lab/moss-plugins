@@ -132,6 +132,65 @@ async function parseErrorMessage(response: Response): Promise<string> {
 // ============================================================================
 
 /**
+ * Verify that a repository exists on GitHub.
+ *
+ * Call this early in the deploy flow to fail fast with a clear error message
+ * instead of getting a cryptic "Not Found" from blob/tree/commit endpoints.
+ *
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param token - GitHub access token
+ * @throws Error if the repository does not exist or is inaccessible
+ */
+export async function verifyRepoExists(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<void> {
+  const response = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}`,
+    { headers: authHeaders(token) }
+  );
+
+  if (response.status === 404) {
+    // Disambiguate: check if the owner exists (unauthenticated, works for public profiles)
+    const ownerResp = await fetch(`${GITHUB_API_BASE}/users/${owner}`, {
+      headers: { ...GITHUB_API_HEADERS },
+    });
+
+    if (ownerResp.status === 404) {
+      throw new Error(
+        `GitHub user or organization "${owner}" not found. ` +
+        `Check for typos in the repository owner name.`
+      );
+    }
+
+    throw new Error(
+      `Repository "${owner}/${repo}" not found on GitHub. ` +
+      `The repository may not exist, or your token may not have access to it.`
+    );
+  }
+
+  if (response.status === 401) {
+    throw new Error(
+      `GitHub token is invalid or expired. Please re-authenticate.`
+    );
+  }
+
+  if (response.status === 403) {
+    throw new Error(
+      `Access denied to "${owner}/${repo}". ` +
+      `Your token may lack the required "repo" scope.`
+    );
+  }
+
+  if (!response.ok) {
+    const msg = await parseErrorMessage(response);
+    throw new Error(msg);
+  }
+}
+
+/**
  * Check the state of a branch on GitHub.
  *
  * @param owner - Repository owner

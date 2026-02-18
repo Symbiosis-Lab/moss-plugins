@@ -29,6 +29,7 @@ vi.mock("../utils", () => ({
 
 // Mock the github-deploy module (REST API functions)
 vi.mock("../github-deploy", () => ({
+  verifyRepoExists: vi.fn().mockResolvedValue(undefined),
   getGhPagesState: vi.fn(),
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
@@ -84,6 +85,7 @@ vi.mock("../validation", () => ({
 vi.mock("../config", () => ({
   getRepoConfig: vi.fn().mockResolvedValue({ owner: "test-user", repo: "test-repo" }),
   saveRepoConfig: vi.fn().mockResolvedValue(undefined),
+  clearRepoConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the repo-setup module
@@ -102,13 +104,13 @@ vi.mock("../github-api", () => ({
 // Import after mocking
 import { on_deploy } from "../main";
 import { log, reportProgress, showToast } from "../utils";
-import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "../github-deploy";
-import { promptLogin } from "../auth";
+import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "../github-deploy";
+import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { getLocalSiteFingerprint, getLocalSourceFingerprint, parseGitHubUrl, extractGitHubPagesUrl } from "../git";
 import { checkPagesStatus } from "../github-api";
 import { validateAll, isSSHRemote } from "../validation";
-import { getRepoConfig, saveRepoConfig } from "../config";
+import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "../config";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
@@ -1010,9 +1012,11 @@ describe("on_deploy integration", () => {
       // promptLogin succeeds and then token is available
       vi.mocked(promptLogin).mockResolvedValue(true);
       // After promptLogin, getToken returns a token
+      // Note: getToken is called 3 times: preflight, Phase 2, and after promptLogin
       vi.mocked(getToken)
-        .mockResolvedValueOnce(null) // first call in ensureToken
-        .mockResolvedValueOnce("new-token"); // second call after promptLogin
+        .mockResolvedValueOnce(null) // preflight check
+        .mockResolvedValueOnce(null) // Phase 2 token check
+        .mockResolvedValueOnce("new-token"); // after promptLogin
 
       // Set up rest of the deploy flow
       vi.mocked(getGhPagesState).mockResolvedValue({
@@ -1291,6 +1295,182 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(vi.mocked(pushSourceToMain)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Preflight Config Validation", () => {
+    it("clears stale config and re-runs setup when verifyRepoExists fails", async () => {
+      // Config exists but points to an inaccessible repo
+      vi.mocked(getRepoConfig)
+        .mockResolvedValueOnce({ owner: "stale-user", repo: "deleted-repo" }) // First call (preflight)
+        .mockResolvedValueOnce(null); // Second call (after clear) → triggers setup
+
+      vi.mocked(getToken).mockResolvedValue("valid-token");
+
+      // verifyRepoExists fails for stale config (preflight check)
+      vi.mocked(verifyRepoExists).mockRejectedValueOnce(
+        new Error('Repository "stale-user/deleted-repo" not found')
+      );
+
+      // ensureGitHubRepo runs because config was cleared → user cancels
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
+
+      const result = await on_deploy(createMockContext());
+
+      // Should have cleared the stale config
+      expect(vi.mocked(clearRepoConfig)).toHaveBeenCalled();
+      // Should have attempted setup since config was cleared
+      expect(vi.mocked(ensureGitHubRepo)).toHaveBeenCalled();
+      expect(result.success).toBe(false);
+    });
+
+    it("proceeds normally when preflight verification succeeds", async () => {
+      setupDeployMocks(ctx);
+
+      // verifyRepoExists succeeds (default mock is already set to resolve)
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+
+      const result = await on_deploy(createMockContext());
+
+      // Should NOT have cleared config
+      expect(vi.mocked(clearRepoConfig)).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+    });
+
+    it("clears config and succeeds when setup flow completes after stale config", async () => {
+      // Stale config on first read, null on second (after clear)
+      vi.mocked(getRepoConfig)
+        .mockResolvedValueOnce({ owner: "stale", repo: "gone" }) // preflight read
+        .mockResolvedValueOnce(null); // after clear → needs setup
+
+      vi.mocked(getToken).mockResolvedValue("valid-token");
+
+      // Preflight fails
+      vi.mocked(verifyRepoExists)
+        .mockRejectedValueOnce(new Error("Not found")) // preflight
+        .mockResolvedValueOnce(undefined); // after new setup
+
+      // Setup creates new repo
+      vi.mocked(ensureGitHubRepo).mockResolvedValue({
+        name: "new-repo",
+        sshUrl: "git@github.com:stale/new-repo.git",
+        fullName: "stale/new-repo",
+      });
+
+      // Rest of deploy succeeds
+      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(
+        new Map([["index.html", "hash1"]])
+      );
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [{ path: "index.html", localHash: "hash1" }],
+        unchanged: [],
+        deleted: [],
+      });
+      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(vi.mocked(clearRepoConfig)).toHaveBeenCalled();
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe("Git Credential Token Validation", () => {
+    it("validates git credential token before using it", async () => {
+      // No cached token, git credential returns one
+      vi.mocked(getToken).mockResolvedValue(null);
+      vi.mocked(getTokenFromGit).mockResolvedValue("git-credential-token");
+
+      // Token validation succeeds
+      vi.mocked(validateToken).mockResolvedValue({
+        valid: true,
+        user: { login: "test-user", id: 1, avatar_url: "", html_url: "" },
+        scopes: ["repo"],
+      });
+      vi.mocked(hasRequiredScopes).mockReturnValue(true);
+
+      // Config exists so preflight runs and flow reaches Phase 2
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
+
+      // Set up remaining mocks for a successful deploy
+      vi.mocked(getGhPagesState).mockResolvedValue({ exists: false });
+      vi.mocked(getLocalSiteFingerprint).mockResolvedValue(new Map([["index.html", "hash1"]]));
+      vi.mocked(diffFiles).mockReturnValue({
+        changed: [{ path: "index.html", localHash: "hash1" }],
+        unchanged: [],
+        deleted: [],
+      });
+      vi.mocked(deployViaAPI).mockResolvedValue("commit-sha");
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+
+      const result = await on_deploy(createMockContext());
+
+      // Should have validated the git token
+      expect(vi.mocked(validateToken)).toHaveBeenCalledWith("git-credential-token");
+      expect(vi.mocked(hasRequiredScopes)).toHaveBeenCalledWith(["repo"]);
+      // Should have stored the validated token
+      expect(vi.mocked(storeToken)).toHaveBeenCalledWith("git-credential-token");
+      expect(result.success).toBe(true);
+    });
+
+    it("falls through to OAuth when git credential token lacks scopes", async () => {
+      // No cached token, git credential returns one
+      vi.mocked(getToken).mockResolvedValue(null);
+      vi.mocked(getTokenFromGit).mockResolvedValue("weak-git-token");
+
+      // Token is valid but lacks scopes
+      vi.mocked(validateToken).mockResolvedValue({
+        valid: true,
+        user: { login: "test-user", id: 1, avatar_url: "", html_url: "" },
+        scopes: ["gist"], // Missing "repo"
+      });
+      vi.mocked(hasRequiredScopes).mockReturnValue(false);
+
+      // Config exists for normal flow
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
+
+      // OAuth login also fails
+      vi.mocked(promptLogin).mockResolvedValue(false);
+
+      const result = await on_deploy(createMockContext());
+
+      // Should NOT have stored the weak token
+      expect(vi.mocked(storeToken)).not.toHaveBeenCalledWith("weak-git-token");
+      // Should have prompted OAuth login
+      expect(vi.mocked(promptLogin)).toHaveBeenCalled();
+      // Deploy fails because OAuth failed
+      expect(result.success).toBe(false);
+    });
+
+    it("falls through to OAuth when git credential token is invalid", async () => {
+      // No cached token, git returns expired one
+      vi.mocked(getToken).mockResolvedValue(null);
+      vi.mocked(getTokenFromGit).mockResolvedValue("expired-token");
+
+      // Token validation fails
+      vi.mocked(validateToken).mockResolvedValue({ valid: false });
+
+      // Config exists
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
+
+      // OAuth fails too
+      vi.mocked(promptLogin).mockResolvedValue(false);
+
+      const result = await on_deploy(createMockContext());
+
+      // Should NOT have stored the invalid token
+      expect(vi.mocked(storeToken)).not.toHaveBeenCalledWith("expired-token");
+      // Should have attempted OAuth
+      expect(vi.mocked(promptLogin)).toHaveBeenCalled();
+      expect(result.success).toBe(false);
     });
   });
 });

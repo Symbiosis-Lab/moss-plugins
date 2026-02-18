@@ -15,11 +15,11 @@ import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, 
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote } from "./validation";
 import { extractGitHubPagesUrl, parseGitHubUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
-import { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "./github-deploy";
+import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "./github-deploy";
 import { readSiteFile, readProjectFileBase64, listSourceFiles } from "@symbiosis-lab/moss-api";
-import { promptLogin } from "./auth";
+import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { getRepoConfig, saveRepoConfig } from "./config";
+import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
 import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
@@ -155,13 +155,39 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
     await log("log", `   Site files: ${context.site_files.length} files ready`);
 
+    // Preflight: verify saved config is still valid before using it.
+    // This catches stale config (repo deleted, renamed, or token lost access).
+    const savedConfig = await getRepoConfig();
+    if (savedConfig) {
+      let preflightToken = await getToken();
+      if (!preflightToken) {
+        const gitToken = await getTokenFromGit();
+        if (gitToken) {
+          const validation = await validateToken(gitToken);
+          if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+            await storeToken(gitToken);
+            preflightToken = gitToken;
+          }
+        }
+      }
+
+      if (preflightToken) {
+        try {
+          await verifyRepoExists(savedConfig.owner, savedConfig.repo, preflightToken);
+        } catch {
+          await log("warn", `   Saved config for ${savedConfig.owner}/${savedConfig.repo} is invalid, resetting...`);
+          await clearRepoConfig();
+        }
+      }
+    }
+
     // Phase 0: Check if we have a repo config
     // If not, automatically create a repository (Feature 20)
     let remoteUrl: string;
 
     let wasFirstSetup = false;
 
-    // Check if we have a stored repo config (replaces git CLI checks)
+    // Re-read config (may have been cleared by preflight)
     const existingConfig = await getRepoConfig();
     const needsSetup = !existingConfig;
 
@@ -221,12 +247,18 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Ensure we have a valid token (mandatory for REST API)
     let token = await getToken();
     if (!token) {
-      // Try git credential helper
+      // Try git credential helper (validate before using)
       const gitToken = await getTokenFromGit();
       if (gitToken) {
-        await storeToken(gitToken);
-        token = gitToken;
-      } else {
+        const validation = await validateToken(gitToken);
+        if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
+          await storeToken(gitToken);
+          token = gitToken;
+        } else {
+          await log("log", "   Git credential token invalid or lacks required scopes");
+        }
+      }
+      if (!token) {
         // Must authenticate via OAuth
         await reportProgress("authenticating", 3, 10, "Authentication required...");
         const authResult = await promptLogin();
@@ -239,6 +271,9 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         }
       }
     }
+
+    // Phase 2.5: Verify the repository exists (fail fast with clear error)
+    await verifyRepoExists(parsed.owner, parsed.repo, token);
 
     // Phase 3: Check gh-pages state via REST API
     await reportProgress("detecting", 4, 10, "Checking deployment status...");

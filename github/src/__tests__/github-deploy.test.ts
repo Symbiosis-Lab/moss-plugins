@@ -315,12 +315,12 @@ describe("github-deploy", () => {
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // Should report progress at: prepare, staging, commit, push, deployed
-      expect(onProgress).toHaveBeenCalledWith(0, 5, "Preparing deploy...");
-      expect(onProgress).toHaveBeenCalledWith(1, 5, "Staging files...");
-      expect(onProgress).toHaveBeenCalledWith(2, 5, "Creating commit...");
-      expect(onProgress).toHaveBeenCalledWith(3, 5, "Pushing to GitHub...");
-      expect(onProgress).toHaveBeenCalledWith(5, 5, "Deployed!");
+      // Should report weighted progress at phase boundaries
+      expect(onProgress).toHaveBeenCalledWith(0, "Preparing deploy...");
+      expect(onProgress).toHaveBeenCalledWith(5, "Staging files...");
+      expect(onProgress).toHaveBeenCalledWith(20, "Creating commit...");
+      expect(onProgress).toHaveBeenCalledWith(25, "Pushing to GitHub...");
+      expect(onProgress).toHaveBeenCalledWith(100, "Deployed!");
     });
 
     it("passes correct options to executeBinary", async () => {
@@ -479,7 +479,7 @@ describe("github-deploy", () => {
       }));
     });
 
-    it("reports progress with 4 steps", async () => {
+    it("reports weighted progress at phase boundaries", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
         .mockResolvedValueOnce(gitResult(true))     // write .gitignore
@@ -491,12 +491,12 @@ describe("github-deploy", () => {
       const onProgress = vi.fn();
       await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // Should report progress with total=4
-      expect(onProgress).toHaveBeenCalledWith(0, 4, "Preparing source push...");
-      expect(onProgress).toHaveBeenCalledWith(1, 4, "Staging source files...");
-      expect(onProgress).toHaveBeenCalledWith(2, 4, "Creating source commit...");
-      expect(onProgress).toHaveBeenCalledWith(3, 4, "Pushing source to GitHub...");
-      expect(onProgress).toHaveBeenCalledWith(4, 4, "Source pushed!");
+      // Should report weighted progress at phase boundaries
+      expect(onProgress).toHaveBeenCalledWith(0, "Preparing source backup...");
+      expect(onProgress).toHaveBeenCalledWith(5, "Staging source files...");
+      expect(onProgress).toHaveBeenCalledWith(20, "Creating source commit...");
+      expect(onProgress).toHaveBeenCalledWith(25, "Pushing source to GitHub...");
+      expect(onProgress).toHaveBeenCalledWith(100, "Source backed up!");
     });
 
     it("uses project root as working directory", async () => {

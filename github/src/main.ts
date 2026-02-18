@@ -276,9 +276,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     wasFirstSetup = needsSetup;
 
     // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
+    // Tracks current phase so heartbeat message is informative, not generic
     let commitSha = "";
+    let currentPhase = "Deploying...";
     const heartbeat = setInterval(() => {
-      reportProgress("deploying", 4, 10, "Deploy in progress...");
+      reportProgress("deploying", 5, 10, currentPhase);
     }, 30_000);
 
     try {
@@ -290,7 +292,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
             owner: parsed.owner,
             repo: parsed.repo,
             token,
-            onProgress: (_current, _total, message) => {
+            onProgress: (percent, message) => {
+              currentPhase = message;
               reportProgress("deploying", 5, 10, message);
             },
           });
@@ -303,15 +306,15 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       // Deploy site to gh-pages via git push
       // deployViaGitPush handles change detection internally (git diff --cached --quiet)
       // Returns "" if nothing changed, commit SHA if deployed
-      await reportProgress("deploying", 6, 10, "Deploying via git push...");
-
       commitSha = await deployViaGitPush({
         owner: parsed.owner,
         repo: parsed.repo,
         token,
-        onProgress: (current, total, message) => {
-          const step = 6 + Math.floor((current / Math.max(total, 1)) * 2);
-          reportProgress("deploying", Math.min(step, 8), 10, message);
+        onProgress: (percent, message) => {
+          currentPhase = message;
+          // Map 0-100% to steps 6-9 of overall 10-step progress
+          const step = 6 + Math.floor((percent / 100) * 3);
+          reportProgress("deploying", Math.min(step, 9), 10, message);
         },
       });
     } finally {

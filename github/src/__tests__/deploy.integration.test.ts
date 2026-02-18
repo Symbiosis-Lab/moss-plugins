@@ -31,7 +31,6 @@ vi.mock("../utils", () => ({
 vi.mock("../github-deploy", () => ({
   verifyRepoExists: vi.fn().mockResolvedValue(undefined),
   deployViaGitPush: vi.fn(),
-  pushSourceViaGitPush: vi.fn().mockResolvedValue("source-commit-sha"),
 }));
 
 // Mock the auth module
@@ -108,7 +107,7 @@ vi.mock("../github-api", () => ({
 // Import after mocking
 import { on_deploy } from "../main";
 import { log, reportProgress, showToast } from "../utils";
-import { verifyRepoExists, deployViaGitPush, pushSourceViaGitPush } from "../github-deploy";
+import { verifyRepoExists, deployViaGitPush } from "../github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
@@ -180,11 +179,8 @@ function setupDeployMocks(
   // Validation passes and returns the remote URL
   vi.mocked(validateAll).mockResolvedValue(remoteUrl);
 
-  // Deploy result (git push)
+  // Deploy result (git push — handles both source→main and site→gh-pages)
   vi.mocked(deployViaGitPush).mockResolvedValue(hasChanges ? commitSha : "");
-
-  // Source push (for first-time deploys)
-  vi.mocked(pushSourceViaGitPush).mockResolvedValue("source-commit-sha");
 
   // Pages status check (polling)
   vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -746,7 +742,7 @@ describe("on_deploy integration", () => {
       expect(deployCall.repo).toBe("repo");
     });
 
-    it("Test B: first-time deploy calls pushSourceViaGitPush then deployViaGitPush", async () => {
+    it("Test B: first-time deploy calls deployViaGitPush", async () => {
       setupDeployMocks(ctx, {
         remoteUrl: "git@github.com:user/repo.git",
         needsSetup: true,
@@ -757,7 +753,6 @@ describe("on_deploy integration", () => {
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceViaGitPush)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
     });
 
@@ -866,83 +861,6 @@ describe("on_deploy integration", () => {
       );
       expect(errorToasts.length).toBeGreaterThan(0);
       expect(errorToasts[0][0].message).toContain("Network error");
-    });
-  });
-
-  // ============================================================================
-  // Source Push to Main (first-time deploy backup)
-  // ============================================================================
-
-  describe("Source Push to Main", () => {
-    it("pushes source via git on first-time deploy (needsSetup=true)", async () => {
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:test-user/test-repo.git",
-        needsSetup: true,
-        hasChanges: true,
-        commitSha: "deploy-commit-sha",
-      });
-
-      const result = await on_deploy(createMockContext());
-
-      expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceViaGitPush)).toHaveBeenCalledTimes(1);
-
-      // Verify it was called with correct parameters
-      const callArgs = vi.mocked(pushSourceViaGitPush).mock.calls[0][0];
-      expect(callArgs.owner).toBe("test-user");
-      expect(callArgs.repo).toBe("test-repo");
-      expect(callArgs.token).toBe("test-token");
-
-      // Verify source push happens BEFORE gh-pages deploy
-      const pushSourceOrder = vi.mocked(pushSourceViaGitPush).mock.invocationCallOrder[0];
-      const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
-      expect(pushSourceOrder).toBeLessThan(deployOrder);
-    });
-
-    it("does NOT push source on subsequent deploy (needsSetup=false)", async () => {
-      // Standard deploy: git repo already exists
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:test-user/test-repo.git",
-        hasChanges: true,
-        commitSha: "subsequent-commit-sha",
-      });
-
-      const result = await on_deploy(createMockContext());
-
-      expect(result.success).toBe(true);
-      expect(vi.mocked(pushSourceViaGitPush)).not.toHaveBeenCalled();
-    });
-
-    it("source push failure is non-fatal (gh-pages deploy still proceeds)", async () => {
-      setupDeployMocks(ctx, {
-        remoteUrl: "git@github.com:test-user/test-repo.git",
-        needsSetup: true,
-        hasChanges: true,
-        commitSha: "deploy-commit-sha",
-      });
-
-      // pushSourceViaGitPush throws an error
-      vi.mocked(pushSourceViaGitPush).mockRejectedValue(new Error("git push failed: permission denied"));
-
-      const result = await on_deploy(createMockContext());
-
-      // Deploy should still succeed (source push is non-fatal)
-      expect(result.success).toBe(true);
-
-      // Verify the warning was logged
-      const logCalls = vi.mocked(log).mock.calls;
-      const warnCalls = logCalls.filter((call) => call[0] === "warn");
-      expect(warnCalls.length).toBeGreaterThan(0);
-      const warnMessages = warnCalls.map((call) => call[1]);
-      expect(warnMessages.some((msg) => msg.includes("Source push to main failed"))).toBe(true);
-
-      // Verify deployViaGitPush was still called even though source push failed
-      expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledTimes(1);
-
-      // Verify source push was attempted BEFORE deploy
-      const pushSourceOrder = vi.mocked(pushSourceViaGitPush).mock.invocationCallOrder[0];
-      const deployOrder = vi.mocked(deployViaGitPush).mock.invocationCallOrder[0];
-      expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
   });
 

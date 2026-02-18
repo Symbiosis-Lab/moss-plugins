@@ -35,7 +35,6 @@ vi.mock("../../src/utils", () => ({
 vi.mock("../../src/github-deploy", () => ({
   verifyRepoExists: vi.fn().mockResolvedValue(undefined),
   deployViaGitPush: vi.fn(),
-  pushSourceViaGitPush: vi.fn().mockResolvedValue("source-sha"),
 }));
 
 // Mock the auth module
@@ -101,7 +100,7 @@ vi.mock("../../src/github-api", () => ({
 
 // Import after mocking
 const { on_deploy } = await import("../../src/main");
-const { deployViaGitPush, pushSourceViaGitPush } = await import("../../src/github-deploy");
+const { deployViaGitPush } = await import("../../src/github-deploy");
 const { getToken, getTokenFromGit } = await import("../../src/token");
 const { parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
 const { checkPagesStatus } = await import("../../src/github-api");
@@ -389,11 +388,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       vi.mocked(getToken).mockResolvedValue("test-token");
       vi.mocked(getTokenFromGit).mockResolvedValue(null);
 
-      // deployViaGitPush returns commit sha string
+      // deployViaGitPush returns commit sha string (handles both source→main and site→gh-pages)
       vi.mocked(deployViaGitPush).mockResolvedValue("first-commit-sha");
-
-      // pushSourceViaGitPush returns source sha
-      vi.mocked(pushSourceViaGitPush).mockResolvedValue("source-sha");
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });

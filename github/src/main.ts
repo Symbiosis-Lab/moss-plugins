@@ -13,7 +13,7 @@ import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, 
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote } from "./validation";
 import { extractGitHubPagesUrl, parseGitHubUrl } from "./git";
-import { verifyRepoExists, deployViaGitPush, pushSourceViaGitPush } from "./github-deploy";
+import { verifyRepoExists, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
@@ -284,36 +284,16 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }, 30_000);
 
     try {
-      // Push source files to main (first-time deploy only, non-fatal)
-      // Backs up the user's raw content alongside the compiled gh-pages deployment
-      if (needsSetup) {
-        try {
-          await pushSourceViaGitPush({
-            owner: parsed.owner,
-            repo: parsed.repo,
-            token,
-            onProgress: (percent, message) => {
-              currentPhase = message;
-              reportProgress("deploying", 5, 10, message);
-            },
-          });
-        } catch (error) {
-          // Non-fatal: gh-pages deploy can still proceed
-          await log("warn", `   Source push to main failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-
-      // Deploy site to gh-pages via git push
-      // deployViaGitPush handles change detection internally (git diff --cached --quiet)
-      // Returns "" if nothing changed, commit SHA if deployed
+      // Single deploy: commits source + .moss/site/, pushes to main,
+      // then extracts .moss/site/ tree as orphan commit → gh-pages
       commitSha = await deployViaGitPush({
         owner: parsed.owner,
         repo: parsed.repo,
         token,
         onProgress: (percent, message) => {
           currentPhase = message;
-          // Map 0-100% to steps 6-9 of overall 10-step progress
-          const step = 6 + Math.floor((percent / 100) * 3);
+          // Map 0-100% to steps 5-9 of overall 10-step progress
+          const step = 5 + Math.floor((percent / 100) * 4);
           reportProgress("deploying", Math.min(step, 9), 10, message);
         },
       });

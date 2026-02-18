@@ -1,7 +1,7 @@
 /**
  * Tests for GitHub Deployment Module
  *
- * Tests verifyRepoExists, deployViaGitPush, and pushSourceViaGitPush.
+ * Tests verifyRepoExists and deployViaGitPush (single-repo with tree extraction).
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -25,7 +25,6 @@ import type { ExecuteResult } from "@symbiosis-lab/moss-api";
 
 import {
   deployViaGitPush,
-  pushSourceViaGitPush,
   verifyRepoExists,
   type DeployViaGitPushOptions,
 } from "../github-deploy";
@@ -136,7 +135,7 @@ describe("github-deploy", () => {
   });
 
   // ==========================================================================
-  // deployViaGitPush
+  // deployViaGitPush (single-repo with tree extraction)
   // ==========================================================================
   describe("deployViaGitPush", () => {
     const mockExecuteBinary = vi.mocked(executeBinary);
@@ -146,20 +145,44 @@ describe("github-deploy", () => {
       return { success, exitCode: success ? 0 : 1, stdout, stderr };
     }
 
+    /**
+     * Set up mock sequence for a full successful deploy (existing repo).
+     * Returns the mock for further customization.
+     *
+     * Sequence: rev-parse, .gitignore, add, diff(changes), commit, push main,
+     *           rev-parse tree, commit-tree, push gh-pages
+     */
+    function setupFullDeployMocks(commitOutput = "[main abc1234] Deploy site\n") {
+      mockExecuteBinary
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, commitOutput))      // git commit
+        .mockResolvedValueOnce(gitResult(true))                    // git push --force HEAD:main
+        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
+        .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // git push --force <sha>:gh-pages
+    }
+
     beforeEach(() => {
       mockExecuteBinary.mockReset();
     });
 
     it("initializes git repo on first deploy", async () => {
       mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(false))   // rev-parse fails (no .git)
-        .mockResolvedValueOnce(gitResult(true))     // git init
-        .mockResolvedValueOnce(gitResult(true))     // git config user.email
-        .mockResolvedValueOnce(gitResult(true))     // git config user.name
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+        .mockResolvedValueOnce(gitResult(false))                   // rev-parse fails (no .git)
+        .mockResolvedValueOnce(gitResult(true))                    // git init
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true))                    // git push main
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // push gh-pages
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
@@ -169,69 +192,93 @@ describe("github-deploy", () => {
         expect.objectContaining({ binaryPath: "git", args: ["init"] })
       );
 
-      // Verify git config user.email was called
+      // Verify git config
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({ binaryPath: "git", args: ["config", "user.email", "moss@symbiosis-lab.com"] })
       );
-
-      // Verify git config user.name was called
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({ binaryPath: "git", args: ["config", "user.name", "Moss"] })
       );
     });
 
     it("reuses existing git repo", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds (repo exists)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages def5678] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+      setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
       // Verify git init was NOT called
-      const allCalls = mockExecuteBinary.mock.calls;
-      const initCalls = allCalls.filter(
-        (call) => call[0].args[0] === "init"
+      const initCalls = mockExecuteBinary.mock.calls.filter(
+        (call) => call[0].binaryPath === "git" && call[0].args[0] === "init"
       );
       expect(initCalls).toHaveLength(0);
-
-      // Total calls: rev-parse, add, diff, commit, push = 5
-      expect(mockExecuteBinary).toHaveBeenCalledTimes(5);
     });
 
-    it("stages, commits, and pushes", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+    it("writes .gitignore excluding .moss/* but including .moss/site/", async () => {
+      setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // Verify git add --all
+      // Verify .gitignore is written via sh -c
       expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({ binaryPath: "git", args: ["add", "--all"] })
+        expect.objectContaining({
+          binaryPath: "sh",
+          args: ["-c", expect.stringContaining(".moss/*")],
+        })
       );
+      // Verify it also contains the negation pattern
+      const shCall = mockExecuteBinary.mock.calls.find(
+        (call) => call[0].binaryPath === "sh"
+      );
+      expect(shCall![0].args[1]).toContain("!.moss/site/");
+      expect(shCall![0].args[1]).toContain("node_modules/");
+    });
 
-      // Verify git commit
+    it("pushes to both main and gh-pages branches", async () => {
+      setupFullDeployMocks();
+
+      const onProgress = vi.fn();
+      await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+
+      // Verify push to main
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["commit", "-m", "Deploy site\n\nGenerated by Moss"],
+          args: ["push", "--force", pushUrl, "HEAD:main"],
         })
       );
 
-      // Verify git push --force with token in URL
-      const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+      // Verify push to gh-pages with orphan commit SHA
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["push", "--force", pushUrl, "HEAD:gh-pages"],
+          args: ["push", "--force", pushUrl, "ccc333ddd444:gh-pages"],
+        })
+      );
+    });
+
+    it("extracts .moss/site tree and creates orphan commit for gh-pages", async () => {
+      setupFullDeployMocks();
+
+      const onProgress = vi.fn();
+      await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      // Verify tree extraction
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["rev-parse", "HEAD:.moss/site"],
+        })
+      );
+
+      // Verify orphan commit creation with extracted tree
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["commit-tree", "aaa111bbb222", "-m", "Deploy site\n\nGenerated by Moss"],
         })
       );
     });
@@ -239,6 +286,7 @@ describe("github-deploy", () => {
     it("returns empty string when no changes", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
         .mockResolvedValueOnce(gitResult(true))     // git add --all
         .mockResolvedValueOnce(gitResult(true));    // git diff --cached --quiet succeeds (no changes)
 
@@ -246,17 +294,12 @@ describe("github-deploy", () => {
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
       expect(result).toBe("");
-      // Should not have called commit or push
-      expect(mockExecuteBinary).toHaveBeenCalledTimes(3);
+      // Should not have called commit, push, or tree extraction
+      expect(mockExecuteBinary).toHaveBeenCalledTimes(4);
     });
 
     it("returns commit SHA from git commit output", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+      setupFullDeployMocks("[main abc1234] Deploy site\n");
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
@@ -264,13 +307,14 @@ describe("github-deploy", () => {
       expect(result).toBe("abc1234");
     });
 
-    it("sanitizes token from error messages", async () => {
+    it("sanitizes token from error messages on main push failure", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
         .mockResolvedValueOnce(gitResult(true))     // git add --all
         .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/': The requested URL returned error: 403`));  // git push fails
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/'`));  // push main fails
 
       const onProgress = vi.fn();
 
@@ -281,241 +325,90 @@ describe("github-deploy", () => {
       }));
     });
 
-    it("propagates push errors with sanitized message", async () => {
-      const errorMsg = `remote: Repository not found.\nfatal: '${TOKEN}' denied`;
+    it("sanitizes token from error messages on gh-pages push failure", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
         .mockResolvedValueOnce(gitResult(true))     // git add --all
         .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(false, "", errorMsg));  // git push fails
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true))     // push main succeeds
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))  // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))  // commit-tree
+        .mockResolvedValueOnce(gitResult(false, "", `fatal: '${TOKEN}' denied`));  // push gh-pages fails
 
       const onProgress = vi.fn();
 
       try {
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-        // Should not reach here
         expect.fail("Expected deployViaGitPush to throw");
       } catch (err: unknown) {
         const error = err as Error;
-        expect(error.message).toContain("git push failed");
+        expect(error.message).toContain("gh-pages");
         expect(error.message).toContain("***");
         expect(error.message).not.toContain(TOKEN);
       }
     });
 
-    it("reports progress at each step", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+    it("reports weighted progress at phase boundaries", async () => {
+      setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // Should report weighted progress at phase boundaries
       expect(onProgress).toHaveBeenCalledWith(0, "Preparing deploy...");
       expect(onProgress).toHaveBeenCalledWith(5, "Staging files...");
-      expect(onProgress).toHaveBeenCalledWith(20, "Creating commit...");
-      expect(onProgress).toHaveBeenCalledWith(25, "Pushing to GitHub...");
+      expect(onProgress).toHaveBeenCalledWith(15, "Creating commit...");
+      expect(onProgress).toHaveBeenCalledWith(20, "Pushing source to main...");
+      expect(onProgress).toHaveBeenCalledWith(40, "Pushing site to gh-pages...");
       expect(onProgress).toHaveBeenCalledWith(100, "Deployed!");
     });
 
-    it("passes correct options to executeBinary", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[gh-pages abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+    it("uses project root as working directory for all git commands", async () => {
+      setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // All calls should use workingDir ".moss/site" and GIT_TERMINAL_PROMPT=0
+      // All calls should use workingDir "." (project root)
       for (const call of mockExecuteBinary.mock.calls) {
-        const opts = call[0];
-        expect(opts.workingDir).toBe(".moss/site");
-        expect(opts.env).toEqual({ GIT_TERMINAL_PROMPT: "0" });
-        expect(opts.timeoutMs).toBe(300_000);
+        expect(call[0].workingDir).toBe(".");
       }
     });
-  });
 
-  // ==========================================================================
-  // pushSourceViaGitPush
-  // ==========================================================================
-  describe("pushSourceViaGitPush", () => {
-    const mockExecuteBinary = vi.mocked(executeBinary);
-
-    /** Helper to create an ExecuteResult */
-    function gitResult(success: boolean, stdout = "", stderr = ""): ExecuteResult {
-      return { success, exitCode: success ? 0 : 1, stdout, stderr };
-    }
-
-    beforeEach(() => {
-      mockExecuteBinary.mockReset();
-    });
-
-    it("initializes git repo on first source push", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(false))   // rev-parse fails (no .git)
-        .mockResolvedValueOnce(gitResult(true))     // git init
-        .mockResolvedValueOnce(gitResult(true))     // git config user.email
-        .mockResolvedValueOnce(gitResult(true))     // git config user.name
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
-
-      const onProgress = vi.fn();
-      await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-      // Verify git init was called
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({ binaryPath: "git", args: ["init"] })
-      );
-
-      // Verify git config was called
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({ binaryPath: "git", args: ["config", "user.email", "moss@symbiosis-lab.com"] })
-      );
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({ binaryPath: "git", args: ["config", "user.name", "Moss"] })
-      );
-    });
-
-    it("reuses existing git repo", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds (repo exists)
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main def5678] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
-
-      const onProgress = vi.fn();
-      await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-      // Verify git init was NOT called
-      const allCalls = mockExecuteBinary.mock.calls;
-      const initCalls = allCalls.filter(
-        (call) => call[0].args[0] === "init"
-      );
-      expect(initCalls).toHaveLength(0);
-
-      // Total calls: rev-parse, .gitignore, add, diff, commit, push = 6
-      expect(mockExecuteBinary).toHaveBeenCalledTimes(6);
-    });
-
-    it("stages, commits, and pushes to main", async () => {
+    it("throws on tree extraction failure", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
         .mockResolvedValueOnce(gitResult(true))     // write .gitignore
         .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
-
-      const onProgress = vi.fn();
-      await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-      // Verify git add --all
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({ binaryPath: "git", args: ["add", "--all"] })
-      );
-
-      // Verify git commit with source message
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "git",
-          args: ["commit", "-m", "Add source files\n\nUploaded by Moss"],
-        })
-      );
-
-      // Verify git push --force to main (not gh-pages)
-      const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "git",
-          args: ["push", "--force", pushUrl, "HEAD:main"],
-        })
-      );
-    });
-
-    it("returns empty string when no changes", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(true));    // git diff --cached --quiet succeeds (no changes)
-
-      const onProgress = vi.fn();
-      const result = await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-      expect(result).toBe("");
-      // Should not have called commit or push
-      expect(mockExecuteBinary).toHaveBeenCalledTimes(4);
-    });
-
-    it("sanitizes token from error messages", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/': The requested URL returned error: 403`));  // git push fails
+        .mockResolvedValueOnce(gitResult(false))    // git diff (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
+        .mockResolvedValueOnce(gitResult(true))     // push main
+        .mockResolvedValueOnce(gitResult(false, "", "fatal: not a valid object name"));  // rev-parse tree fails
 
       const onProgress = vi.fn();
 
       await expect(
-        pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress })
-      ).rejects.toThrow(expect.objectContaining({
-        message: expect.not.stringContaining(TOKEN),
-      }));
+        deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress })
+      ).rejects.toThrow("Failed to resolve .moss/site tree");
     });
 
-    it("reports weighted progress at phase boundaries", async () => {
+    it("throws on commit-tree failure", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
         .mockResolvedValueOnce(gitResult(true))     // write .gitignore
         .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
+        .mockResolvedValueOnce(gitResult(false))    // git diff (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
+        .mockResolvedValueOnce(gitResult(true))     // push main
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))  // rev-parse tree
+        .mockResolvedValueOnce(gitResult(false, "", "fatal: not a tree object"));  // commit-tree fails
 
       const onProgress = vi.fn();
-      await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-      // Should report weighted progress at phase boundaries
-      expect(onProgress).toHaveBeenCalledWith(0, "Preparing source backup...");
-      expect(onProgress).toHaveBeenCalledWith(5, "Staging source files...");
-      expect(onProgress).toHaveBeenCalledWith(20, "Creating source commit...");
-      expect(onProgress).toHaveBeenCalledWith(25, "Pushing source to GitHub...");
-      expect(onProgress).toHaveBeenCalledWith(100, "Source backed up!");
-    });
-
-    it("uses project root as working directory", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true))     // git add --all
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Add source files\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true));    // git push
-
-      const onProgress = vi.fn();
-      await pushSourceViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-      // All calls should use workingDir "." (project root, not .moss/site)
-      for (const call of mockExecuteBinary.mock.calls) {
-        const opts = call[0];
-        expect(opts.workingDir).toBe(".");
-      }
+      await expect(
+        deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress })
+      ).rejects.toThrow("Failed to create gh-pages commit");
     });
   });
 });

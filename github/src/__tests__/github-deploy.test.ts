@@ -726,6 +726,95 @@ describe("github-deploy", () => {
         uploadChangedFiles(files, mockReadFn, OWNER, REPO, TOKEN, onProgress)
       ).rejects.toThrow("Bad credentials");
     });
+
+    it("routes large files through postSiteFileFn and returns blob SHA", async () => {
+      const files = [
+        { path: "small.html", localHash: "h1" },
+        { path: "videos/big.mp4", localHash: "h2" },
+      ];
+      const largeFilePaths = new Set(["videos/big.mp4"]);
+
+      // Mock readFn for the small file
+      mockReadFn.mockResolvedValueOnce("c21hbGw=");
+
+      // Mock uploadBlob for small file
+      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "small-blob-sha" }, 201));
+
+      // Mock postSiteFileFn for the large file
+      const mockPostSiteFile = vi.fn().mockResolvedValueOnce({
+        status: 201,
+        ok: true,
+        body_base64: btoa(JSON.stringify({ sha: "large-blob-sha" })),
+        content_type: "application/json",
+      });
+
+      const onProgress = vi.fn();
+      const result = await uploadChangedFiles(
+        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
+        largeFilePaths, mockPostSiteFile,
+      );
+
+      expect(result.blobShas.size).toBe(2);
+      expect(result.blobShas.get("small.html")).toBe("small-blob-sha");
+      expect(result.blobShas.get("videos/big.mp4")).toBe("large-blob-sha");
+      expect(result.skippedFiles).toEqual([]);
+
+      // Verify postSiteFileFn was called with correct args
+      expect(mockPostSiteFile).toHaveBeenCalledTimes(1);
+      expect(mockPostSiteFile).toHaveBeenCalledWith(
+        "videos/big.mp4",
+        expect.stringContaining("/git/blobs"),
+        expect.objectContaining({ Authorization: expect.stringContaining("Bearer") }),
+        '{"content":"$BASE64","encoding":"base64"}',
+        120000,
+      );
+    });
+
+    it("skips large files that fail upload (non-fatal)", async () => {
+      const files = [
+        { path: "videos/huge.mp4", localHash: "h1" },
+      ];
+      const largeFilePaths = new Set(["videos/huge.mp4"]);
+
+      // Mock postSiteFileFn returning a failure response
+      const mockPostSiteFile = vi.fn().mockResolvedValueOnce({
+        status: 422,
+        ok: false,
+        body_base64: btoa(JSON.stringify({ message: "Blob is too large" })),
+        content_type: "application/json",
+      });
+
+      const onProgress = vi.fn();
+      const result = await uploadChangedFiles(
+        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
+        largeFilePaths, mockPostSiteFile,
+      );
+
+      expect(result.blobShas.size).toBe(0);
+      expect(result.skippedFiles).toEqual(["videos/huge.mp4"]);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips large files when postSiteFileFn throws (non-fatal)", async () => {
+      const files = [
+        { path: "videos/crash.mp4", localHash: "h1" },
+      ];
+      const largeFilePaths = new Set(["videos/crash.mp4"]);
+
+      // Mock postSiteFileFn that throws
+      const mockPostSiteFile = vi.fn().mockRejectedValueOnce(
+        new Error("Network timeout")
+      );
+
+      const onProgress = vi.fn();
+      const result = await uploadChangedFiles(
+        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
+        largeFilePaths, mockPostSiteFile,
+      );
+
+      expect(result.blobShas.size).toBe(0);
+      expect(result.skippedFiles).toEqual(["videos/crash.mp4"]);
+    });
   });
 
   // ==========================================================================

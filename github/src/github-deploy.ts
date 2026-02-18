@@ -211,7 +211,7 @@ export async function getBranchState(
     { headers: authHeaders(token) }
   );
 
-  if (refResponse.status === 404) {
+  if (refResponse.status === 404 || refResponse.status === 409) {
     return { exists: false };
   }
 

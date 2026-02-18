@@ -217,6 +217,15 @@ describe("github-deploy", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
+    it("returns exists: false when GitHub returns 409 (empty repository)", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(409, "Git Repository is empty."));
+
+      const result = await getBranchState(OWNER, REPO, "main", TOKEN);
+
+      expect(result).toEqual({ exists: false });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it("throws error on API failure (non-404 error)", async () => {
       mockFetch.mockResolvedValueOnce(mockErrorResponse(500, "Internal Server Error"));
 

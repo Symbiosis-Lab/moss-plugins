@@ -158,6 +158,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Preflight: verify saved config is still valid before using it.
     // This catches stale config (repo deleted, renamed, or token lost access).
     const savedConfig = await getRepoConfig();
+    let configInvalidated = false;
     if (savedConfig) {
       let preflightToken = await getToken();
       if (!preflightToken) {
@@ -177,6 +178,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         } catch {
           await log("warn", `   Saved config for ${savedConfig.owner}/${savedConfig.repo} is invalid, resetting...`);
           await clearRepoConfig();
+          configInvalidated = true;
         }
       }
     }
@@ -187,8 +189,9 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     let wasFirstSetup = false;
 
-    // Re-read config (may have been cleared by preflight)
-    const existingConfig = await getRepoConfig();
+    // Use flag instead of re-reading config — a second getRepoConfig() call
+    // would re-trigger .git/config migration and restore the stale config.
+    const existingConfig = configInvalidated ? null : savedConfig;
     const needsSetup = !existingConfig;
 
     if (needsSetup) {

@@ -1302,8 +1302,7 @@ describe("on_deploy integration", () => {
     it("clears stale config and re-runs setup when verifyRepoExists fails", async () => {
       // Config exists but points to an inaccessible repo
       vi.mocked(getRepoConfig)
-        .mockResolvedValueOnce({ owner: "stale-user", repo: "deleted-repo" }) // First call (preflight)
-        .mockResolvedValueOnce(null); // Second call (after clear) → triggers setup
+        .mockResolvedValueOnce({ owner: "stale-user", repo: "deleted-repo" });
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 
@@ -1337,11 +1336,30 @@ describe("on_deploy integration", () => {
       expect(result.success).toBe(true);
     });
 
-    it("clears config and succeeds when setup flow completes after stale config", async () => {
-      // Stale config on first read, null on second (after clear)
+    it("calls getRepoConfig only once when preflight clears config (no migration loop)", async () => {
+      // Config exists but is stale
       vi.mocked(getRepoConfig)
-        .mockResolvedValueOnce({ owner: "stale", repo: "gone" }) // preflight read
-        .mockResolvedValueOnce(null); // after clear → needs setup
+        .mockResolvedValueOnce({ owner: "stale", repo: "gone" });
+
+      vi.mocked(getToken).mockResolvedValue("valid-token");
+
+      // Preflight fails → config cleared
+      vi.mocked(verifyRepoExists).mockRejectedValueOnce(new Error("Not found"));
+
+      // Setup cancelled
+      vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
+
+      await on_deploy(createMockContext());
+
+      // Key assertion: getRepoConfig called ONCE (preflight), NOT twice
+      // If called twice, the second call could re-trigger .git/config migration
+      expect(vi.mocked(getRepoConfig)).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears config and succeeds when setup flow completes after stale config", async () => {
+      // Stale config on first read — flag prevents second read
+      vi.mocked(getRepoConfig)
+        .mockResolvedValueOnce({ owner: "stale", repo: "gone" });
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 

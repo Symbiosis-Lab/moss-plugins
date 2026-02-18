@@ -38,6 +38,7 @@ vi.mock("../../src/github-deploy", () => ({
   getRemoteTree: vi.fn(),
   diffFiles: vi.fn(),
   deployViaAPI: vi.fn(),
+  deployViaGitPush: vi.fn(),
   pushSourceToMain: vi.fn(),
 }));
 
@@ -106,7 +107,7 @@ vi.mock("../../src/github-api", () => ({
 
 // Import after mocking
 const { on_deploy } = await import("../../src/main");
-const { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI } = await import("../../src/github-deploy");
+const { getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, deployViaGitPush } = await import("../../src/github-deploy");
 const { getToken, getTokenFromGit } = await import("../../src/token");
 const { getLocalSiteFingerprint, parseGitHubUrl, extractGitHubPagesUrl } = await import("../../src/git");
 const { checkPagesStatus } = await import("../../src/github-api");
@@ -369,8 +370,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
         deleted: [],
       });
 
-      // deployViaAPI returns commit sha
-      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "new-commit-sha", skippedFiles: [] });
+      // deployViaGitPush returns commit sha string
+      vi.mocked(deployViaGitPush).mockResolvedValue("new-commit-sha");
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -437,8 +438,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
         deleted: [],
       });
 
-      // deployViaAPI returns commit sha
-      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "first-commit-sha", skippedFiles: [] });
+      // deployViaGitPush returns commit sha string
+      vi.mocked(deployViaGitPush).mockResolvedValue("first-commit-sha");
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });

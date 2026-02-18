@@ -292,6 +292,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
     // Covers both fingerprinting and deploy phases
+    let commitSha = "";
     const heartbeat = setInterval(() => {
       reportProgress("deploying", 4, 10, "Deploy in progress...");
     }, 30_000);
@@ -327,7 +328,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     const { changed, deleted } = diffFiles(localFingerprint, remoteTree);
 
     // No changes - early exit
-    let commitSha = "";
     if (changed.length === 0 && deleted.length === 0) {
       clearInterval(heartbeat);
       await reportProgress("complete", 10, 10, "No changes to deploy");

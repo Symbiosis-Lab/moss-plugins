@@ -17,6 +17,7 @@
  */
 
 import type { Fingerprint } from "./git";
+import type { SitePostResult } from "@symbiosis-lab/moss-api";
 import { GITHUB_API_BASE, GITHUB_API_HEADERS } from "./github-api";
 
 /** Maximum concurrent blob uploads to avoid rate limiting */
@@ -99,6 +100,20 @@ export interface DeployViaAPIOptions {
   deleted: string[];
   ghPagesState: GhPagesState;
   onProgress: OnProgress;
+  /** Paths of large files to upload via Rust */
+  largeFilePaths?: Set<string>;
+  /** Rust-side upload function for large files */
+  postSiteFileFn?: PostSiteFileFn;
+}
+
+/**
+ * Result from deployViaAPI including information about skipped files.
+ */
+export interface DeployResult {
+  /** The new commit SHA, or empty string if nothing to deploy */
+  commitSha: string;
+  /** Files that were skipped due to upload failure (large files) */
+  skippedFiles: string[];
 }
 
 // ============================================================================
@@ -363,6 +378,18 @@ export function diffFiles(
 export type ReadFileFn = (relativePath: string) => Promise<string>;
 
 /**
+ * Function that uploads a site file via Rust-side HTTP POST.
+ * Used for large files that shouldn't be loaded into JS memory.
+ */
+export type PostSiteFileFn = (
+  relativePath: string,
+  url: string,
+  headers: Record<string, string>,
+  bodyTemplate: string,
+  timeoutMs?: number,
+) => Promise<SitePostResult>;
+
+/**
  * Upload a single blob to GitHub.
  *
  * @param owner - Repository owner
@@ -403,13 +430,20 @@ export async function uploadBlob(
 /**
  * Upload changed files to GitHub as blobs with concurrency limiting.
  *
+ * Small files are uploaded via JS fetch (existing path).
+ * Large files (in `largeFilePaths`) are uploaded via Rust-side HTTP POST
+ * to avoid loading them into JS memory. Large file failures are non-fatal:
+ * they are recorded in `skippedFiles` and excluded from the tree.
+ *
  * @param files - Array of changed files with path and local hash
  * @param readFn - Function that reads a file by relative path and returns base64 content
  * @param owner - Repository owner
  * @param repo - Repository name
  * @param token - GitHub access token
  * @param onProgress - Progress callback
- * @returns Map of file path to uploaded blob SHA
+ * @param largeFilePaths - Optional set of paths to upload via Rust
+ * @param postSiteFileFn - Optional Rust-side upload function for large files
+ * @returns Object with blobShas map and skippedFiles array
  */
 export async function uploadChangedFiles(
   files: Array<{ path: string; localHash: string }>,
@@ -417,40 +451,91 @@ export async function uploadChangedFiles(
   owner: string,
   repo: string,
   token: string,
-  onProgress: OnProgress
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+  onProgress: OnProgress,
+  largeFilePaths?: Set<string>,
+  postSiteFileFn?: PostSiteFileFn,
+): Promise<{ blobShas: Map<string, string>; skippedFiles: string[] }> {
+  const blobShas = new Map<string, string>();
+  const skippedFiles: string[] = [];
 
   if (files.length === 0) {
-    return result;
+    return { blobShas, skippedFiles };
+  }
+
+  // Separate small and large files
+  const smallFiles: Array<{ path: string; localHash: string }> = [];
+  const largeFiles: Array<{ path: string; localHash: string }> = [];
+
+  for (const file of files) {
+    if (largeFilePaths?.has(file.path) && postSiteFileFn) {
+      largeFiles.push(file);
+    } else {
+      smallFiles.push(file);
+    }
   }
 
   let completed = 0;
   const total = files.length;
 
-  const uploadResults = await uploadWithConcurrency(
-    files,
-    async (file) => {
-      // Read file as base64 via SDK
-      const content = await readFn(file.path);
+  // Upload small files via JS fetch (existing path, fatal on error)
+  if (smallFiles.length > 0) {
+    const uploadResults = await uploadWithConcurrency(
+      smallFiles,
+      async (file) => {
+        const content = await readFn(file.path);
+        const blobSha = await uploadBlob(owner, repo, content, "base64", token);
+        completed++;
+        onProgress(completed, total, `Uploaded ${file.path}`);
+        return { path: file.path, blobSha };
+      },
+      UPLOAD_CONCURRENCY
+    );
 
-      // Upload as blob
-      const blobSha = await uploadBlob(owner, repo, content, "base64", token);
-
-      // Report progress
-      completed++;
-      onProgress(completed, total, `Uploaded ${file.path}`);
-
-      return { path: file.path, blobSha };
-    },
-    UPLOAD_CONCURRENCY
-  );
-
-  for (const { path, blobSha } of uploadResults) {
-    result.set(path, blobSha);
+    for (const { path, blobSha } of uploadResults) {
+      blobShas.set(path, blobSha);
+    }
   }
 
-  return result;
+  // Upload large files via Rust (non-fatal on error)
+  for (const file of largeFiles) {
+    try {
+      const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/blobs`;
+      const headers = {
+        ...GITHUB_API_HEADERS,
+        Authorization: `Bearer ${token}`,
+      };
+      const bodyTemplate = '{"content":"$BASE64","encoding":"base64"}';
+
+      const result = await postSiteFileFn!(
+        file.path, url, headers, bodyTemplate, 120000
+      );
+
+      if (!result.ok) {
+        // Parse error message from response
+        let errorMsg = `HTTP ${result.status}`;
+        try {
+          const bodyText = atob(result.body_base64);
+          const body = JSON.parse(bodyText);
+          if (body.message) errorMsg = body.message;
+        } catch { /* ignore parse errors */ }
+        console.warn(`Large file upload failed for ${file.path}: ${errorMsg}`);
+        skippedFiles.push(file.path);
+      } else {
+        // Parse blob SHA from response
+        const bodyText = atob(result.body_base64);
+        const body = JSON.parse(bodyText);
+        blobShas.set(file.path, body.sha);
+      }
+    } catch (error) {
+      console.warn(`Large file upload error for ${file.path}: ${error}`);
+      skippedFiles.push(file.path);
+    }
+
+    completed++;
+    onProgress(completed, total, `Uploaded ${file.path}`);
+  }
+
+  return { blobShas, skippedFiles };
 }
 
 /**
@@ -659,10 +744,13 @@ export async function uploadWithConcurrency<T, R>(
  * 3. Create a commit pointing to the new tree
  * 4. Update (or create) the gh-pages ref
  *
+ * Files that fail to upload (large files exceeding GitHub limits) are
+ * excluded from the tree and reported in `skippedFiles`.
+ *
  * @param options - Deploy options
- * @returns The new commit SHA, or empty string if nothing to deploy
+ * @returns DeployResult with commit SHA and skipped files
  */
-export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string> {
+export async function deployViaAPI(options: DeployViaAPIOptions): Promise<DeployResult> {
   const {
     owner,
     repo,
@@ -672,23 +760,28 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
     deleted,
     ghPagesState,
     onProgress,
+    largeFilePaths,
+    postSiteFileFn,
   } = options;
 
   // Nothing to deploy
   if (changed.length === 0 && deleted.length === 0) {
-    return "";
+    return { commitSha: "", skippedFiles: [] };
   }
 
   // Step 1: Upload changed files as blobs
-  const blobShas = await uploadChangedFiles(
-    changed, readFn, owner, repo, token, onProgress
+  const { blobShas, skippedFiles } = await uploadChangedFiles(
+    changed, readFn, owner, repo, token, onProgress,
+    largeFilePaths, postSiteFileFn,
   );
 
-  // Step 2: Build tree entries
+  // Step 2: Build tree entries (excluding skipped files)
   const treeEntries: TreeEntry[] = [];
+  const skippedSet = new Set(skippedFiles);
 
   // Changed/added files
   for (const file of changed) {
+    if (skippedSet.has(file.path)) continue;
     const blobSha = blobShas.get(file.path);
     if (blobSha) {
       treeEntries.push({
@@ -710,6 +803,11 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
     });
   }
 
+  // If all changed files were skipped and nothing deleted, nothing to commit
+  if (treeEntries.length === 0) {
+    return { commitSha: "", skippedFiles };
+  }
+
   // Determine base tree (null for first deploy, existing tree SHA for updates)
   const baseTreeSha = ghPagesState.exists ? ghPagesState.treeSha : null;
 
@@ -725,7 +823,7 @@ export async function deployViaAPI(options: DeployViaAPIOptions): Promise<string
   // Step 4: Update or create ref
   await updateRef(owner, repo, "gh-pages", commitSha, ghPagesState.exists, token);
 
-  return commitSha;
+  return { commitSha, skippedFiles };
 }
 
 /**
@@ -760,7 +858,7 @@ export async function pushSourceToMain(options: PushSourceOptions): Promise<stri
   }
 
   // 3. Upload blobs (reuse existing uploadChangedFiles)
-  const blobShas = await uploadChangedFiles(
+  const { blobShas } = await uploadChangedFiles(
     files, readFn, owner, repo, token, onProgress
   );
 

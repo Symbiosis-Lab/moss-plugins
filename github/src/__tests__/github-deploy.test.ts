@@ -671,9 +671,10 @@ describe("github-deploy", () => {
         files, mockReadFn, OWNER, REPO, TOKEN, onProgress
       );
 
-      expect(result.size).toBe(2);
-      expect(result.get("index.html")).toBe("blob-sha-1");
-      expect(result.get("style.css")).toBe("blob-sha-2");
+      expect(result.blobShas.size).toBe(2);
+      expect(result.blobShas.get("index.html")).toBe("blob-sha-1");
+      expect(result.blobShas.get("style.css")).toBe("blob-sha-2");
+      expect(result.skippedFiles).toEqual([]);
     });
 
     it("calls onProgress callback for each file", async () => {
@@ -706,7 +707,8 @@ describe("github-deploy", () => {
         [], mockReadFn, OWNER, REPO, TOKEN, onProgress
       );
 
-      expect(result.size).toBe(0);
+      expect(result.blobShas.size).toBe(0);
+      expect(result.skippedFiles).toEqual([]);
       expect(onProgress).not.toHaveBeenCalled();
     });
 
@@ -986,7 +988,7 @@ describe("github-deploy", () => {
         mockResponse({ ref: "refs/heads/gh-pages" }, 201)
       );
 
-      const commitSha = await deployViaAPI({
+      const result = await deployViaAPI({
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
@@ -997,7 +999,8 @@ describe("github-deploy", () => {
         onProgress,
       });
 
-      expect(commitSha).toBe("new-commit-sha");
+      expect(result.commitSha).toBe("new-commit-sha");
+      expect(result.skippedFiles).toEqual([]);
 
       // Verify createTree was called without base_tree
       const createTreeCall = mockFetch.mock.calls[2];
@@ -1049,7 +1052,7 @@ describe("github-deploy", () => {
         mockResponse({ ref: "refs/heads/gh-pages" })
       );
 
-      const commitSha = await deployViaAPI({
+      const result = await deployViaAPI({
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
@@ -1060,7 +1063,8 @@ describe("github-deploy", () => {
         onProgress,
       });
 
-      expect(commitSha).toBe("updated-commit-sha");
+      expect(result.commitSha).toBe("updated-commit-sha");
+      expect(result.skippedFiles).toEqual([]);
 
       // Verify createTree used base_tree
       const createTreeCall = mockFetch.mock.calls[1]; // after 1 blob upload
@@ -1133,10 +1137,10 @@ describe("github-deploy", () => {
       expect(deleteEntries.map((e: { path: string }) => e.path)).toContain("old-style.css");
     });
 
-    it("returns empty string when there are no changed or deleted files", async () => {
+    it("returns empty commitSha when there are no changed or deleted files", async () => {
       const onProgress = vi.fn();
 
-      const commitSha = await deployViaAPI({
+      const result = await deployViaAPI({
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
@@ -1147,7 +1151,8 @@ describe("github-deploy", () => {
         onProgress,
       });
 
-      expect(commitSha).toBe("");
+      expect(result.commitSha).toBe("");
+      expect(result.skippedFiles).toEqual([]);
       // No API calls should be made
       expect(mockFetch).not.toHaveBeenCalled();
     });

@@ -16,7 +16,7 @@ import { log, reportProgress, reportError, setCurrentHookName, showToast, closeB
 import { validateAll, isSSHRemote } from "./validation";
 import { extractGitHubPagesUrl, parseGitHubUrl, getLocalSiteFingerprint, getLocalSourceFingerprint } from "./git";
 import { verifyRepoExists, getGhPagesState, getRemoteTree, diffFiles, deployViaAPI, pushSourceToMain } from "./github-deploy";
-import { readSiteFile, readProjectFileBase64, listSourceFiles } from "@symbiosis-lab/moss-api";
+import { readSiteFile, readProjectFileBase64, listSourceFiles, hashSiteFile, listSiteFilesWithSizes, httpPostSiteFile } from "@symbiosis-lab/moss-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
@@ -28,6 +28,9 @@ const SOURCE_EXTENSIONS = new Set([
   ".md", ".txt", ".toml", ".yaml", ".yml", ".json",
   ".html", ".css", ".js", ".ts", ".xml", ".csv",
 ]);
+
+/** Files above this size are hashed and uploaded via Rust to avoid JS memory pressure */
+const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50 MB
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -290,9 +293,29 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // First deploy = no gh-pages branch yet (includes brand-new repos)
     wasFirstSetup = !ghPagesState.exists;
 
-    // Phase 4: Compare local vs remote
+    // Phase 4: Classify files by size and compare local vs remote
     await reportProgress("detecting", 5, 10, "Comparing files...");
-    const localFingerprint = await getLocalSiteFingerprint(context.site_files, readSiteFile);
+
+    // Identify large files for Rust-side hashing and upload
+    let largeFilePaths = new Set<string>();
+    try {
+      const filesWithSizes = await listSiteFilesWithSizes();
+      largeFilePaths = new Set(
+        filesWithSizes
+          .filter(f => f.size >= LARGE_FILE_THRESHOLD)
+          .map(f => f.path)
+      );
+      if (largeFilePaths.size > 0) {
+        await log("log", `   ${largeFilePaths.size} large file(s) detected (>50MB), using server-side processing`);
+      }
+    } catch {
+      // Non-fatal: fall back to all-JS path if size listing fails
+      await log("warn", "   Could not list file sizes, using default upload path");
+    }
+
+    const localFingerprint = await getLocalSiteFingerprint(
+      context.site_files, readSiteFile, hashSiteFile, largeFilePaths
+    );
     if (!localFingerprint || localFingerprint.size === 0) {
       throw new Error("No site files found");
     }
@@ -380,7 +403,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Deploy site to gh-pages via REST API
     await reportProgress("deploying", 6, 10, "Uploading files...");
     await log("log", `   Deploying ${changed.length} changed, ${deleted.length} deleted files via REST API...`);
-    commitSha = await deployViaAPI({
+    const deployResult = await deployViaAPI({
       owner: parsed.owner,
       repo: parsed.repo,
       token,
@@ -393,7 +416,17 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         const step = 6 + Math.floor((current / total) * 2);
         reportProgress("deploying", Math.min(step, 8), 10, message);
       },
+      largeFilePaths,
+      postSiteFileFn: httpPostSiteFile,
     });
+    commitSha = deployResult.commitSha;
+
+    if (deployResult.skippedFiles.length > 0) {
+      await log("warn", `   Skipped ${deployResult.skippedFiles.length} large file(s) that exceeded GitHub's size limit:`);
+      for (const skipped of deployResult.skippedFiles) {
+        await log("warn", `     - ${skipped}`);
+      }
+    }
 
     // Generate pages URL for logging and response
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);
@@ -423,23 +456,31 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     let toastMessage: string;
     let toastVariant: "success" | "info" | "error";
 
+    const skippedSuffix = deployResult.skippedFiles.length > 0
+      ? `\n\n${deployResult.skippedFiles.length} large file(s) skipped (exceeded GitHub size limit):\n${deployResult.skippedFiles.map(f => `  - ${f}`).join("\n")}`
+      : "";
+
     if (wasFirstSetup && commitSha) {
       // Scenario 1: First-time deployment (gh-pages branch created)
       message =
         `Your site is being deployed to GitHub Pages!\n\n` +
         `Your site will be available at: ${pagesUrl}\n\n` +
         `GitHub Pages is automatically enabled for the gh-pages branch.\n` +
-        `It may take a few minutes for your site to appear.`;
-      toastMessage = "Deploy configured!";
+        `It may take a few minutes for your site to appear.` + skippedSuffix;
+      toastMessage = deployResult.skippedFiles.length > 0
+        ? `Deployed! (${deployResult.skippedFiles.length} large file(s) skipped)`
+        : "Deploy configured!";
       toastVariant = "success";
     } else if (commitSha) {
       // Scenario 2: Subsequent deploy with changes pushed
       message =
         `Site deployed to GitHub Pages!\n\n` +
         `Your site: ${pagesUrl}\n\n` +
-        `Changes have been pushed to gh-pages branch.`;
+        `Changes have been pushed to gh-pages branch.` + skippedSuffix;
       // Use is_live to determine if site is confirmed live
-      toastMessage = isLive ? "Site is live!" : "Deploying...";
+      toastMessage = deployResult.skippedFiles.length > 0
+        ? `Deployed! (${deployResult.skippedFiles.length} large file(s) skipped)`
+        : isLive ? "Site is live!" : "Deploying...";
       toastVariant = "success";
     } else {
       // Scenario 3: No changes to push

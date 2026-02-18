@@ -335,7 +335,34 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       };
     }
 
-    // Phase 5-8: Deploy via REST API
+    // Push source files to main (first-time deploy only)
+    // When needsSetup was true, the repo was just created with auto_init=true
+    // (main has initial commit). Source push backs up the user's markdown files.
+    if (needsSetup) {
+      try {
+        await reportProgress("deploying", 6, 10, "Backing up source files...");
+        const sourceFiles = await listSourceFiles();
+        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, readProjectFileBase64);
+        if (sourceFingerprint && sourceFingerprint.size > 0) {
+          await pushSourceToMain({
+            owner: parsed.owner,
+            repo: parsed.repo,
+            token,
+            readFn: readProjectFileBase64,
+            sourceFingerprint,
+            onProgress: (_current, _total, message) => {
+              reportProgress("deploying", 6, 10, message);
+            },
+          });
+          await log("log", `   Source files pushed to main (${sourceFingerprint.size} files)`);
+        }
+      } catch (error) {
+        // Non-fatal: gh-pages deploy can still proceed
+        await log("warn", `   Source push to main failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Deploy site to gh-pages via REST API
     await reportProgress("deploying", 6, 10, "Uploading files...");
     await log("log", `   Deploying ${changed.length} changed, ${deleted.length} deleted files via REST API...`);
     commitSha = await deployViaAPI({
@@ -352,33 +379,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         reportProgress("deploying", Math.min(step, 8), 10, message);
       },
     });
-
-    // Push source files to main (first-time deploy only)
-    // When needsSetup was true, the repo was just created with auto_init=false
-    // (completely empty - no branches). Source push backs up the user's markdown files.
-    if (needsSetup && commitSha) {
-      try {
-        await reportProgress("deploying", 8, 10, "Backing up source files...");
-        const sourceFiles = await listSourceFiles();
-        const sourceFingerprint = await getLocalSourceFingerprint(sourceFiles, readProjectFileBase64);
-        if (sourceFingerprint && sourceFingerprint.size > 0) {
-          await pushSourceToMain({
-            owner: parsed.owner,
-            repo: parsed.repo,
-            token,
-            readFn: readProjectFileBase64,
-            sourceFingerprint,
-            onProgress: (_current, _total, message) => {
-              reportProgress("deploying", 8, 10, message);
-            },
-          });
-          await log("log", `   Source files pushed to main (${sourceFingerprint.size} files)`);
-        }
-      } catch (error) {
-        // Non-fatal: gh-pages deploy already succeeded
-        await log("warn", `   Source push to main failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
 
     // Generate pages URL for logging and response
     const pagesUrl = extractGitHubPagesUrl(remoteUrl);

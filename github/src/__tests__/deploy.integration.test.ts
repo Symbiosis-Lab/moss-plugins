@@ -1231,6 +1231,11 @@ describe("on_deploy integration", () => {
       expect(callArgs.token).toBe("test-token");
       expect(callArgs.readFn).toBeDefined();
       expect(callArgs.sourceFingerprint.size).toBe(2);
+
+      // Verify source push happens BEFORE gh-pages deploy
+      const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
+      const deployOrder = vi.mocked(deployViaAPI).mock.invocationCallOrder[0];
+      expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
 
     it("does NOT push source on subsequent deploy (needsSetup=false)", async () => {
@@ -1249,7 +1254,7 @@ describe("on_deploy integration", () => {
       expect(vi.mocked(getLocalSourceFingerprint)).not.toHaveBeenCalled();
     });
 
-    it("source push failure is non-fatal (gh-pages already succeeded)", async () => {
+    it("source push failure is non-fatal (gh-pages deploy still proceeds)", async () => {
       setupFirstTimeDeploy(ctx);
 
       // Source fingerprint returns files
@@ -1271,6 +1276,14 @@ describe("on_deploy integration", () => {
       expect(warnCalls.length).toBeGreaterThan(0);
       const warnMessages = warnCalls.map((call) => call[1]);
       expect(warnMessages.some((msg) => msg.includes("Source push to main failed"))).toBe(true);
+
+      // Verify deployViaAPI was still called even though source push failed
+      expect(vi.mocked(deployViaAPI)).toHaveBeenCalledTimes(1);
+
+      // Verify source push was attempted BEFORE deploy
+      const pushSourceOrder = vi.mocked(pushSourceToMain).mock.invocationCallOrder[0];
+      const deployOrder = vi.mocked(deployViaAPI).mock.invocationCallOrder[0];
+      expect(pushSourceOrder).toBeLessThan(deployOrder);
     });
 
     it("skips source push when no source files found", async () => {

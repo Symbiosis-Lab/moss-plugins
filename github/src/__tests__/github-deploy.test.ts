@@ -12,9 +12,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-/** Mock readFn that returns base64-encoded content for a given relative path */
-const mockReadFn = vi.fn<(path: string) => Promise<string>>();
-
 // Mock utils (log)
 vi.mock("../utils", () => ({
   log: vi.fn().mockResolvedValue(undefined),
@@ -25,7 +22,6 @@ import {
   getGhPagesState,
   getRemoteTree,
   diffFiles,
-  uploadBlob,
   uploadChangedFiles,
   createTree,
   createCommit,
@@ -39,6 +35,7 @@ import {
   type DiffResult,
   type DeployViaAPIOptions,
   type PushSourceOptions,
+  type UploadFn,
 } from "../github-deploy";
 
 // ============================================================================
@@ -77,7 +74,6 @@ function mockErrorResponse(status: number, message: string): Partial<Response> {
 describe("github-deploy", () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    mockReadFn.mockReset();
   });
 
   // ==========================================================================
@@ -590,231 +586,71 @@ describe("github-deploy", () => {
   });
 
   // ==========================================================================
-  // ==========================================================================
-  // uploadBlob
-  // ==========================================================================
-  describe("uploadBlob", () => {
-    it("uploads blob and returns SHA on success", async () => {
-      mockFetch.mockResolvedValueOnce(
-        mockResponse({ sha: "new-blob-sha-123" }, 201)
-      );
-
-      const sha = await uploadBlob(OWNER, REPO, "SGVsbG8=", "base64", TOKEN);
-
-      expect(sha).toBe("new-blob-sha-123");
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://api.github.com/repos/testuser/my-site/git/blobs",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            Authorization: "Bearer ghp_test-token-123",
-            "Content-Type": "application/json",
-          }),
-          body: JSON.stringify({ content: "SGVsbG8=", encoding: "base64" }),
-        })
-      );
-    });
-
-    it("throws on 401 Unauthorized", async () => {
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(401, "Bad credentials")
-      );
-
-      await expect(
-        uploadBlob(OWNER, REPO, "content", "base64", TOKEN)
-      ).rejects.toThrow("Bad credentials");
-    });
-
-    it("throws on 403 Forbidden", async () => {
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(403, "Repository access blocked")
-      );
-
-      await expect(
-        uploadBlob(OWNER, REPO, "content", "base64", TOKEN)
-      ).rejects.toThrow("Repository access blocked");
-    });
-
-    it("throws on 422 Unprocessable Entity", async () => {
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(422, "Validation Failed")
-      );
-
-      await expect(
-        uploadBlob(OWNER, REPO, "content", "base64", TOKEN)
-      ).rejects.toThrow("Validation Failed");
-    });
-  });
-
-  // ==========================================================================
   // uploadChangedFiles
   // ==========================================================================
   describe("uploadChangedFiles", () => {
-    it("uploads files and returns Map of path to blob SHA", async () => {
+    it("calls uploadFn for each changed file and returns Map of path to blob SHA", async () => {
       const files = [
         { path: "index.html", localHash: "localhash1" },
         { path: "style.css", localHash: "localhash2" },
       ];
 
-      // Mock readFn to return base64 content
-      mockReadFn
-        .mockResolvedValueOnce("PCFET0NUWVBFPg==")
-        .mockResolvedValueOnce("Ym9keXt9");
-
-      // Mock uploadBlob (fetch for POST /git/blobs)
-      mockFetch
-        .mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201))
-        .mockResolvedValueOnce(mockResponse({ sha: "blob-sha-2" }, 201));
+      const mockUploadFn: UploadFn = vi.fn()
+        .mockResolvedValueOnce("blob-sha-1")
+        .mockResolvedValueOnce("blob-sha-2");
 
       const onProgress = vi.fn();
-      const result = await uploadChangedFiles(
-        files, mockReadFn, OWNER, REPO, TOKEN, onProgress
-      );
+      const result = await uploadChangedFiles(files, mockUploadFn, onProgress);
 
-      expect(result.blobShas.size).toBe(2);
-      expect(result.blobShas.get("index.html")).toBe("blob-sha-1");
-      expect(result.blobShas.get("style.css")).toBe("blob-sha-2");
-      expect(result.skippedFiles).toEqual([]);
+      expect(result.size).toBe(2);
+      expect(result.get("index.html")).toBe("blob-sha-1");
+      expect(result.get("style.css")).toBe("blob-sha-2");
     });
 
-    it("calls onProgress callback for each file", async () => {
+    it("reports progress before and after each upload", async () => {
       const files = [
         { path: "a.html", localHash: "h1" },
         { path: "b.html", localHash: "h2" },
         { path: "c.html", localHash: "h3" },
       ];
 
-      // Mock readFn
-      mockReadFn.mockResolvedValue("Y29udGVudA==");
-
-      // Mock uploadBlob
-      mockFetch
-        .mockResolvedValue(mockResponse({ sha: "blob-sha" }, 201));
+      const mockUploadFn: UploadFn = vi.fn().mockResolvedValue("blob-sha");
 
       const onProgress = vi.fn();
-      await uploadChangedFiles(files, mockReadFn, OWNER, REPO, TOKEN, onProgress);
+      await uploadChangedFiles(files, mockUploadFn, onProgress);
 
-      expect(onProgress).toHaveBeenCalledTimes(3);
-      // Verify progress increments
-      expect(onProgress).toHaveBeenNthCalledWith(1, 1, 3, expect.any(String));
-      expect(onProgress).toHaveBeenNthCalledWith(2, 2, 3, expect.any(String));
-      expect(onProgress).toHaveBeenNthCalledWith(3, 3, 3, expect.any(String));
+      // Pre-upload + post-upload for each file = 6 calls
+      expect(onProgress).toHaveBeenCalledTimes(6);
+
+      // Verify that "Uploading" and "Uploaded" messages appear for each file
+      const messages = onProgress.mock.calls.map((c: unknown[]) => c[2] as string);
+      const uploadingMsgs = messages.filter((m) => m.startsWith("Uploading"));
+      const uploadedMsgs = messages.filter((m) => m.startsWith("Uploaded"));
+      expect(uploadingMsgs).toHaveLength(3);
+      expect(uploadedMsgs).toHaveLength(3);
     });
 
     it("handles empty file list", async () => {
+      const mockUploadFn: UploadFn = vi.fn();
       const onProgress = vi.fn();
-      const result = await uploadChangedFiles(
-        [], mockReadFn, OWNER, REPO, TOKEN, onProgress
-      );
+      const result = await uploadChangedFiles([], mockUploadFn, onProgress);
 
-      expect(result.blobShas.size).toBe(0);
-      expect(result.skippedFiles).toEqual([]);
+      expect(result.size).toBe(0);
       expect(onProgress).not.toHaveBeenCalled();
+      expect(mockUploadFn).not.toHaveBeenCalled();
     });
 
-    it("propagates upload errors", async () => {
+    it("propagates uploadFn errors", async () => {
       const files = [{ path: "fail.html", localHash: "h1" }];
 
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(401, "Bad credentials")
-      );
+      const mockUploadFn: UploadFn = vi.fn().mockRejectedValue(new Error("Upload failed"));
 
       const onProgress = vi.fn();
       await expect(
-        uploadChangedFiles(files, mockReadFn, OWNER, REPO, TOKEN, onProgress)
-      ).rejects.toThrow("Bad credentials");
+        uploadChangedFiles(files, mockUploadFn, onProgress)
+      ).rejects.toThrow("Upload failed");
     });
 
-    it("routes large files through postSiteFileFn and returns blob SHA", async () => {
-      const files = [
-        { path: "small.html", localHash: "h1" },
-        { path: "videos/big.mp4", localHash: "h2" },
-      ];
-      const largeFilePaths = new Set(["videos/big.mp4"]);
-
-      // Mock readFn for the small file
-      mockReadFn.mockResolvedValueOnce("c21hbGw=");
-
-      // Mock uploadBlob for small file
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "small-blob-sha" }, 201));
-
-      // Mock postSiteFileFn for the large file
-      const mockPostSiteFile = vi.fn().mockResolvedValueOnce({
-        status: 201,
-        ok: true,
-        body_base64: btoa(JSON.stringify({ sha: "large-blob-sha" })),
-        content_type: "application/json",
-      });
-
-      const onProgress = vi.fn();
-      const result = await uploadChangedFiles(
-        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
-        largeFilePaths, mockPostSiteFile,
-      );
-
-      expect(result.blobShas.size).toBe(2);
-      expect(result.blobShas.get("small.html")).toBe("small-blob-sha");
-      expect(result.blobShas.get("videos/big.mp4")).toBe("large-blob-sha");
-      expect(result.skippedFiles).toEqual([]);
-
-      // Verify postSiteFileFn was called with correct args
-      expect(mockPostSiteFile).toHaveBeenCalledTimes(1);
-      expect(mockPostSiteFile).toHaveBeenCalledWith(
-        "videos/big.mp4",
-        expect.stringContaining("/git/blobs"),
-        expect.objectContaining({ Authorization: expect.stringContaining("Bearer") }),
-        '{"content":"$BASE64","encoding":"base64"}',
-        120000,
-      );
-    });
-
-    it("skips large files that fail upload (non-fatal)", async () => {
-      const files = [
-        { path: "videos/huge.mp4", localHash: "h1" },
-      ];
-      const largeFilePaths = new Set(["videos/huge.mp4"]);
-
-      // Mock postSiteFileFn returning a failure response
-      const mockPostSiteFile = vi.fn().mockResolvedValueOnce({
-        status: 422,
-        ok: false,
-        body_base64: btoa(JSON.stringify({ message: "Blob is too large" })),
-        content_type: "application/json",
-      });
-
-      const onProgress = vi.fn();
-      const result = await uploadChangedFiles(
-        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
-        largeFilePaths, mockPostSiteFile,
-      );
-
-      expect(result.blobShas.size).toBe(0);
-      expect(result.skippedFiles).toEqual(["videos/huge.mp4"]);
-      expect(onProgress).toHaveBeenCalledTimes(1);
-    });
-
-    it("skips large files when postSiteFileFn throws (non-fatal)", async () => {
-      const files = [
-        { path: "videos/crash.mp4", localHash: "h1" },
-      ];
-      const largeFilePaths = new Set(["videos/crash.mp4"]);
-
-      // Mock postSiteFileFn that throws
-      const mockPostSiteFile = vi.fn().mockRejectedValueOnce(
-        new Error("Network timeout")
-      );
-
-      const onProgress = vi.fn();
-      const result = await uploadChangedFiles(
-        files, mockReadFn, OWNER, REPO, TOKEN, onProgress,
-        largeFilePaths, mockPostSiteFile,
-      );
-
-      expect(result.blobShas.size).toBe(0);
-      expect(result.skippedFiles).toEqual(["videos/crash.mp4"]);
-    });
   });
 
   // ==========================================================================
@@ -1043,6 +879,14 @@ describe("github-deploy", () => {
   // deployViaAPI (end-to-end orchestration)
   // ==========================================================================
   describe("deployViaAPI", () => {
+    /** Mock uploadFn that returns sequential blob SHAs */
+    let mockUploadFn: UploadFn;
+
+    beforeEach(() => {
+      let callCount = 0;
+      mockUploadFn = vi.fn(async () => `blob-sha-${++callCount}`);
+    });
+
     it("performs first deploy (no existing gh-pages)", async () => {
       const changed = [
         { path: "index.html", localHash: "local-hash-1" },
@@ -1051,16 +895,6 @@ describe("github-deploy", () => {
 
       const ghPagesState: GhPagesState = { exists: false };
       const onProgress = vi.fn();
-
-      // Mock readFn - one per file
-      mockReadFn
-        .mockResolvedValueOnce("aW5kZXg=")
-        .mockResolvedValueOnce("c3R5bGU=");
-
-      // Mock uploadBlob - one per file
-      mockFetch
-        .mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201))
-        .mockResolvedValueOnce(mockResponse({ sha: "blob-sha-2" }, 201));
 
       // Mock createTree
       mockFetch.mockResolvedValueOnce(
@@ -1081,28 +915,30 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockUploadFn,
         changed,
         deleted: [],
         ghPagesState,
         onProgress,
       });
 
-      expect(result.commitSha).toBe("new-commit-sha");
-      expect(result.skippedFiles).toEqual([]);
+      expect(result).toBe("new-commit-sha");
+
+      // uploadFn called for each file
+      expect(mockUploadFn).toHaveBeenCalledTimes(2);
 
       // Verify createTree was called without base_tree
-      const createTreeCall = mockFetch.mock.calls[2];
+      const createTreeCall = mockFetch.mock.calls[0];
       const createTreeBody = JSON.parse(createTreeCall[1].body);
       expect(createTreeBody.base_tree).toBeUndefined();
 
       // Verify createCommit was called with empty parents
-      const createCommitCall = mockFetch.mock.calls[3];
+      const createCommitCall = mockFetch.mock.calls[1];
       const createCommitBody = JSON.parse(createCommitCall[1].body);
       expect(createCommitBody.parents).toEqual([]);
 
       // Verify updateRef created a new ref (POST)
-      const updateRefCall = mockFetch.mock.calls[4];
+      const updateRefCall = mockFetch.mock.calls[2];
       expect(updateRefCall[1].method).toBe("POST");
     });
 
@@ -1117,14 +953,6 @@ describe("github-deploy", () => {
         treeSha: "existing-tree-sha",
       };
       const onProgress = vi.fn();
-
-      // Mock readFn for the one changed file
-      mockReadFn.mockResolvedValueOnce("aW5kZXg=");
-
-      // Mock uploadBlob for the one changed file
-      mockFetch.mockResolvedValueOnce(
-        mockResponse({ sha: "new-blob-sha" }, 201)
-      );
 
       // Mock createTree (with base_tree)
       mockFetch.mockResolvedValueOnce(
@@ -1145,28 +973,27 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockUploadFn,
         changed,
         deleted: [],
         ghPagesState,
         onProgress,
       });
 
-      expect(result.commitSha).toBe("updated-commit-sha");
-      expect(result.skippedFiles).toEqual([]);
+      expect(result).toBe("updated-commit-sha");
 
       // Verify createTree used base_tree
-      const createTreeCall = mockFetch.mock.calls[1]; // after 1 blob upload
+      const createTreeCall = mockFetch.mock.calls[0];
       const createTreeBody = JSON.parse(createTreeCall[1].body);
       expect(createTreeBody.base_tree).toBe("existing-tree-sha");
 
       // Verify createCommit used parent
-      const createCommitCall = mockFetch.mock.calls[2];
+      const createCommitCall = mockFetch.mock.calls[1];
       const createCommitBody = JSON.parse(createCommitCall[1].body);
       expect(createCommitBody.parents).toEqual(["existing-commit-sha"]);
 
       // Verify updateRef used PATCH
-      const updateRefCall = mockFetch.mock.calls[3];
+      const updateRefCall = mockFetch.mock.calls[2];
       expect(updateRefCall[1].method).toBe("PATCH");
     });
 
@@ -1181,25 +1008,17 @@ describe("github-deploy", () => {
       };
       const onProgress = vi.fn();
 
-      // readFn
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      // uploadBlob
-      mockFetch.mockResolvedValueOnce(
-        mockResponse({ sha: "blob1" }, 201)
-      );
-
-      // createTree
+      // Mock createTree
       mockFetch.mockResolvedValueOnce(
         mockResponse({ sha: "tree-with-deletes" }, 201)
       );
 
-      // createCommit
+      // Mock createCommit
       mockFetch.mockResolvedValueOnce(
         mockResponse({ sha: "commit-sha" }, 201)
       );
 
-      // updateRef
+      // Mock updateRef
       mockFetch.mockResolvedValueOnce(
         mockResponse({ ref: "refs/heads/gh-pages" })
       );
@@ -1208,7 +1027,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockUploadFn,
         changed,
         deleted,
         ghPagesState,
@@ -1216,7 +1035,7 @@ describe("github-deploy", () => {
       });
 
       // Verify createTree includes delete entries (sha: null)
-      const createTreeCall = mockFetch.mock.calls[1]; // after 1 blob upload
+      const createTreeCall = mockFetch.mock.calls[0];
       const createTreeBody = JSON.parse(createTreeCall[1].body);
       const deleteEntries = createTreeBody.tree.filter(
         (e: { sha: string | null }) => e.sha === null
@@ -1226,22 +1045,21 @@ describe("github-deploy", () => {
       expect(deleteEntries.map((e: { path: string }) => e.path)).toContain("old-style.css");
     });
 
-    it("returns empty commitSha when there are no changed or deleted files", async () => {
+    it("returns empty string when there are no changed or deleted files", async () => {
       const onProgress = vi.fn();
 
       const result = await deployViaAPI({
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockUploadFn,
         changed: [],
         deleted: [],
         ghPagesState: { exists: true, commitSha: "c", treeSha: "t" },
         onProgress,
       });
 
-      expect(result.commitSha).toBe("");
-      expect(result.skippedFiles).toEqual([]);
+      expect(result).toBe("");
       // No API calls should be made
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -1249,13 +1067,7 @@ describe("github-deploy", () => {
     it("propagates error during file upload", async () => {
       const changed = [{ path: "fail.html", localHash: "h1" }];
 
-      // readFn succeeds
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      // uploadBlob fails
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(401, "Bad credentials")
-      );
+      const failingUploadFn: UploadFn = vi.fn().mockRejectedValue(new Error("Bad credentials"));
 
       const onProgress = vi.fn();
 
@@ -1264,7 +1076,7 @@ describe("github-deploy", () => {
           owner: OWNER,
           repo: REPO,
           token: TOKEN,
-          readFn: mockReadFn,
+          uploadFn: failingUploadFn,
           changed,
           deleted: [],
           ghPagesState: { exists: false },
@@ -1272,12 +1084,49 @@ describe("github-deploy", () => {
         })
       ).rejects.toThrow("Bad credentials");
     });
+
+    it("reports progress for post-upload phases (tree, commit, ref)", async () => {
+      const changed = [{ path: "index.html", localHash: "h1" }];
+      const ghPagesState: GhPagesState = { exists: false };
+      const onProgress = vi.fn();
+
+      // Mock createTree, createCommit, updateRef
+      mockFetch
+        .mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201))
+        .mockResolvedValueOnce(mockResponse({ sha: "commit-sha" }, 201))
+        .mockResolvedValueOnce(mockResponse({ ref: "refs/heads/gh-pages" }, 201));
+
+      await deployViaAPI({
+        owner: OWNER,
+        repo: REPO,
+        token: TOKEN,
+        uploadFn: mockUploadFn,
+        changed,
+        deleted: [],
+        ghPagesState,
+        onProgress,
+      });
+
+      // Should report phase progress for tree, commit, and ref
+      const messages = onProgress.mock.calls.map((c: unknown[]) => c[2]);
+      expect(messages).toContain("Creating file tree...");
+      expect(messages).toContain("Creating commit...");
+      expect(messages).toContain("Updating branch...");
+    });
   });
 
   // ==========================================================================
   // pushSourceToMain
   // ==========================================================================
   describe("pushSourceToMain", () => {
+    /** Mock uploadFn for source files */
+    let mockSourceUploadFn: UploadFn;
+
+    beforeEach(() => {
+      let callCount = 0;
+      mockSourceUploadFn = vi.fn(async () => `blob-sha-${++callCount}`);
+    });
+
     it("updates existing main branch with source files", async () => {
       // Mock getBranchState returning exists: true (ref check + commit fetch)
       mockFetch.mockResolvedValueOnce(
@@ -1292,17 +1141,6 @@ describe("github-deploy", () => {
           tree: { sha: "existing-tree" },
         })
       );
-
-      // readFn for index.md and config.yaml
-      mockReadFn
-        .mockResolvedValueOnce("aW5kZXg=")
-        .mockResolvedValueOnce("Y29uZmln");
-
-      // uploadBlob for index.md
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
-
-      // uploadBlob for config.yaml
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
 
       // createTree (with base_tree)
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
@@ -1323,28 +1161,31 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
 
       expect(result).toBe("new-commit-sha");
 
-      // Total: 2 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 7
-      expect(mockFetch).toHaveBeenCalledTimes(7);
+      // uploadFn called for each file
+      expect(mockSourceUploadFn).toHaveBeenCalledTimes(2);
+
+      // Total fetch: 2 (getBranchState) + 1 (tree) + 1 (commit) + 1 (ref) = 5
+      expect(mockFetch).toHaveBeenCalledTimes(5);
 
       // createTree was called with base_tree = "existing-tree"
-      const createTreeCall = mockFetch.mock.calls[4]; // index 4: ref(0), commit(1), blob(2), blob(3), tree(4)
+      const createTreeCall = mockFetch.mock.calls[2]; // index 2: ref(0), commit(1), tree(2)
       const treeBody = JSON.parse(createTreeCall[1].body);
       expect(treeBody.base_tree).toBe("existing-tree");
 
       // createCommit was called with parents = ["existing-commit"]
-      const createCommitCall = mockFetch.mock.calls[5]; // index 5
+      const createCommitCall = mockFetch.mock.calls[3]; // index 3
       const commitBody = JSON.parse(createCommitCall[1].body);
       expect(commitBody.parents).toEqual(["existing-commit"]);
 
       // updateRef used PATCH (not POST)
-      const updateRefCall = mockFetch.mock.calls[6]; // index 6
+      const updateRefCall = mockFetch.mock.calls[4]; // index 4
       expect(updateRefCall[1].method).toBe("PATCH");
       expect(updateRefCall[0]).toContain("/git/refs/heads/main");
     });
@@ -1371,7 +1212,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1397,24 +1238,13 @@ describe("github-deploy", () => {
         })
       );
 
-      // 2. readFn for index.md and config.yaml
-      mockReadFn
-        .mockResolvedValueOnce("aW5kZXg=")
-        .mockResolvedValueOnce("Y29uZmln");
-
-      // 3. uploadBlob for index.md
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-index" }, 201));
-
-      // 4. uploadBlob for config.yaml
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-config" }, 201));
-
-      // 5. createTree (with base_tree)
+      // createTree (with base_tree)
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-tree-sha" }, 201));
 
-      // 6. createCommit (with parent)
+      // createCommit (with parent)
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "new-commit-sha" }, 201));
 
-      // 7. updateRef (PATCH existing main)
+      // updateRef (PATCH existing main)
       mockFetch.mockResolvedValueOnce(mockResponse({ ref: "refs/heads/main" }));
 
       const sourceFingerprint: Map<string, string> = new Map([
@@ -1427,15 +1257,15 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
 
       expect(result).toBe("new-commit-sha");
 
-      // Total fetch calls: 2 (getBranchState) + 2 (blobs) + 1 (tree) + 1 (commit) + 1 (ref) = 7
-      expect(mockFetch).toHaveBeenCalledTimes(7);
+      // Total fetch calls: 2 (getBranchState) + 1 (tree) + 1 (commit) + 1 (ref) = 5
+      expect(mockFetch).toHaveBeenCalledTimes(5);
     });
 
     it("skips when main does not exist", async () => {
@@ -1451,7 +1281,7 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
@@ -1477,12 +1307,6 @@ describe("github-deploy", () => {
         })
       );
 
-      // readFn for one file
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      // uploadBlob
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-sha-1" }, 201));
-
       // createTree
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
 
@@ -1501,13 +1325,13 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
 
-      // updateRef is the 6th fetch call (index 5): ref(0), commit(1), blob(2), tree(3), commit(4), ref(5)
-      const updateRefCall = mockFetch.mock.calls[5];
+      // updateRef is the 5th fetch call (index 4): ref(0), commit(1), tree(2), commit(3), ref(4)
+      const updateRefCall = mockFetch.mock.calls[4];
       expect(updateRefCall[1].method).toBe("PATCH");
       expect(updateRefCall[0]).toContain("/git/refs/heads/main");
     });
@@ -1526,17 +1350,6 @@ describe("github-deploy", () => {
           tree: { sha: "existing-tree" },
         })
       );
-
-      // readFn for file1 and file2
-      mockReadFn
-        .mockResolvedValueOnce("Y29udGVudDE=")
-        .mockResolvedValueOnce("Y29udGVudDI=");
-
-      // uploadBlob for file1
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-1" }, 201));
-
-      // uploadBlob for file2
-      mockFetch.mockResolvedValueOnce(mockResponse({ sha: "blob-2" }, 201));
 
       // createTree
       mockFetch.mockResolvedValueOnce(mockResponse({ sha: "tree-sha" }, 201));
@@ -1557,17 +1370,16 @@ describe("github-deploy", () => {
         owner: OWNER,
         repo: REPO,
         token: TOKEN,
-        readFn: mockReadFn,
+        uploadFn: mockSourceUploadFn,
         sourceFingerprint,
         onProgress,
       });
 
-      expect(onProgress).toHaveBeenCalledTimes(2);
-      expect(onProgress).toHaveBeenNthCalledWith(1, 1, 2, expect.any(String));
-      expect(onProgress).toHaveBeenNthCalledWith(2, 2, 2, expect.any(String));
+      // Pre-upload + post-upload for each file = 4 calls
+      expect(onProgress).toHaveBeenCalledTimes(4);
     });
 
-    it("propagates API errors", async () => {
+    it("propagates uploadFn errors", async () => {
       // getBranchState: main exists (ref + commit fetch)
       mockFetch.mockResolvedValueOnce(
         mockResponse({
@@ -1582,12 +1394,8 @@ describe("github-deploy", () => {
         })
       );
 
-      // readFn succeeds
-      mockReadFn.mockResolvedValueOnce("Y29udGVudA==");
-
-      // uploadBlob fails with 403
-      mockFetch.mockResolvedValueOnce(
-        mockErrorResponse(403, "Repository access blocked")
+      const failingUploadFn: UploadFn = vi.fn().mockRejectedValue(
+        new Error("Repository access blocked")
       );
 
       const sourceFingerprint: Map<string, string> = new Map([
@@ -1600,7 +1408,7 @@ describe("github-deploy", () => {
           owner: OWNER,
           repo: REPO,
           token: TOKEN,
-          readFn: mockReadFn,
+          uploadFn: failingUploadFn,
           sourceFingerprint,
           onProgress,
         })

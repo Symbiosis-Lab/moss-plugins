@@ -173,23 +173,20 @@ export function fingerprintsMatch(local: Fingerprint, remote: Fingerprint): bool
  * Get content fingerprint of local site directory.
  * Returns a Map of filename -> git blob hash.
  *
- * Uses gitBlobHash (Web Crypto SHA-1) to compute hashes identical to
- * `git hash-object`, eliminating the git CLI dependency.
- *
- * For large files (specified via `largeFilePaths`), uses `serverHashFn`
- * to hash in Rust without loading the file into JS memory.
+ * When `serverHashFn` is provided (Rust-side hashing), ALL files are hashed
+ * through Rust — no base64 crosses the IPC boundary for hashing.
+ * Falls back to JS Web Crypto hashing via `readFn` when `serverHashFn`
+ * is not available (tests, environments without Rust).
  *
  * @param siteFiles - List of relative file paths (from context.site_files)
- * @param readFn - Function to read a file's content as base64 (readSiteFile)
- * @param serverHashFn - Optional Rust-side hash function for large files
- * @param largeFilePaths - Optional set of file paths to hash server-side
+ * @param readFn - Function to read a file's content as base64 (fallback)
+ * @param serverHashFn - Optional Rust-side hash function for ALL files
  * @returns Fingerprint map, or null on error
  */
 export async function getLocalSiteFingerprint(
   siteFiles: string[],
   readFn: (path: string) => Promise<string>,
   serverHashFn?: (path: string) => Promise<string>,
-  largeFilePaths?: Set<string>,
 ): Promise<Fingerprint | null> {
   try {
     if (siteFiles.length === 0) {
@@ -199,12 +196,12 @@ export async function getLocalSiteFingerprint(
     const fingerprint: Fingerprint = new Map();
 
     for (const file of siteFiles) {
-      if (serverHashFn && largeFilePaths?.has(file)) {
-        // Large file: hash in Rust (no JS memory pressure)
+      if (serverHashFn) {
+        // Rust-side hashing: no base64 crosses IPC
         const hash = await serverHashFn(file);
         fingerprint.set(file, hash);
       } else {
-        // Normal file: hash in JS via Web Crypto
+        // Fallback: JS Web Crypto hashing via base64
         const base64Content = await readFn(file);
         const hash = await gitBlobHash(base64Content);
         fingerprint.set(file, hash);

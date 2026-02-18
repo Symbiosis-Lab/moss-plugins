@@ -237,7 +237,7 @@ function setupDeployMocks(
   }
 
   // Deploy result (REST API upload)
-  vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: hasChanges ? commitSha : "", skippedFiles: [] });
+  vi.mocked(deployViaAPI).mockResolvedValue(hasChanges ? commitSha : "");
 
   // Pages status check (polling)
   vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -1213,7 +1213,7 @@ describe("on_deploy integration", () => {
       });
 
       // Deploy succeeds
-      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "deploy-commit-sha", skippedFiles: [] });
+      vi.mocked(deployViaAPI).mockResolvedValue("deploy-commit-sha");
 
       // Pages status
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -1243,7 +1243,7 @@ describe("on_deploy integration", () => {
       expect(callArgs.owner).toBe("test-user");
       expect(callArgs.repo).toBe("test-repo");
       expect(callArgs.token).toBe("test-token");
-      expect(callArgs.readFn).toBeDefined();
+      expect(callArgs.uploadFn).toBeDefined();
       expect(callArgs.sourceFingerprint.size).toBe(2);
 
       // Verify source push happens BEFORE gh-pages deploy
@@ -1480,7 +1480,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "new-commit-sha", skippedFiles: [] });
+      vi.mocked(deployViaAPI).mockResolvedValue("new-commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());
@@ -1517,7 +1517,7 @@ describe("on_deploy integration", () => {
         unchanged: [],
         deleted: [],
       });
-      vi.mocked(deployViaAPI).mockResolvedValue({ commitSha: "commit-sha", skippedFiles: [] });
+      vi.mocked(deployViaAPI).mockResolvedValue("commit-sha");
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
 
       const result = await on_deploy(createMockContext());

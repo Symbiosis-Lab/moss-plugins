@@ -46,6 +46,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   const config = ctx.config || {};
   const providerName = (config.provider as string) || "waline";
   const serverUrl = (config.server_url as string) || "";
+  const siteName = (config.site_name as string) || "";
   const buildScript = getSubmitScriptBuilder(providerName);
 
   if (buildScript && serverUrl) {
@@ -105,7 +106,9 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         urlPath,
         comments,
         serverUrl,
-        buildScript
+        buildScript,
+        providerName,
+        siteName
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -132,7 +135,9 @@ async function processHtmlFile(
   urlPath: string,
   comments: NormalizedComment[],
   serverUrl: string,
-  buildScript: ((serverUrl: string, pagePath: string) => string) | null
+  buildScript: ((serverUrl: string, pagePath: string, siteName?: string) => string) | null,
+  providerName: string = "waline",
+  siteName: string = ""
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
@@ -154,7 +159,7 @@ async function processHtmlFile(
 
     // Build the submit script if we have a server
     const submitScript = (buildScript && serverUrl)
-      ? buildScript(serverUrl, "/" + urlPath)
+      ? buildScript(serverUrl, "/" + urlPath, siteName)
       : "";
 
     // Render the comment section
@@ -162,7 +167,8 @@ async function processHtmlFile(
       comments,
       urlPath,
       serverUrl,
-      submitScript
+      submitScript,
+      providerName
     );
 
     // renderCommentSection returns "" if nothing to render

@@ -137,11 +137,27 @@ function renderCommentList(comments: NormalizedComment[]): string {
 // ============================================================================
 
 /**
- * Render the minimal comment form: just a textarea and submit button.
- * No label (placeholder is enough), no name/email/website fields.
+ * Render the comment form.
+ *
+ * For "waline" (default): minimal form with just a textarea and submit button.
+ * For "artalk": includes name and email input fields alongside the textarea.
+ *
  * Textarea has rows="2" and auto-grows via inline JS.
  */
-function renderCommentForm(pagePath: string): string {
+function renderCommentForm(pagePath: string, provider: string = "waline"): string {
+  if (provider === "artalk") {
+    return `<form class="comment-form" id="moss-comment-form">
+  <div class="comment-form-fields">
+    <input type="text" name="name" placeholder="Name" required>
+    <input type="email" name="email" placeholder="Email" required>
+  </div>
+  <textarea id="moss-comment-text" name="content" required rows="2" placeholder="Write a comment..."></textarea>
+  <button type="submit" class="comment-form-submit">Submit</button>
+  <div class="comment-form-status" id="moss-comment-status"></div>
+</form>`;
+  }
+
+  // Default: Waline form
   return `<form class="comment-form" id="moss-comment-form">
   <input type="hidden" name="url" value="/${escapeHtml(pagePath)}">
   <textarea id="moss-comment-text" name="comment" required rows="2" placeholder="Write a comment..."></textarea>
@@ -163,7 +179,8 @@ export function renderCommentSection(
   comments: NormalizedComment[],
   pagePath: string,
   serverUrl: string,
-  submitScript: string
+  submitScript: string,
+  provider: string = "waline"
 ): string {
   const hasComments = comments.length > 0;
   const hasForm = !!serverUrl;
@@ -174,7 +191,7 @@ export function renderCommentSection(
     ? `<ol class="comment-list">${renderCommentList(comments)}</ol>`
     : "";
 
-  const formHtml = hasForm ? renderCommentForm(pagePath) : "";
+  const formHtml = hasForm ? renderCommentForm(pagePath, provider) : "";
   const scriptHtml = hasForm && submitScript
     ? `<script>${submitScript}</script>`
     : "";

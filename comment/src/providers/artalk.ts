@@ -1,37 +1,29 @@
 /**
- * Client-side JavaScript generator
+ * Artalk comment provider adapter
  *
- * Generates inline vanilla JS for:
- * 1. Comment form submission (POST to Waline API)
- * 2. Textarea auto-grow (expands as user types)
+ * Builds inline JS for comment submission to Artalk servers.
+ * Artalk API v2: POST /api/v2/comments
  */
 
-/**
- * Properly escapes a string for use in a single-quoted JavaScript string literal.
- * Must escape backslashes first, then quotes, then newlines.
- *
- * @param str - The string to escape
- * @returns Escaped string safe for single-quoted JS string literals
- */
-export function escapeForSingleQuotedJs(str: string): string {
-  return str
-    .replace(/\\/g, '\\\\')   // Escape backslashes FIRST
-    .replace(/'/g, "\\'")      // Then escape single quotes
-    .replace(/\r/g, '\\r')     // Escape carriage returns
-    .replace(/\n/g, '\\n')     // Escape newlines
-    .replace(/</g, '\\u003c'); // Prevent </script> injection in inline script blocks
-}
+import { escapeForSingleQuotedJs } from "../client-js";
 
 /**
- * Generate inline JS for the comment form.
+ * Build inline JS that POSTs a new comment to the Artalk v2 API
+ * and handles textarea auto-grow.
  *
- * @param serverUrl - Waline server URL (e.g., "https://comments.example.com")
+ * @param serverUrl - Artalk server URL (e.g., "https://artalk.example.com")
  * @param pagePath - Page path for the comment (e.g., "/posts/foo/")
+ * @param siteName - Artalk site name (e.g., "MySite")
  * @returns JavaScript code string
  */
-export function buildClientScript(serverUrl: string, pagePath: string): string {
+export function buildArtalkClientScript(
+  serverUrl: string,
+  pagePath: string,
+  siteName: string = ""
+): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
   const safePagePath = escapeForSingleQuotedJs(pagePath);
+  const safeSiteName = escapeForSingleQuotedJs(siteName);
 
   return `(function() {
   var form = document.getElementById('moss-comment-form');
@@ -58,31 +50,33 @@ export function buildClientScript(serverUrl: string, pagePath: string): string {
     if (statusEl) { statusEl.textContent = ''; statusEl.className = 'comment-form-status'; }
 
     var body = {
-      comment: form.elements['comment'].value,
-      nick: 'Anonymous',
-      mail: '',
-      link: '',
-      url: '${safePagePath}',
+      content: form.elements['content'].value,
+      name: form.elements['name'].value,
+      email: form.elements['email'].value,
+      link: form.elements['link'].value || '',
+      page_key: '${safePagePath}',
+      site_name: '${safeSiteName}',
       ua: navigator.userAgent
     };
 
-    fetch('${safeServerUrl}/api/comment', {
+    fetch('${safeServerUrl}/api/v2/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     })
-    .then(function(res) { return res.json(); })
+    .then(function(res) {
+      if (!res.ok) {
+        return res.json().catch(function() {
+          throw new Error('Server error (' + res.status + ')');
+        }).then(function(data) {
+          throw new Error(data.msg || 'Server error (' + res.status + ')');
+        });
+      }
+      return res.json();
+    })
     .then(function(data) {
       btn.disabled = false;
       btn.textContent = 'Submit';
-
-      if (data.errno !== 0 && data.errmsg) {
-        if (statusEl) {
-          statusEl.textContent = 'Error: ' + data.errmsg;
-          statusEl.className = 'comment-form-status comment-form-status--error';
-        }
-        return;
-      }
 
       if (statusEl) {
         statusEl.textContent = 'Comment submitted!';
@@ -98,21 +92,22 @@ export function buildClientScript(serverUrl: string, pagePath: string): string {
       var li = document.createElement('li');
       li.className = 'comment-item';
       var now = new Date().toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'});
+      var authorName = body.name || 'Anonymous';
       li.innerHTML = '<div class="comment-header">'
-        + '<span class="comment-author">Anonymous</span>'
+        + '<span class="comment-author">' + authorName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</span>'
         + '<time class="comment-date">' + now + '</time>'
         + '</div>'
-        + '<div class="comment-body"><p>' + body.comment.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
+        + '<div class="comment-body"><p>' + body.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
       commentList.appendChild(li);
 
-      form.elements['comment'].value = '';
+      form.elements['content'].value = '';
       if (textarea) { textarea.style.height = 'auto'; }
     })
-    .catch(function() {
+    .catch(function(err) {
       btn.disabled = false;
       btn.textContent = 'Submit';
       if (statusEl) {
-        statusEl.textContent = 'Network error. Please try again.';
+        statusEl.textContent = err.message || 'Network error. Please try again.';
         statusEl.className = 'comment-form-status comment-form-status--error';
       }
     });

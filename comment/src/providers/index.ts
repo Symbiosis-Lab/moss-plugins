@@ -1,16 +1,18 @@
 /**
  * Provider registry
  *
- * Currently only supports Waline. Returns the submit script builder
- * for the named provider, or null if not found.
+ * Supports Waline and Artalk comment providers. Returns the submit script
+ * builder for the named provider, or null if not found.
  */
 
 import { buildWalineSubmitScript } from "./waline";
+import { buildArtalkClientScript } from "./artalk";
 
-type SubmitScriptBuilder = (serverUrl: string, pagePath: string) => string;
+export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, siteName?: string) => string;
 
 const providers: Record<string, SubmitScriptBuilder> = {
   waline: buildWalineSubmitScript,
+  artalk: buildArtalkClientScript,
 };
 
 /**

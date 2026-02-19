@@ -9,10 +9,12 @@
   "icon": "icon.svg",
   "config": {
     "provider": "waline",
-    "server_url": ""
+    "server_url": "",
+    "site_name": ""
   },
   "config_schema": {
     "provider": "string",
-    "server_url": "string"
+    "server_url": "string",
+    "site_name": "string"
   }
 }

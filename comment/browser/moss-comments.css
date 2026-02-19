@@ -97,6 +97,62 @@ a.comment-author:hover {
   margin-top: var(--moss-space-lg, 2rem);
 }
 
+/* Form Fields Row (name + email for Artalk) */
+.comment-form-fields {
+  display: flex;
+  gap: var(--moss-space-sm, 1rem);
+  margin-top: var(--moss-space-sm, 1rem);
+}
+
+.comment-form-fields input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--moss-border-medium, #d1cdc4);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--moss-font-base, 1.125rem);
+  color: var(--moss-text-primary, #2c2825);
+  background: var(--moss-background, #faf8f5);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.comment-form-fields input:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+  border-color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-form-fields input::placeholder {
+  color: var(--moss-text-muted, #8a8580);
+}
+
+/* Full-width website field (standalone, below name+email row) */
+.comment-form-website {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  margin-top: var(--moss-space-sm, 1rem);
+  border: 1px solid var(--moss-border-medium, #d1cdc4);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--moss-font-base, 1.125rem);
+  color: var(--moss-text-primary, #2c2825);
+  background: var(--moss-background, #faf8f5);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.comment-form-website:focus {
+  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline-offset: 2px;
+  border-color: var(--moss-accent, #2d5a2d);
+}
+
+.comment-form-website::placeholder {
+  color: var(--moss-text-muted, #8a8580);
+}
+
 .comment-form textarea {
   display: block;
   width: 100%;
@@ -175,5 +231,9 @@ a.comment-author:hover {
 @media (max-width: 48rem) {
   .comment-replies {
     margin-left: var(--moss-space-md, 1.5rem);
+  }
+
+  .comment-form-fields {
+    flex-direction: column;
   }
 }

@@ -53,6 +53,7 @@ export function buildArtalkClientScript(
       content: form.elements['content'].value,
       name: form.elements['name'].value,
       email: form.elements['email'].value,
+      link: form.elements['link'].value || '',
       page_key: '${safePagePath}',
       site_name: '${safeSiteName}',
       ua: navigator.userAgent

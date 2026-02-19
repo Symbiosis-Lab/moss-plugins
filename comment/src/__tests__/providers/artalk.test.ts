@@ -51,6 +51,16 @@ describe("buildArtalkClientScript", () => {
     expect(script).toContain("site_name");
   });
 
+  it("reads the optional 'link' field from the form", () => {
+    const script = buildArtalkClientScript(serverUrl, pagePath, siteName);
+    expect(script).toContain("form.elements['link']");
+  });
+
+  it("includes 'link' in the request body", () => {
+    const script = buildArtalkClientScript(serverUrl, pagePath, siteName);
+    expect(script).toMatch(/body\s*=\s*\{[\s\S]*link:/);
+  });
+
   it("properly escapes a server URL containing single quotes", () => {
     const dangerousUrl = "https://example.com/it's-a-trap";
     const script = buildArtalkClientScript(dangerousUrl, pagePath, siteName);

@@ -150,6 +150,7 @@ function renderCommentForm(pagePath: string, provider: string = "waline"): strin
   <div class="comment-form-fields">
     <input type="text" name="name" placeholder="Name" required>
     <input type="email" name="email" placeholder="Email" required>
+    <input type="url" name="link" placeholder="Website">
   </div>
   <textarea id="moss-comment-text" name="content" required rows="2" placeholder="Write a comment..."></textarea>
   <button type="submit" class="comment-form-submit">Submit</button>

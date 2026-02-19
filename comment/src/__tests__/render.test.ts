@@ -26,6 +26,13 @@ describe("renderCommentForm with provider=artalk", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
     expect(html).toContain('name="content"');
   });
+
+  it('includes an optional name="link" input field for website', () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain('name="link"');
+    // Should NOT be required — website is optional
+    expect(html).not.toMatch(/name="link"[^>]*required/);
+  });
 });
 
 describe("renderCommentForm with provider=waline (backward compat)", () => {

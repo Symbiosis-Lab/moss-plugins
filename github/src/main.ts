@@ -405,8 +405,16 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
   await log("log", `GitHub Deployer: Configuring custom domain "${domain}"...`);
 
   try {
+    // Resolve git binary (may use portable download if system git unavailable)
+    let gitPath: string;
+    try {
+      gitPath = await getTauriCore().invoke<string>("resolve_git_path");
+    } catch {
+      gitPath = "git"; // Fallback — configure_domain is non-fatal
+    }
+
     // Get deploy target from git origin
-    const repoConfig = await getOriginOwnerRepo();
+    const repoConfig = await getOriginOwnerRepo(gitPath);
     if (!repoConfig) {
       return {
         success: false,
@@ -420,7 +428,7 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     let token = await getToken();
     if (!token) {
       // Try git credential helper as fallback
-      token = await getTokenFromGit();
+      token = await getTokenFromGit(gitPath);
       if (token) {
         await storeToken(token);
       }

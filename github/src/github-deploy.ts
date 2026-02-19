@@ -115,9 +115,9 @@ export async function verifyRepoExists(
  * Read the deploy target from the project's .git origin remote.
  * Returns null if no .git, no origin, or origin is not a GitHub URL.
  */
-export async function getOriginOwnerRepo(): Promise<{ owner: string; repo: string } | null> {
+export async function getOriginOwnerRepo(gitPath: string = "git"): Promise<{ owner: string; repo: string } | null> {
   const result = await executeBinary({
-    binaryPath: "git",
+    binaryPath: gitPath,
     args: ["remote", "get-url", "origin"],
     workingDir: ".",
     timeoutMs: 5_000,
@@ -158,6 +158,7 @@ export interface DeployViaGitPushOptions {
   repo: string;
   token: string;
   onProgress: OnProgress;
+  gitPath: string;
 }
 
 /**
@@ -230,7 +231,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
     onStderr?: (line: string) => void,
   ): Promise<ExecuteResult> {
     return executeBinary({
-      binaryPath: "git",
+      binaryPath: options.gitPath,
       args,
       workingDir: ".",
       timeoutMs: 600_000,  // 10 min — first push of large repos can be slow

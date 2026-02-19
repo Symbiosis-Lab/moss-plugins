@@ -69,7 +69,7 @@ export function parseCredentialOutput(output: string): {
  *
  * @returns The token if found in git credentials, null otherwise
  */
-export async function getTokenFromGit(): Promise<string | null> {
+export async function getTokenFromGit(gitPath: string = "git"): Promise<string | null> {
   try {
     await log("log", "   Checking git credential helper for GitHub token...");
 
@@ -78,7 +78,7 @@ export async function getTokenFromGit(): Promise<string | null> {
 
     // Execute git credential fill with stdin
     const result = await executeBinary({
-      binaryPath: "git",
+      binaryPath: gitPath,
       args: ["credential", "fill"],
       stdin: input,
       timeoutMs: 5000,

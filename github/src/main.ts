@@ -10,6 +10,7 @@
  */
 
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
+import { getTauriCore } from "@symbiosis-lab/moss-api";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
@@ -138,6 +139,18 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
   await log("log", "GitHub Deployer: Starting deployment...");
 
+  // Pre-flight: resolve git binary (downloads if needed)
+  await reportProgress("configuring", 1, 10, "Checking git...");
+  let gitPath: string;
+  try {
+    gitPath = await getTauriCore().invoke<string>("resolve_git_path");
+  } catch (e) {
+    const msg = `Git is required for deployment. ${e instanceof Error ? e.message : String(e)}\n\nInstall git by running: xcode-select --install`;
+    await reportError(msg, "validation", true);
+    return { success: false, message: msg };
+  }
+  await log("log", `   Using git: ${gitPath}`);
+
   try {
     // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
     // The plugin trusts moss to provide site_files - no need to call listFiles()
@@ -153,7 +166,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     let repoName: string;
     let wasFirstSetup = false;
 
-    const existing = await getOriginOwnerRepo();
+    const existing = await getOriginOwnerRepo(gitPath);
 
     if (existing) {
       // .git origin already points to a GitHub repo — use it
@@ -187,7 +200,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await reportProgress("configuring", 3, 10, "Checking authentication...");
     let token = await getToken();
     if (!token) {
-      const gitToken = await getTokenFromGit();
+      const gitToken = await getTokenFromGit(gitPath);
       if (gitToken) {
         const validation = await validateToken(gitToken);
         if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
@@ -228,6 +241,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         owner,
         repo: repoName,
         token,
+        gitPath,
         onProgress: (percent, message) => {
           currentPhase = message;
           // Map 0-100% to steps 5-9 of overall 10-step progress

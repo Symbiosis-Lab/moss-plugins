@@ -118,8 +118,9 @@ export async function on_build(context: OnBuildContext & { config: PluginConfig;
       const hugoResolution = await resolveBinary(HUGO_BINARY_CONFIG, {
         configuredPath: context.config.hugo_path,
         autoDownload: true,
-        onProgress: (phase, message) => {
-          reportProgress(phase, 0, 4, message);
+        onProgress: (binary, bytesDownloaded, totalBytes) => {
+          const total = totalBytes ? `/${totalBytes}` : "";
+          reportProgress("setup", 0, 4, `Downloading ${binary}: ${bytesDownloaded}${total} bytes`);
         },
       });
 

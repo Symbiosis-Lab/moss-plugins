@@ -13,10 +13,12 @@ import type { BinaryConfig } from "@symbiosis-lab/moss-api";
  */
 export const ELEVENTY_BINARY_CONFIG: BinaryConfig = {
   name: "npx",
-  versionCommand: "{name} --version",
-  versionPattern: /(\d+\.\d+\.\d+)/,
+  binary_name: "npx",
+  version_check: {
+    args: ["--version"],
+    pattern: "(\\d+\\.\\d+\\.\\d+)",
+  },
   sources: {},
-  binaryName: "npx",
 };
 
 /**

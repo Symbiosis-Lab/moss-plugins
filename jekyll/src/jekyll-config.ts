@@ -27,8 +27,10 @@ import type { BinaryConfig } from "@symbiosis-lab/moss-api";
  */
 export const JEKYLL_BINARY_CONFIG: BinaryConfig = {
   name: "jekyll",
-  versionCommand: "{name} --version",
-  versionPattern: /jekyll\s+(\d+\.\d+\.\d+)/i,
+  binary_name: "jekyll",
+  version_check: {
+    args: ["--version"],
+    pattern: "jekyll\\s+(\\d+\\.\\d+\\.\\d+)",
+  },
   sources: {},
-  binaryName: "jekyll",
 };

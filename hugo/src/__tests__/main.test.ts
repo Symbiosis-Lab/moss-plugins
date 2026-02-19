@@ -25,7 +25,7 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
       return {
         path,
         version: "0.139.0",
-        source: "path" as const,
+        source: "system_path" as const,
       };
     }),
     // Include BinaryResolutionError class for error handling

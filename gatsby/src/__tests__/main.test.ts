@@ -19,7 +19,7 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
     resolveBinary: vi.fn().mockImplementation(async (_config, _options) => ({
       path: "npx",
       version: "10.0.0",
-      source: "path" as const,
+      source: "system_path" as const,
     })),
     BinaryResolutionError: class BinaryResolutionError extends Error {
       phase: string;

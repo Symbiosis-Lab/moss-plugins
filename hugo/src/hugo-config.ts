@@ -33,7 +33,7 @@ const MACOS_PINNED_VERSION = "0.152.2";
  * ```typescript
  * const hugo = await resolveBinary(HUGO_BINARY_CONFIG, {
  *   configuredPath: context.config.hugo_path,
- *   onProgress: (phase, msg) => reportProgress(phase, 0, 1, msg),
+ *   onProgress: (binary, bytes, total) => console.log(`${binary}: ${bytes}/${total}`),
  * });
  * ```
  */
@@ -41,22 +41,20 @@ export const HUGO_BINARY_CONFIG: BinaryConfig = {
   name: "hugo",
 
   /**
-   * Minimum required Hugo version
-   * Note: Not enforced during resolution, only for documentation
+   * Binary name inside the archive
+   * - Unix: "hugo"
+   * - Windows: "hugo.exe" (auto-appended by resolver)
    */
-  minVersion: "0.100.0",
+  binary_name: "hugo",
 
   /**
-   * Command to check Hugo version
-   * {name} is replaced with the binary path
-   */
-  versionCommand: "{name} version",
-
-  /**
-   * Regex to extract version from Hugo's version output
+   * How to verify Hugo works and extract its version.
    * Example output: "hugo v0.139.0+extended darwin/arm64 BuildDate=unknown"
    */
-  versionPattern: /hugo v(\d+\.\d+\.\d+)/i,
+  version_check: {
+    args: ["version"],
+    pattern: "hugo v(\\d+\\.\\d+\\.\\d+)",
+  },
 
   /**
    * Download sources per platform
@@ -72,31 +70,28 @@ export const HUGO_BINARY_CONFIG: BinaryConfig = {
   sources: {
     // macOS uses pinned version with direct URL (Hugo v0.153+ only has .pkg)
     "darwin-arm64": {
-      directUrl: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`,
+      direct_url: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`,
+      archive_format: "tar_gz",
     },
     "darwin-x64": {
-      directUrl: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`,
+      direct_url: `https://github.com/gohugoio/hugo/releases/download/v${MACOS_PINNED_VERSION}/hugo_extended_${MACOS_PINNED_VERSION}_darwin-universal.tar.gz`,
+      archive_format: "tar_gz",
     },
     "linux-x64": {
       github: {
         owner: "gohugoio",
         repo: "hugo",
-        assetPattern: "hugo_extended_{version}_linux-amd64.tar.gz",
+        asset_pattern: "hugo_extended_{version}_linux-amd64.tar.gz",
       },
+      archive_format: "tar_gz",
     },
     "windows-x64": {
       github: {
         owner: "gohugoio",
         repo: "hugo",
-        assetPattern: "hugo_extended_{version}_windows-amd64.zip",
+        asset_pattern: "hugo_extended_{version}_windows-amd64.zip",
       },
+      archive_format: "zip",
     },
   },
-
-  /**
-   * Binary name inside the archive
-   * - Unix: "hugo"
-   * - Windows: "hugo.exe" (auto-appended by resolveBinary)
-   */
-  binaryName: "hugo",
 };

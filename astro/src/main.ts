@@ -41,8 +41,9 @@ export async function on_build(context: OnBuildContext & { config: PluginConfig;
     try {
       const npxResolution = await resolveBinary(ASTRO_BINARY_CONFIG, {
         autoDownload: false,
-        onProgress: (phase, message) => {
-          reportProgress(phase, 0, 4, message);
+        onProgress: (binary, bytesDownloaded, totalBytes) => {
+          const total = totalBytes ? `/${totalBytes}` : "";
+          reportProgress("setup", 0, 4, `Downloading ${binary}: ${bytesDownloaded}${total} bytes`);
         },
       });
 

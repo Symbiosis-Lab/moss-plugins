@@ -58,8 +58,9 @@ export async function on_build(context: OnBuildContext): Promise<HookResult> {
     try {
       const npxResolution = await resolveBinary(ELEVENTY_BINARY_CONFIG, {
         autoDownload: false,
-        onProgress: (phase, message) => {
-          reportProgress(phase, 0, 4, message);
+        onProgress: (binary, bytesDownloaded, totalBytes) => {
+          const total = totalBytes ? `/${totalBytes}` : "";
+          reportProgress("setup", 0, 4, `Downloading ${binary}: ${bytesDownloaded}${total} bytes`);
         },
       });
 

@@ -110,8 +110,9 @@ export async function on_build(context: OnBuildContext & { config: PluginConfig;
       const jekyllResolution = await resolveBinary(JEKYLL_BINARY_CONFIG, {
         configuredPath: context.config.jekyll_path,
         autoDownload: false, // Jekyll cannot be auto-downloaded (Ruby gem)
-        onProgress: (phase, message) => {
-          reportProgress(phase, 0, 4, message);
+        onProgress: (binary, bytesDownloaded, totalBytes) => {
+          const total = totalBytes ? `/${totalBytes}` : "";
+          reportProgress("setup", 0, 4, `Downloading ${binary}: ${bytesDownloaded}${total} bytes`);
         },
       });
 

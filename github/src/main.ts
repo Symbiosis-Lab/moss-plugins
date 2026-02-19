@@ -409,7 +409,8 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     let gitPath: string;
     try {
       gitPath = await getTauriCore().invoke<string>("resolve_git_path");
-    } catch {
+    } catch (e) {
+      await log("log", `   Git resolution failed, falling back to system git: ${e instanceof Error ? e.message : String(e)}`);
       gitPath = "git"; // Fallback — configure_domain is non-fatal
     }
 

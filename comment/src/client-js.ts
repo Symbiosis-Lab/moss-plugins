@@ -18,7 +18,8 @@ export function escapeForSingleQuotedJs(str: string): string {
     .replace(/\\/g, '\\\\')   // Escape backslashes FIRST
     .replace(/'/g, "\\'")      // Then escape single quotes
     .replace(/\r/g, '\\r')     // Escape carriage returns
-    .replace(/\n/g, '\\n');    // Escape newlines
+    .replace(/\n/g, '\\n')     // Escape newlines
+    .replace(/</g, '\\u003c'); // Prevent </script> injection in inline script blocks
 }
 
 /**

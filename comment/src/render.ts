@@ -159,7 +159,6 @@ function renderCommentForm(pagePath: string, provider: string = "waline"): strin
 
   // Default: Waline form
   return `<form class="comment-form" id="moss-comment-form">
-  <input type="hidden" name="url" value="/${escapeHtml(pagePath)}">
   <textarea id="moss-comment-text" name="comment" required rows="2" placeholder="Write a comment..."></textarea>
   <button type="submit" class="comment-form-submit">Submit</button>
   <div class="comment-form-status" id="moss-comment-status"></div>

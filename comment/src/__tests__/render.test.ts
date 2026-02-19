@@ -50,4 +50,9 @@ describe("renderCommentForm with provider=waline (backward compat)", () => {
     expect(html).toContain('name="comment"');
     expect(html).not.toContain('name="name"');
   });
+
+  it("does NOT include a hidden url input (dead markup)", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "waline");
+    expect(html).not.toContain('type="hidden"');
+  });
 });

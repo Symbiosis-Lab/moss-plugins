@@ -81,4 +81,13 @@ describe("buildArtalkClientScript", () => {
     expect(script).toContain("path\\\\test");
     expect(script).not.toContain("path\\test'");
   });
+
+  it("escapes < to prevent </script> injection", () => {
+    const maliciousUrl = "https://evil.com/</script><script>alert(1)</script>";
+    const script = buildArtalkClientScript(maliciousUrl, pagePath, siteName);
+    // The literal </script> must NOT appear — it would close the inline script block
+    expect(script).not.toContain("</script>");
+    // The < should be escaped to \u003c
+    expect(script).toContain("\\u003c/script>");
+  });
 });

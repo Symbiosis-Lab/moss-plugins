@@ -147,12 +147,12 @@ function renderCommentList(comments: NormalizedComment[]): string {
 function renderCommentForm(pagePath: string, provider: string = "waline"): string {
   if (provider === "artalk") {
     return `<form class="comment-form" id="moss-comment-form">
+  <textarea id="moss-comment-text" name="content" required rows="2" placeholder="Write a comment..."></textarea>
   <div class="comment-form-fields">
     <input type="text" name="name" placeholder="Name" required>
     <input type="email" name="email" placeholder="Email" required>
-    <input type="url" name="link" placeholder="Website">
   </div>
-  <textarea id="moss-comment-text" name="content" required rows="2" placeholder="Write a comment..."></textarea>
+  <input type="url" name="link" class="comment-form-website" placeholder="Website (optional)">
   <button type="submit" class="comment-form-submit">Submit</button>
   <div class="comment-form-status" id="moss-comment-status"></div>
 </form>`;

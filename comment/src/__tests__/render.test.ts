@@ -33,6 +33,20 @@ describe("renderCommentForm with provider=artalk", () => {
     // Should NOT be required — website is optional
     expect(html).not.toMatch(/name="link"[^>]*required/);
   });
+
+  it("places textarea before identity fields (textarea-first layout)", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    const textareaPos = html.indexOf('name="content"');
+    const namePos = html.indexOf('name="name"');
+    const emailPos = html.indexOf('name="email"');
+    expect(textareaPos).toBeLessThan(namePos);
+    expect(textareaPos).toBeLessThan(emailPos);
+  });
+
+  it('marks the website placeholder as "(optional)"', () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain("(optional)");
+  });
 });
 
 describe("renderCommentForm with provider=waline (backward compat)", () => {

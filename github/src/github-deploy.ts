@@ -146,7 +146,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
       binaryPath: "git",
       args,
       workingDir: ".",
-      timeoutMs: 300_000,  // 5 min for push
+      timeoutMs: 600_000,  // 10 min — first push of large repos can be slow
       env: { GIT_TERMINAL_PROMPT: "0" },
     });
   }

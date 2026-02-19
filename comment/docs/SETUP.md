@@ -61,8 +61,6 @@ services:
     image: artalk/artalk-go
     container_name: artalk
     restart: unless-stopped
-    ports:
-      - "8080:23366"
     volumes:
       - ./data:/data
     environment:
@@ -91,7 +89,7 @@ volumes:
 
 ```
 comments.example.com {
-    reverse_proxy artalk:8080
+    reverse_proxy artalk:23366
 }
 ```
 

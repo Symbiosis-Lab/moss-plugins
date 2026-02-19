@@ -51,6 +51,9 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
 
   if (buildScript && serverUrl) {
     console.log(`[info] Comment: Using provider "${providerName}" at ${serverUrl}`);
+    if (providerName === "artalk" && !siteName) {
+      console.log("[warn] Comment: Artalk provider requires site_name to be configured");
+    }
   } else if (!serverUrl) {
     console.log("[info] Comment: No server_url configured, static comments only");
   }

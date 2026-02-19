@@ -11,6 +11,7 @@ Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
 | ------ | ---------- | ----------- |
 | [github](github) | Deploy | Deploy to GitHub Pages |
 | [matters](matters) | Syndicate | Syndicate to Matters.town |
+| [planet](planet) | Syndicate | Syndicate to IPFS via Planet *(proposal)* |
 
 ## Development
 

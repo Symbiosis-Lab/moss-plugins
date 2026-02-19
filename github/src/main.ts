@@ -13,7 +13,7 @@ import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, 
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { validateAll, isSSHRemote } from "./validation";
 import { extractGitHubPagesUrl, parseGitHubUrl } from "./git";
-import { verifyRepoExists, deployViaGitPush } from "./github-deploy";
+import { verifyRepoExists, RepoNotFoundError, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
@@ -170,10 +170,16 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       if (preflightToken) {
         try {
           await verifyRepoExists(savedConfig.owner, savedConfig.repo, preflightToken);
-        } catch {
-          await log("warn", `   Saved config for ${savedConfig.owner}/${savedConfig.repo} is invalid, resetting...`);
-          await clearRepoConfig();
-          configInvalidated = true;
+        } catch (error) {
+          if (error instanceof RepoNotFoundError) {
+            // Repo definitively deleted — clear config and re-setup
+            await log("warn", `   Repository ${savedConfig.owner}/${savedConfig.repo} not found, resetting...`);
+            await clearRepoConfig();
+            configInvalidated = true;
+          } else {
+            // Auth/network error — keep config, will retry auth later
+            await log("warn", `   Preflight check failed (${error instanceof Error ? error.message : error}), continuing with saved config...`);
+          }
         }
       }
     }

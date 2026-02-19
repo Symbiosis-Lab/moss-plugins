@@ -186,7 +186,7 @@ export async function createRepository(
     },
     body: JSON.stringify({
       name,
-      description: description ?? "Created with Moss",
+      description: description ?? "Created with moss",
       private: false, // Always public for GitHub Pages
       auto_init: true, // Initializes repo so Git Data API works immediately
     }),

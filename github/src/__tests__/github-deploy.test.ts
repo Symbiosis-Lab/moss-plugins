@@ -29,6 +29,7 @@ import { showToast } from "../utils";
 import {
   deployViaGitPush,
   verifyRepoExists,
+  RepoNotFoundError,
   type DeployViaGitPushOptions,
 } from "../github-deploy";
 
@@ -135,6 +136,54 @@ describe("github-deploy", () => {
         `Access denied to "${OWNER}/${REPO}"`
       );
     });
+
+    it("throws RepoNotFoundError (not plain Error) on 404 with owner found", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      mockFetch.mockResolvedValueOnce(mockResponse({ login: OWNER }));
+
+      try {
+        await verifyRepoExists(OWNER, REPO, TOKEN);
+        expect.fail("Expected verifyRepoExists to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(RepoNotFoundError);
+      }
+    });
+
+    it("throws RepoNotFoundError (not plain Error) on 404 with owner not found", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+
+      try {
+        await verifyRepoExists(OWNER, REPO, TOKEN);
+        expect.fail("Expected verifyRepoExists to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(RepoNotFoundError);
+      }
+    });
+
+    it("throws plain Error (not RepoNotFoundError) on 401", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(401, "Unauthorized"));
+
+      try {
+        await verifyRepoExists(OWNER, REPO, TOKEN);
+        expect.fail("Expected verifyRepoExists to throw");
+      } catch (err) {
+        expect(err).not.toBeInstanceOf(RepoNotFoundError);
+        expect(err).toBeInstanceOf(Error);
+      }
+    });
+
+    it("throws plain Error (not RepoNotFoundError) on 403", async () => {
+      mockFetch.mockResolvedValueOnce(mockErrorResponse(403, "Forbidden"));
+
+      try {
+        await verifyRepoExists(OWNER, REPO, TOKEN);
+        expect.fail("Expected verifyRepoExists to throw");
+      } catch (err) {
+        expect(err).not.toBeInstanceOf(RepoNotFoundError);
+        expect(err).toBeInstanceOf(Error);
+      }
+    });
   });
 
   // ==========================================================================
@@ -150,28 +199,34 @@ describe("github-deploy", () => {
       return { success, exitCode: success ? 0 : 1, stdout, stderr };
     }
 
+    /** Token-free marker URL used for origin identity checks */
+    const REPO_MARKER = `https://github.com/${OWNER}/${REPO}.git`;
+
     /**
-     * Set up mock sequence for a full successful deploy (existing repo).
+     * Set up mock sequence for a full successful deploy (existing repo, matching origin).
      * Returns the mock for further customization.
      *
-     * Sequence: rev-parse, .gitignore, find(large files), add -v, diff(changes),
-     *           commit, push main --progress, rev-parse tree, commit-tree,
-     *           push gh-pages --progress
+     * Sequence: rev-parse --git-dir, remote get-url origin, .gitignore,
+     *           rm -f index.lock, find(large files), add -v, diff(changes),
+     *           commit, rev-parse --short HEAD, rev-parse tree, commit-tree,
+     *           push (both refspecs) --progress
      *
      * listSiteFilesWithSizes is mocked separately (returns [] by default).
      */
-    function setupFullDeployMocks(commitOutput = "[main abc1234] Deploy site\n") {
+    function setupFullDeployMocks(commitSha = "abc1234") {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
         .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
         .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
         .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, commitOutput))      // git commit
-        .mockResolvedValueOnce(gitResult(true))                    // git push --force --progress HEAD:refs/heads/main
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, commitSha + "\n"))  // git rev-parse --short HEAD
         .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
         .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress <sha>:refs/heads/gh-pages
+        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress (both refspecs)
     }
 
     beforeEach(() => {
@@ -188,15 +243,17 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git init
         .mockResolvedValueOnce(gitResult(true))                    // git config user.email
         .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+        .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
         .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
         .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
         .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
         .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true))                    // git push main --progress
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // push gh-pages --progress
+        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
@@ -213,13 +270,29 @@ describe("github-deploy", () => {
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({ binaryPath: "git", args: ["config", "user.name", "moss"] })
       );
+
+      // Verify remote add origin with token-free marker URL
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["remote", "add", "origin", REPO_MARKER],
+        })
+      );
     });
 
-    it("reuses existing git repo", async () => {
+    it("reuses existing git repo when origin matches", async () => {
       setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      // Verify remote get-url origin was checked
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["remote", "get-url", "origin"],
+        })
+      );
 
       // Verify git init was NOT called
       const initCalls = mockExecuteBinary.mock.calls.filter(
@@ -249,7 +322,7 @@ describe("github-deploy", () => {
       expect(shCall![0].args[1]).toContain("node_modules/");
     });
 
-    it("pushes to both main and gh-pages branches with --progress", async () => {
+    it("pushes to both main and gh-pages in a single push with --progress", async () => {
       setupFullDeployMocks();
 
       const onProgress = vi.fn();
@@ -257,21 +330,19 @@ describe("github-deploy", () => {
 
       const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
 
-      // Verify push to main with --progress
+      // Verify single push with both refspecs
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main"],
+          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "ccc333ddd444:refs/heads/gh-pages"],
         })
       );
 
-      // Verify push to gh-pages with orphan commit SHA and --progress
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:refs/heads/gh-pages"],
-        })
+      // Verify only ONE push call total
+      const pushCalls = mockExecuteBinary.mock.calls.filter(
+        (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
       );
+      expect(pushCalls).toHaveLength(1);
     });
 
     it("extracts .moss/site tree and creates orphan commit for gh-pages", async () => {
@@ -297,40 +368,83 @@ describe("github-deploy", () => {
       );
     });
 
-    it("returns empty string when no changes", async () => {
+    it("returns empty string for truly empty repo (no commits)", async () => {
       mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true, "")) // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all -v
-        .mockResolvedValueOnce(gitResult(true));    // git diff --cached --quiet succeeds (no changes)
+        .mockResolvedValueOnce(gitResult(false))                   // rev-parse --git-dir fails (no .git)
+        .mockResolvedValueOnce(gitResult(true))                    // git init
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+        .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet (no changes)
+        .mockResolvedValueOnce(gitResult(false));                  // rev-parse HEAD fails (no commits)
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
       expect(result).toBe("");
-      // Should not have called commit, push, or tree extraction
-      expect(mockExecuteBinary).toHaveBeenCalledTimes(5);
+      // Should NOT have called push (no commits to push)
+      const pushCalls = mockExecuteBinary.mock.calls.filter(
+        (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+      );
+      expect(pushCalls).toHaveLength(0);
     });
 
-    it("returns commit SHA from git commit output", async () => {
-      setupFullDeployMocks("[main abc1234] Deploy site\n");
+    it("returns commit SHA via rev-parse after commit", async () => {
+      setupFullDeployMocks("abc1234");
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
       expect(result).toBe("abc1234");
+
+      // Verify rev-parse --short HEAD was called (not regex on commit output)
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["rev-parse", "--short", "HEAD"],
+        })
+      );
     });
 
-    it("sanitizes token from error messages on main push failure", async () => {
+    it("returns empty SHA when rev-parse fails after commit", async () => {
       mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true, "")) // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
         .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/'`));  // push main fails
+        .mockResolvedValueOnce(gitResult(false))                   // rev-parse --short HEAD FAILS
+        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
+        .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress (both refspecs)
+
+      const onProgress = vi.fn();
+      const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      expect(result).toBe("");
+    });
+
+    it("sanitizes token from error messages on push failure", async () => {
+      mockExecuteBinary
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
+        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/'`));  // push fails
 
       const onProgress = vi.fn();
 
@@ -339,32 +453,6 @@ describe("github-deploy", () => {
       ).rejects.toThrow(expect.objectContaining({
         message: expect.not.stringContaining(TOKEN),
       }));
-    });
-
-    it("sanitizes token from error messages on gh-pages push failure", async () => {
-      mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true, "")) // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))    // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true))     // push main --progress succeeds
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))  // rev-parse tree
-        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))  // commit-tree
-        .mockResolvedValueOnce(gitResult(false, "", `fatal: '${TOKEN}' denied`));  // push gh-pages fails
-
-      const onProgress = vi.fn();
-
-      try {
-        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-        expect.fail("Expected deployViaGitPush to throw");
-      } catch (err: unknown) {
-        const error = err as Error;
-        expect(error.message).toContain("gh-pages");
-        expect(error.message).toContain("***");
-        expect(error.message).not.toContain(TOKEN);
-      }
     });
 
     it("reports weighted progress at phase boundaries", async () => {
@@ -376,8 +464,8 @@ describe("github-deploy", () => {
       expect(onProgress).toHaveBeenCalledWith(0, "Preparing deploy...");
       expect(onProgress).toHaveBeenCalledWith(5, "Staging files...");
       expect(onProgress).toHaveBeenCalledWith(15, "Creating commit...");
-      expect(onProgress).toHaveBeenCalledWith(20, "Pushing source to main...");
-      expect(onProgress).toHaveBeenCalledWith(40, "Pushing site to gh-pages...");
+      expect(onProgress).toHaveBeenCalledWith(20, "Preparing gh-pages...");
+      expect(onProgress).toHaveBeenCalledWith(25, "Pushing to GitHub...");
       expect(onProgress).toHaveBeenCalledWith(100, "Deployed!");
     });
 
@@ -395,13 +483,15 @@ describe("github-deploy", () => {
 
     it("throws on tree extraction failure", async () => {
       mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true, "")) // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))    // git diff (changes exist)
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes exist)
         .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true))     // push main --progress
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
         .mockResolvedValueOnce(gitResult(false, "", "fatal: not a valid object name"));  // rev-parse tree fails
 
       const onProgress = vi.fn();
@@ -413,14 +503,16 @@ describe("github-deploy", () => {
 
     it("throws on commit-tree failure", async () => {
       mockExecuteBinary
-        .mockResolvedValueOnce(gitResult(true))     // rev-parse succeeds
-        .mockResolvedValueOnce(gitResult(true))     // write .gitignore
-        .mockResolvedValueOnce(gitResult(true, "")) // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))     // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))    // git diff (changes exist)
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse succeeds
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes exist)
         .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true))     // push main --progress
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))  // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
         .mockResolvedValueOnce(gitResult(false, "", "fatal: not a tree object"));  // commit-tree fails
 
       const onProgress = vi.fn();
@@ -428,6 +520,157 @@ describe("github-deploy", () => {
       await expect(
         deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress })
       ).rejects.toThrow("Failed to create gh-pages commit");
+    });
+
+    // ========================================================================
+    // Idempotency: repo change detection (14a)
+    // ========================================================================
+    it("reinitializes git when target repo changes", async () => {
+      const oldMarker = "https://github.com/oldowner/old-repo.git";
+      mockExecuteBinary
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(true, oldMarker + "\n"))  // remote get-url origin (DIFFERENT repo)
+        .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
+        .mockResolvedValueOnce(gitResult(true))                    // git init
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+        .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+
+      const onProgress = vi.fn();
+      const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      expect(result).toBe("abc1234");
+
+      // Verify rm -rf .git was called
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "rm",
+          args: ["-rf", ".git"],
+        })
+      );
+
+      // Verify reinit happened
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({ binaryPath: "git", args: ["init"] })
+      );
+
+      // Verify remote add origin with new marker URL
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["remote", "add", "origin", REPO_MARKER],
+        })
+      );
+    });
+
+    it("reinitializes git when origin is missing", async () => {
+      mockExecuteBinary
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(false))                   // remote get-url origin FAILS (no remote)
+        .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
+        .mockResolvedValueOnce(gitResult(true))                    // git init
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+        .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+        .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+
+      const onProgress = vi.fn();
+      await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      // Verify rm -rf .git was called
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "rm",
+          args: ["-rf", ".git"],
+        })
+      );
+
+      // Verify reinit happened
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({ binaryPath: "git", args: ["init"] })
+      );
+    });
+
+    // ========================================================================
+    // Idempotency: stale index.lock removal (14b)
+    // ========================================================================
+    it("removes stale index.lock before git add", async () => {
+      setupFullDeployMocks();
+
+      const onProgress = vi.fn();
+      await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      // Verify rm -f .git/index.lock was called
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "rm",
+          args: ["-f", ".git/index.lock"],
+        })
+      );
+    });
+
+    // ========================================================================
+    // Idempotency: push even when no staged changes (14c — resume after crash)
+    // ========================================================================
+    it("pushes even when no staged changes (resume after crash)", async () => {
+      const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+      mockExecuteBinary
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+        .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+        .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+        .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet SUCCESS (no changes)
+        .mockResolvedValueOnce(gitResult(true))                    // rev-parse HEAD (commits exist from previous deploy)
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
+        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+
+      const onProgress = vi.fn();
+      const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
+
+      // Returns empty string (no new commit SHA) but push still happened
+      expect(result).toBe("");
+
+      // Verify commit was NOT called (no changes to commit)
+      const commitCalls = mockExecuteBinary.mock.calls.filter(
+        (call) => call[0].binaryPath === "git" && call[0].args[0] === "commit"
+      );
+      expect(commitCalls).toHaveLength(0);
+
+      // Verify single push with both refspecs
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "bbb222:refs/heads/gh-pages"],
+        })
+      );
+
+      // Verify only ONE push call
+      const pushCalls = mockExecuteBinary.mock.calls.filter(
+        (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+      );
+      expect(pushCalls).toHaveLength(1);
     });
 
     // ========================================================================
@@ -521,19 +764,21 @@ describe("github-deploy", () => {
     // ========================================================================
     describe("100MB source file limit", () => {
       it("appends large source files to .gitignore", async () => {
-        // Set up mocks: rev-parse, .gitignore write, find returns large files
+        // Set up mocks: rev-parse, remote get-url, .gitignore write, rm lock, find returns large files
         mockExecuteBinary
           .mockResolvedValueOnce(gitResult(true))                        // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))    // remote get-url origin (matches)
           .mockResolvedValueOnce(gitResult(true))                        // write .gitignore (sh -c)
+          .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock
           .mockResolvedValueOnce(gitResult(true, "big-model.bin\ndata/huge.csv\n"))  // find large files
           .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
           .mockResolvedValueOnce(gitResult(true))                        // git add --all -v
           .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
           .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true))                        // push main
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // rev-parse tree
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))            // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                       // push gh-pages
+          .mockResolvedValueOnce(gitResult(true));                       // push (both refspecs)
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
@@ -552,16 +797,18 @@ describe("github-deploy", () => {
       it("shows warning toast for skipped source files", async () => {
         mockExecuteBinary
           .mockResolvedValueOnce(gitResult(true))                        // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))    // remote get-url origin (matches)
           .mockResolvedValueOnce(gitResult(true))                        // write .gitignore (sh -c)
+          .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock
           .mockResolvedValueOnce(gitResult(true, "large-file.bin\n"))    // find large files
           .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
           .mockResolvedValueOnce(gitResult(true))                        // git add --all -v
           .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
           .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true))                        // push main
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // rev-parse tree
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))            // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                       // push gh-pages
+          .mockResolvedValueOnce(gitResult(true));                       // push (both refspecs)
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
@@ -625,7 +872,7 @@ describe("github-deploy", () => {
         );
       });
 
-      it("calls git push main with --progress flag", async () => {
+      it("calls git push with --progress flag and both refspecs", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
@@ -635,56 +882,25 @@ describe("github-deploy", () => {
         expect(mockExecuteBinary).toHaveBeenCalledWith(
           expect.objectContaining({
             binaryPath: "git",
-            args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main"],
+            args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "ccc333ddd444:refs/heads/gh-pages"],
           })
         );
       });
 
-      it("calls git push gh-pages with --progress flag", async () => {
+      it("passes onStderr callback to git push", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-        const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
-        expect(mockExecuteBinary).toHaveBeenCalledWith(
-          expect.objectContaining({
-            binaryPath: "git",
-            args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:refs/heads/gh-pages"],
-          })
-        );
-      });
-
-      it("passes onStderr callback to git push main", async () => {
-        setupFullDeployMocks();
-
-        const onProgress = vi.fn();
-        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-        // Find the push main call
-        const pushMainCall = mockExecuteBinary.mock.calls.find(
+        // Find the push call
+        const pushCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
             call[0].args.includes("HEAD:refs/heads/main")
         );
-        expect(pushMainCall).toBeDefined();
-        expect(pushMainCall![0].onStderr).toBeTypeOf("function");
-      });
-
-      it("passes onStderr callback to git push gh-pages", async () => {
-        setupFullDeployMocks();
-
-        const onProgress = vi.fn();
-        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-        // Find the push gh-pages call
-        const pushPagesCall = mockExecuteBinary.mock.calls.find(
-          (call) => call[0].binaryPath === "git" &&
-            call[0].args[0] === "push" &&
-            call[0].args.some((a: string) => a.endsWith(":refs/heads/gh-pages"))
-        );
-        expect(pushPagesCall).toBeDefined();
-        expect(pushPagesCall![0].onStderr).toBeTypeOf("function");
+        expect(pushCall).toBeDefined();
+        expect(pushCall![0].onStderr).toBeTypeOf("function");
       });
 
       it("passes onStderr callback to git add for staging progress", async () => {
@@ -701,58 +917,25 @@ describe("github-deploy", () => {
         expect(addCall![0].onStderr).toBeTypeOf("function");
       });
 
-      it("maps push main stderr progress to 20-40% range", async () => {
+      it("maps push stderr progress to 25-95% range", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
 
-        // Find the push main call and invoke its onStderr
-        const pushMainCall = mockExecuteBinary.mock.calls.find(
+        // Find the push call and invoke its onStderr
+        const pushCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
             call[0].args.includes("HEAD:refs/heads/main")
         );
-        const pushMainOnStderr = pushMainCall![0].onStderr;
-
-        // Simulate git push progress output
-        pushMainOnStderr("Writing objects:  50% (5/10), 1.00 MiB | 500.00 KiB/s");
-
-        // Should map 50% to range 20-40%, which is 30%
-        expect(onProgress).toHaveBeenCalledWith(30, expect.stringContaining("Writing objects"));
-      });
-
-      it("maps push gh-pages stderr progress to 50-95% range", async () => {
-        setupFullDeployMocks();
-
-        const onProgress = vi.fn();
-        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress });
-
-        // Find the push gh-pages call and invoke its onStderr
-        const pushPagesCall = mockExecuteBinary.mock.calls.find(
-          (call) => call[0].binaryPath === "git" &&
-            call[0].args[0] === "push" &&
-            call[0].args.some((a: string) => a.endsWith(":refs/heads/gh-pages"))
-        );
-        const pushPagesOnStderr = pushPagesCall![0].onStderr;
+        const pushOnStderr = pushCall![0].onStderr;
 
         // Simulate git push progress output at 50%
-        pushPagesOnStderr("Writing objects:  50% (125/250)");
+        pushOnStderr("Writing objects:  50% (5/10), 1.00 MiB | 500.00 KiB/s");
 
-        // Should map 50% to range 50-95%, which is 72.5 => ~73
-        expect(onProgress).toHaveBeenCalledWith(
-          expect.any(Number),
-          expect.stringContaining("Writing objects")
-        );
-        // Get the actual percent
-        const lastProgressCall = onProgress.mock.calls.find(
-          (call) => typeof call[0] === "number" && call[0] >= 50 && call[0] <= 95
-            && call[1].includes("Writing objects")
-        );
-        expect(lastProgressCall).toBeDefined();
-        const mappedPercent = lastProgressCall![0];
-        // 50% of (95-50) = 22.5 => 50 + 22.5 = 72.5
-        expect(mappedPercent).toBeCloseTo(73, 0);
+        // Should map 50% to range 25-95%, which is 25 + 35 = 60%
+        expect(onProgress).toHaveBeenCalledWith(60, expect.stringContaining("Writing objects"));
       });
     });
   });

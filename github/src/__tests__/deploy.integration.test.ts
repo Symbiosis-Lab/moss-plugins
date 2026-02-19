@@ -31,6 +31,9 @@ vi.mock("../utils", () => ({
 vi.mock("../github-deploy", () => ({
   verifyRepoExists: vi.fn().mockResolvedValue(undefined),
   deployViaGitPush: vi.fn(),
+  RepoNotFoundError: class RepoNotFoundError extends Error {
+    constructor(message: string) { super(message); this.name = "RepoNotFoundError"; }
+  },
 }));
 
 // Mock the auth module
@@ -107,7 +110,7 @@ vi.mock("../github-api", () => ({
 // Import after mocking
 import { on_deploy } from "../main";
 import { log, reportProgress, showToast } from "../utils";
-import { verifyRepoExists, deployViaGitPush } from "../github-deploy";
+import { verifyRepoExists, RepoNotFoundError, deployViaGitPush } from "../github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
@@ -872,9 +875,9 @@ describe("on_deploy integration", () => {
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 
-      // verifyRepoExists fails for stale config (preflight check)
+      // verifyRepoExists fails for stale config (preflight check) — 404 = RepoNotFoundError
       vi.mocked(verifyRepoExists).mockRejectedValueOnce(
-        new Error('Repository "stale-user/deleted-repo" not found')
+        new RepoNotFoundError('Repository "stale-user/deleted-repo" not found')
       );
 
       // ensureGitHubRepo runs because config was cleared -> user cancels
@@ -909,8 +912,8 @@ describe("on_deploy integration", () => {
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 
-      // Preflight fails -> config cleared
-      vi.mocked(verifyRepoExists).mockRejectedValueOnce(new Error("Not found"));
+      // Preflight fails -> config cleared (404 = RepoNotFoundError)
+      vi.mocked(verifyRepoExists).mockRejectedValueOnce(new RepoNotFoundError("Not found"));
 
       // Setup cancelled
       vi.mocked(ensureGitHubRepo).mockResolvedValue(null);
@@ -921,6 +924,50 @@ describe("on_deploy integration", () => {
       expect(vi.mocked(getRepoConfig)).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps config when preflight fails with auth error (401)", async () => {
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
+      vi.mocked(getToken).mockResolvedValue("expired-token");
+
+      // verifyRepoExists throws plain Error (auth failure, NOT RepoNotFoundError)
+      vi.mocked(verifyRepoExists).mockRejectedValueOnce(
+        new Error("GitHub token is invalid or expired. Please re-authenticate.")
+      );
+
+      // Rest of deploy should proceed with saved config
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
+      vi.mocked(deployViaGitPush).mockResolvedValue("commit-sha");
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+
+      const result = await on_deploy(createMockContext());
+
+      // Config should NOT have been cleared
+      expect(vi.mocked(clearRepoConfig)).not.toHaveBeenCalled();
+      // Deploy should still succeed (auth may work via different path in Phase 2)
+      expect(result.success).toBe(true);
+    });
+
+    it("keeps config when preflight fails with network error", async () => {
+      vi.mocked(getRepoConfig).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
+      vi.mocked(getToken).mockResolvedValue("valid-token");
+
+      // verifyRepoExists throws plain Error (network failure, NOT RepoNotFoundError)
+      vi.mocked(verifyRepoExists).mockRejectedValueOnce(
+        new Error("Failed to fetch")
+      );
+
+      // Rest of deploy should proceed with saved config
+      vi.mocked(validateAll).mockResolvedValue("git@github.com:test-user/test-repo.git");
+      vi.mocked(deployViaGitPush).mockResolvedValue("commit-sha");
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+
+      const result = await on_deploy(createMockContext());
+
+      // Config should NOT have been cleared
+      expect(vi.mocked(clearRepoConfig)).not.toHaveBeenCalled();
+      // Deploy should still succeed
+      expect(result.success).toBe(true);
+    });
+
     it("clears config and succeeds when setup flow completes after stale config", async () => {
       // Stale config on first read
       vi.mocked(getRepoConfig)
@@ -928,9 +975,9 @@ describe("on_deploy integration", () => {
 
       vi.mocked(getToken).mockResolvedValue("valid-token");
 
-      // Preflight fails
+      // Preflight fails (404 = RepoNotFoundError)
       vi.mocked(verifyRepoExists)
-        .mockRejectedValueOnce(new Error("Not found")) // preflight
+        .mockRejectedValueOnce(new RepoNotFoundError("Not found")) // preflight
         .mockResolvedValueOnce(undefined); // after new setup
 
       // Setup creates new repo

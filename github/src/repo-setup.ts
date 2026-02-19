@@ -134,7 +134,7 @@ async function createRootRepo(
   await log("log", `   Auto-creating ${repoName} (will deploy to root URL)...`);
 
   try {
-    const createdRepo = await createRepository(repoName, token, "Created with Moss");
+    const createdRepo = await createRepository(repoName, token, "Created with moss");
     await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
 
     return {
@@ -235,7 +235,7 @@ async function showRepoNameUI(
   await log("log", `   Creating repository: ${repoName}`);
 
   try {
-    const createdRepo = await createRepository(repoName, token, "Created with Moss");
+    const createdRepo = await createRepository(repoName, token, "Created with moss");
     await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
 
     await closeBrowser(); // Close browser after successful repo creation

@@ -302,7 +302,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
   // ── 5. Push full repo to main (source backup) ────────────────────────
   onProgress(20, "Pushing source to main...");
   const pushMain = await git(
-    ["push", "--force", "--progress", pushUrl, "HEAD:main"],
+    ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main"],
     (line) => parsePushProgress(line, 20, 40, onProgress, token),
   );
   if (!pushMain.success) throw new Error(`git push main failed: ${sanitize(pushMain.stderr, token)}`);
@@ -318,7 +318,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
 
   onProgress(50, "Pushing site to gh-pages...");
   const pushPages = await git(
-    ["push", "--force", "--progress", pushUrl, `${orphan.stdout.trim()}:gh-pages`],
+    ["push", "--force", "--progress", pushUrl, `${orphan.stdout.trim()}:refs/heads/gh-pages`],
     (line) => parsePushProgress(line, 50, 95, onProgress, token),
   );
   if (!pushPages.success) throw new Error(`git push gh-pages failed: ${sanitize(pushPages.stderr, token)}`);

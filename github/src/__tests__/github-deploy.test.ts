@@ -168,10 +168,10 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
         .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
         .mockResolvedValueOnce(gitResult(true, commitOutput))      // git commit
-        .mockResolvedValueOnce(gitResult(true))                    // git push --force --progress HEAD:main
+        .mockResolvedValueOnce(gitResult(true))                    // git push --force --progress HEAD:refs/heads/main
         .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
         .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress <sha>:gh-pages
+        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress <sha>:refs/heads/gh-pages
     }
 
     beforeEach(() => {
@@ -261,7 +261,7 @@ describe("github-deploy", () => {
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "HEAD:main"],
+          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main"],
         })
       );
 
@@ -269,7 +269,7 @@ describe("github-deploy", () => {
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:gh-pages"],
+          args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:refs/heads/gh-pages"],
         })
       );
     });
@@ -635,7 +635,7 @@ describe("github-deploy", () => {
         expect(mockExecuteBinary).toHaveBeenCalledWith(
           expect.objectContaining({
             binaryPath: "git",
-            args: ["push", "--force", "--progress", pushUrl, "HEAD:main"],
+            args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main"],
           })
         );
       });
@@ -650,7 +650,7 @@ describe("github-deploy", () => {
         expect(mockExecuteBinary).toHaveBeenCalledWith(
           expect.objectContaining({
             binaryPath: "git",
-            args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:gh-pages"],
+            args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:refs/heads/gh-pages"],
           })
         );
       });
@@ -665,7 +665,7 @@ describe("github-deploy", () => {
         const pushMainCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.includes("HEAD:main")
+            call[0].args.includes("HEAD:refs/heads/main")
         );
         expect(pushMainCall).toBeDefined();
         expect(pushMainCall![0].onStderr).toBeTypeOf("function");
@@ -681,7 +681,7 @@ describe("github-deploy", () => {
         const pushPagesCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.some((a: string) => a.endsWith(":gh-pages"))
+            call[0].args.some((a: string) => a.endsWith(":refs/heads/gh-pages"))
         );
         expect(pushPagesCall).toBeDefined();
         expect(pushPagesCall![0].onStderr).toBeTypeOf("function");
@@ -711,7 +711,7 @@ describe("github-deploy", () => {
         const pushMainCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.includes("HEAD:main")
+            call[0].args.includes("HEAD:refs/heads/main")
         );
         const pushMainOnStderr = pushMainCall![0].onStderr;
 
@@ -732,7 +732,7 @@ describe("github-deploy", () => {
         const pushPagesCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.some((a: string) => a.endsWith(":gh-pages"))
+            call[0].args.some((a: string) => a.endsWith(":refs/heads/gh-pages"))
         );
         const pushPagesOnStderr = pushPagesCall![0].onStderr;
 

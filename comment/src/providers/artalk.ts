@@ -19,7 +19,7 @@ import { escapeForSingleQuotedJs } from "../client-js";
 export function buildArtalkClientScript(
   serverUrl: string,
   pagePath: string,
-  siteName: string
+  siteName: string = ""
 ): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
   const safePagePath = escapeForSingleQuotedJs(pagePath);
@@ -65,7 +65,9 @@ export function buildArtalkClientScript(
     })
     .then(function(res) {
       if (!res.ok) {
-        return res.json().then(function(data) {
+        return res.json().catch(function() {
+          throw new Error('Server error (' + res.status + ')');
+        }).then(function(data) {
           throw new Error(data.msg || 'Server error (' + res.status + ')');
         });
       }

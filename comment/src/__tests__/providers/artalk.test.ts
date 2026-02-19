@@ -73,4 +73,12 @@ describe("buildArtalkClientScript", () => {
     expect(script).not.toContain("O'Reilly's Site");
     expect(script).toContain("O\\'Reilly\\'s Site");
   });
+
+  it("properly escapes backslashes in server URL", () => {
+    const urlWithBackslash = "https://example.com/path\\test";
+    const script = buildArtalkClientScript(urlWithBackslash, pagePath, siteName);
+    // Backslash should be double-escaped to prevent JS string breakout
+    expect(script).toContain("path\\\\test");
+    expect(script).not.toContain("path\\test'");
+  });
 });

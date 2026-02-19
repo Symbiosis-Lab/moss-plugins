@@ -11,12 +11,10 @@
 
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
-import { validateAll, isSSHRemote } from "./validation";
-import { extractGitHubPagesUrl, parseGitHubUrl } from "./git";
-import { verifyRepoExists, RepoNotFoundError, deployViaGitPush } from "./github-deploy";
+import { buildPagesUrl, parseGitHubUrl } from "./git";
+import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { getRepoConfig, saveRepoConfig, clearRepoConfig } from "./config";
 import { checkPagesStatus, setCustomDomain } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
@@ -150,108 +148,45 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
     await log("log", `   Site files: ${context.site_files.length} files ready`);
 
-    // Preflight: verify saved config is still valid before using it.
-    // This catches stale config (repo deleted, renamed, or token lost access).
-    const savedConfig = await getRepoConfig();
-    let configInvalidated = false;
-    if (savedConfig) {
-      let preflightToken = await getToken();
-      if (!preflightToken) {
-        const gitToken = await getTokenFromGit();
-        if (gitToken) {
-          const validation = await validateToken(gitToken);
-          if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
-            await storeToken(gitToken);
-            preflightToken = gitToken;
-          }
-        }
-      }
-
-      if (preflightToken) {
-        try {
-          await verifyRepoExists(savedConfig.owner, savedConfig.repo, preflightToken);
-        } catch (error) {
-          if (error instanceof RepoNotFoundError) {
-            // Repo definitively deleted — clear config and re-setup
-            await log("warn", `   Repository ${savedConfig.owner}/${savedConfig.repo} not found, resetting...`);
-            await clearRepoConfig();
-            configInvalidated = true;
-          } else {
-            // Auth/network error — keep config, will retry auth later
-            await log("warn", `   Preflight check failed (${error instanceof Error ? error.message : error}), continuing with saved config...`);
-          }
-        }
-      }
-    }
-
-    // Phase 0: Check if we have a repo config
-    // If not, automatically create a repository (Feature 20)
-    let remoteUrl: string;
-
+    // Phase 0: Determine deploy target from git state (single source of truth)
+    let owner: string;
+    let repoName: string;
     let wasFirstSetup = false;
 
-    // Use flag instead of re-reading config — a second getRepoConfig() call
-    // would re-trigger .git/config migration and restore the stale config.
-    const existingConfig = configInvalidated ? null : savedConfig;
-    const needsSetup = !existingConfig;
+    const existing = await getOriginOwnerRepo();
 
-    if (needsSetup) {
-      // Feature 20: Smart repo setup - auto-create or show UI
+    if (existing) {
+      // .git origin already points to a GitHub repo — use it
+      owner = existing.owner;
+      repoName = existing.repo;
+      await log("log", `   Deploy target: ${owner}/${repoName} (from git origin)`);
+    } else {
+      // No .git or no GitHub origin — run setup flow
       await reportProgress("setup", 0, 10, "Setting up GitHub repository...");
       const repoInfo = await ensureGitHubRepo();
 
       if (!repoInfo) {
-        // User cancelled or error
         return { success: false, message: "Repository setup cancelled." };
       }
 
-      // Save repo config (replaces git init + remote add)
       const parsed = parseGitHubUrl(repoInfo.sshUrl);
-      if (parsed) {
-        await saveRepoConfig({ owner: parsed.owner, repo: parsed.repo });
+      if (!parsed) {
+        throw new Error("Could not parse GitHub URL from setup result: " + repoInfo.sshUrl);
       }
 
-      await log("log", `   Repository configured: ${repoInfo.fullName}`);
-      remoteUrl = repoInfo.sshUrl;
+      owner = parsed.owner;
+      repoName = parsed.repo;
+      wasFirstSetup = true;
 
-      // Close the plugin browser after repo setup completes
-      // The browser was used to show the repo creation form (if needed)
-      // Now that setup is done, close it and continue deployment in background
+      await log("log", `   Repository configured: ${repoInfo.fullName}`);
       await closeBrowser();
       await log("log", "   Browser closed - continuing deployment in background");
-    } else {
-      // Build remote URL from stored config
-      remoteUrl = `git@github.com:${existingConfig.owner}/${existingConfig.repo}.git`;
     }
 
-    const useSSH = remoteUrl ? isSSHRemote(remoteUrl) : false;
-
-    if (!useSSH && remoteUrl) {
-      // Bug 23 fix: Skip OAuth for existing HTTPS remotes
-      // Git handles push authentication via credential helper - no OAuth needed
-      // OAuth is only required when creating new repos (no remote yet)
-      await log("log", "   HTTPS remote detected, git will handle push authentication");
-    } else if (useSSH) {
-      await log("log", "   SSH remote detected, using SSH key authentication");
-    }
-
-    // Phase 1: Validate requirements (git repo and GitHub remote)
-    // Note: Site validation already done early using context.site_files (Bug 13 fix)
-    await reportProgress("validating", useSSH ? 1 : 2, 10, "Validating requirements...");
-    // Bug 17 fix: Pass existing remoteUrl to avoid duplicate git calls
-    remoteUrl = await validateAll(remoteUrl);
-
-    // Phase 2: Parse URL + ensure authentication (mandatory for REST API)
-    await reportProgress("configuring", 3, 10, "Checking repository...");
-    const parsed = parseGitHubUrl(remoteUrl);
-    if (!parsed) {
-      throw new Error("Could not parse GitHub URL from remote: " + remoteUrl);
-    }
-
-    // Ensure we have a valid token (mandatory for REST API)
+    // Phase 1: Ensure authentication (mandatory for GitHub API + push)
+    await reportProgress("configuring", 3, 10, "Checking authentication...");
     let token = await getToken();
     if (!token) {
-      // Try git credential helper (validate before using)
       const gitToken = await getTokenFromGit();
       if (gitToken) {
         const validation = await validateToken(gitToken);
@@ -263,7 +198,6 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         }
       }
       if (!token) {
-        // Must authenticate via OAuth
         await reportProgress("authenticating", 3, 10, "Authentication required...");
         const authResult = await promptLogin();
         if (!authResult) {
@@ -276,10 +210,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       }
     }
 
-    // Phase 2.5: Verify the repository exists (fail fast with clear error)
-    await verifyRepoExists(parsed.owner, parsed.repo, token);
-
-    wasFirstSetup = needsSetup;
+    // Phase 2: Verify repository exists (fail fast with clear error)
+    await verifyRepoExists(owner, repoName, token);
 
     // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
     // Tracks current phase so heartbeat message is informative, not generic
@@ -293,8 +225,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       // Single deploy: commits source + .moss/site/, pushes to main,
       // then extracts .moss/site/ tree as orphan commit → gh-pages
       commitSha = await deployViaGitPush({
-        owner: parsed.owner,
-        repo: parsed.repo,
+        owner,
+        repo: repoName,
         token,
         onProgress: (percent, message) => {
           currentPhase = message;
@@ -308,7 +240,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     }
 
     // Generate pages URL for logging and response
-    const pagesUrl = extractGitHubPagesUrl(remoteUrl);
+    const pagesUrl = buildPagesUrl(owner, repoName);
 
     // Log the deployment result with URL immediately
     if (commitSha) {
@@ -322,12 +254,12 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Phase 9: Check if deployment is live (only if we pushed changes)
     let isLive = false;
     if (commitSha) {
-      const liveStatus = await waitForPagesLive(parsed.owner, parsed.repo, token, pagesUrl);
+      const liveStatus = await waitForPagesLive(owner, repoName, token, pagesUrl);
       isLive = liveStatus.isLive;
     }
 
     // Build DNS target for custom domain configuration
-    const dnsTarget = generateDnsTarget(parsed.owner);
+    const dnsTarget = generateDnsTarget(owner);
 
     // Build result message based on scenario
     // Zero-config deployment - no manual steps needed
@@ -410,9 +342,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Categorize error for toast display
     const lowerError = errorMessage.toLowerCase();
     let toastMessage: string;
-    if (lowerError.includes("permission denied") || lowerError.includes("publickey")) {
-      toastMessage = "SSH key not loaded. Run ssh-add in terminal and retry.";
-    } else if (lowerError.includes("timed out") || lowerError.includes("timeout")) {
+    if (lowerError.includes("timed out") || lowerError.includes("timeout")) {
       toastMessage = "Push may still be running. Check GitHub in a few minutes.";
     } else if (lowerError.includes("authentication") || lowerError.includes("auth") || lowerError.includes("token")) {
       toastMessage = "Authentication failed";
@@ -461,16 +391,16 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
   await log("log", `GitHub Deployer: Configuring custom domain "${domain}"...`);
 
   try {
-    // Get repo config to determine owner/repo
-    const repoConfig = await getRepoConfig();
+    // Get deploy target from git origin
+    const repoConfig = await getOriginOwnerRepo();
     if (!repoConfig) {
       return {
         success: false,
-        message: "No GitHub repository configured. Cannot set custom domain on GitHub Pages.",
+        message: "No GitHub repository configured. Deploy first.",
       };
     }
 
-    const parsed = repoConfig;
+    const { owner, repo } = repoConfig;
 
     // Get authentication token (should already be stored from deploy)
     let token = await getToken();
@@ -490,14 +420,14 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     }
 
     // Call GitHub Pages API to set the custom domain
-    await log("log", `   Setting CNAME to "${domain}" on ${parsed.owner}/${parsed.repo}...`);
-    await setCustomDomain(parsed.owner, parsed.repo, token, domain);
+    await log("log", `   Setting CNAME to "${domain}" on ${owner}/${repo}...`);
+    await setCustomDomain(owner, repo, token, domain);
 
     await log("log", `   Custom domain "${domain}" configured on GitHub Pages`);
 
     return {
       success: true,
-      message: `Custom domain "${domain}" configured on GitHub Pages for ${parsed.owner}/${parsed.repo}`,
+      message: `Custom domain "${domain}" configured on GitHub Pages for ${owner}/${repo}`,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

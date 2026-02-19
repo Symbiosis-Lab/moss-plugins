@@ -26,6 +26,17 @@ export function parseGitHubUrl(remoteUrl: string): { owner: string; repo: string
 }
 
 /**
+ * Build GitHub Pages URL from owner and repo name.
+ * User/org site repos (e.g., "username.github.io") serve at root.
+ */
+export function buildPagesUrl(owner: string, repo: string): string {
+  if (repo.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
+    return `https://${owner}.github.io`;
+  }
+  return `https://${owner}.github.io/${repo}`;
+}
+
+/**
  * Extract GitHub Pages URL from remote URL
  */
 export function extractGitHubPagesUrl(remoteUrl: string): string {

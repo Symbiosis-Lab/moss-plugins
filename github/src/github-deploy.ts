@@ -37,17 +37,6 @@ async function parseErrorMessage(response: Response): Promise<string> {
   }
 }
 
-/**
- * Error thrown when a repository is definitively not found (HTTP 404).
- * Distinguished from auth/network errors so the caller can decide
- * whether to clear saved config (only on 404) or keep it (on auth/network errors).
- */
-export class RepoNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RepoNotFoundError";
-  }
-}
 
 // ============================================================================
 // API Functions
@@ -87,13 +76,13 @@ export async function verifyRepoExists(
     });
 
     if (ownerResp.status === 404) {
-      throw new RepoNotFoundError(
+      throw new Error(
         `GitHub user or organization "${owner}" not found. ` +
         `Check for typos in the repository owner name.`
       );
     }
 
-    throw new RepoNotFoundError(
+    throw new Error(
       `Repository "${owner}/${repo}" not found on GitHub. ` +
       `The repository may not exist, or your token may not have access to it.`
     );
@@ -116,6 +105,38 @@ export async function verifyRepoExists(
     const msg = await parseErrorMessage(response);
     throw new Error(msg);
   }
+}
+
+// ============================================================================
+// Git Origin Helpers
+// ============================================================================
+
+/**
+ * Read the deploy target from the project's .git origin remote.
+ * Returns null if no .git, no origin, or origin is not a GitHub URL.
+ */
+export async function getOriginOwnerRepo(): Promise<{ owner: string; repo: string } | null> {
+  const result = await executeBinary({
+    binaryPath: "git",
+    args: ["remote", "get-url", "origin"],
+    workingDir: ".",
+    timeoutMs: 5_000,
+    env: { GIT_TERMINAL_PROMPT: "0" },
+  });
+
+  if (!result.success) return null;
+
+  const url = result.stdout.trim();
+
+  // Parse HTTPS: https://github.com/{owner}/{repo}.git
+  const httpsMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
+
+  // Parse SSH: git@github.com:{owner}/{repo}.git
+  const sshMatch = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch) return { owner: sshMatch[1], repo: sshMatch[2] };
+
+  return null;
 }
 
 // ============================================================================

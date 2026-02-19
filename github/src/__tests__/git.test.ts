@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, buildPagesUrl } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -146,5 +146,23 @@ describe("extractGitHubPagesUrl", () => {
     expect(() => {
       extractGitHubPagesUrl("not-a-url");
     }).toThrow("Could not parse GitHub URL from remote");
+  });
+});
+
+describe("buildPagesUrl", () => {
+  it("generates project URL for regular repo", () => {
+    expect(buildPagesUrl("user", "repo")).toBe("https://user.github.io/repo");
+  });
+
+  it("generates root URL for user site repo (exact match)", () => {
+    expect(buildPagesUrl("guoliu", "guoliu.github.io")).toBe("https://guoliu.github.io");
+  });
+
+  it("generates root URL for user site repo (case-insensitive)", () => {
+    expect(buildPagesUrl("GuoLiu", "GuoLiu.github.io")).toBe("https://GuoLiu.github.io");
+  });
+
+  it("generates project URL for org repo", () => {
+    expect(buildPagesUrl("anthropics", "moss")).toBe("https://anthropics.github.io/moss");
   });
 });

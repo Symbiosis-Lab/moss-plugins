@@ -29,7 +29,7 @@ import { showToast } from "../utils";
 import {
   deployViaGitPush,
   verifyRepoExists,
-  RepoNotFoundError,
+  getOriginOwnerRepo,
   type DeployViaGitPushOptions,
 } from "../github-deploy";
 
@@ -137,52 +137,81 @@ describe("github-deploy", () => {
       );
     });
 
-    it("throws RepoNotFoundError (not plain Error) on 404 with owner found", async () => {
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
-      mockFetch.mockResolvedValueOnce(mockResponse({ login: OWNER }));
+  });
 
-      try {
-        await verifyRepoExists(OWNER, REPO, TOKEN);
-        expect.fail("Expected verifyRepoExists to throw");
-      } catch (err) {
-        expect(err).toBeInstanceOf(RepoNotFoundError);
-      }
+  // ==========================================================================
+  // getOriginOwnerRepo
+  // ==========================================================================
+  describe("getOriginOwnerRepo", () => {
+    const mockExecuteBinary = vi.mocked(executeBinary);
+
+    function gitResult(success: boolean, stdout = "", stderr = ""): { success: boolean; exitCode: number; stdout: string; stderr: string } {
+      return { success, exitCode: success ? 0 : 1, stdout, stderr };
+    }
+
+    beforeEach(() => {
+      mockExecuteBinary.mockReset();
     });
 
-    it("throws RepoNotFoundError (not plain Error) on 404 with owner not found", async () => {
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(404, "Not Found"));
+    it("returns owner/repo from HTTPS origin", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(true, "https://github.com/testuser/my-site.git\n")
+      );
 
-      try {
-        await verifyRepoExists(OWNER, REPO, TOKEN);
-        expect.fail("Expected verifyRepoExists to throw");
-      } catch (err) {
-        expect(err).toBeInstanceOf(RepoNotFoundError);
-      }
+      const result = await getOriginOwnerRepo();
+
+      expect(result).toEqual({ owner: "testuser", repo: "my-site" });
+      expect(mockExecuteBinary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binaryPath: "git",
+          args: ["remote", "get-url", "origin"],
+        })
+      );
     });
 
-    it("throws plain Error (not RepoNotFoundError) on 401", async () => {
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(401, "Unauthorized"));
+    it("returns owner/repo from SSH origin", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(true, "git@github.com:testuser/my-site.git\n")
+      );
 
-      try {
-        await verifyRepoExists(OWNER, REPO, TOKEN);
-        expect.fail("Expected verifyRepoExists to throw");
-      } catch (err) {
-        expect(err).not.toBeInstanceOf(RepoNotFoundError);
-        expect(err).toBeInstanceOf(Error);
-      }
+      const result = await getOriginOwnerRepo();
+      expect(result).toEqual({ owner: "testuser", repo: "my-site" });
     });
 
-    it("throws plain Error (not RepoNotFoundError) on 403", async () => {
-      mockFetch.mockResolvedValueOnce(mockErrorResponse(403, "Forbidden"));
+    it("handles dotted repo names (username.github.io)", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(true, "https://github.com/guoliu/guoliu.github.io.git\n")
+      );
 
-      try {
-        await verifyRepoExists(OWNER, REPO, TOKEN);
-        expect.fail("Expected verifyRepoExists to throw");
-      } catch (err) {
-        expect(err).not.toBeInstanceOf(RepoNotFoundError);
-        expect(err).toBeInstanceOf(Error);
-      }
+      const result = await getOriginOwnerRepo();
+      expect(result).toEqual({ owner: "guoliu", repo: "guoliu.github.io" });
+    });
+
+    it("returns null when no .git directory (command fails)", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(false, "", "fatal: not a git repository")
+      );
+
+      const result = await getOriginOwnerRepo();
+      expect(result).toBeNull();
+    });
+
+    it("returns null when origin is not a GitHub URL", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(true, "https://gitlab.com/user/repo.git\n")
+      );
+
+      const result = await getOriginOwnerRepo();
+      expect(result).toBeNull();
+    });
+
+    it("returns null when origin remote does not exist", async () => {
+      mockExecuteBinary.mockResolvedValueOnce(
+        gitResult(false, "", "fatal: No such remote 'origin'")
+      );
+
+      const result = await getOriginOwnerRepo();
+      expect(result).toBeNull();
     });
   });
 

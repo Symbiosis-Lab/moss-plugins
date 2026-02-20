@@ -8,7 +8,7 @@ import type { HookResult } from "@symbiosis-lab/moss-api";
 // Mock the moss-api
 const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
-const mockListFiles = vi.fn();
+const mockListSiteFilesWithSizes = vi.fn();
 const mockReadPluginFile = vi.fn();
 const mockWritePluginFile = vi.fn();
 const mockPluginFileExists = vi.fn();
@@ -17,7 +17,8 @@ const mockHttpGet = vi.fn();
 vi.mock("@symbiosis-lab/moss-api", () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
-  listFiles: (...args: unknown[]) => mockListFiles(...args),
+  listSiteFilesWithSizes: (...args: unknown[]) =>
+    mockListSiteFilesWithSizes(...args),
   readPluginFile: (...args: unknown[]) => mockReadPluginFile(...args),
   writePluginFile: (...args: unknown[]) => mockWritePluginFile(...args),
   pluginFileExists: (...args: unknown[]) => mockPluginFileExists(...args),
@@ -27,7 +28,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 describe("enhance hook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListFiles.mockResolvedValue([]);
+    mockListSiteFilesWithSizes.mockResolvedValue([]);
     mockPluginFileExists.mockResolvedValue(false);
   });
 
@@ -66,7 +67,9 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListFiles.mockResolvedValue(["test.html"]);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
       mockReadFile.mockResolvedValue(html);
       mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
@@ -80,7 +83,9 @@ describe("enhance hook", () => {
       const result: HookResult = await enhance(ctx);
 
       expect(result.success).toBe(true);
+      expect(mockReadFile).toHaveBeenCalledWith(".moss/site/test.html");
       expect(mockWriteFile).toHaveBeenCalled();
+      expect(mockWriteFile.mock.calls[0][0]).toBe(".moss/site/test.html");
 
       const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenHtml).toContain('<form action="https://buttondown.com/api/emails/embed-subscribe/testuser"');
@@ -101,7 +106,9 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListFiles.mockResolvedValue(["test.html"]);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
       mockReadFile.mockResolvedValue(html);
       mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
@@ -130,7 +137,9 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListFiles.mockResolvedValue(["test.html"]);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
       mockReadFile.mockResolvedValue(html);
       mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
@@ -159,7 +168,9 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListFiles.mockResolvedValue(["test.html"]);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
       mockReadFile.mockResolvedValue(html);
       mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
@@ -190,7 +201,9 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListFiles.mockResolvedValue(["test.html"]);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
       mockReadFile.mockResolvedValue(html);
       mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(false);
@@ -240,7 +253,7 @@ describe("enhance hook", () => {
       const { enhance } = await import("../enhance");
       await enhance(ctx);
 
-      expect(mockListFiles).not.toHaveBeenCalled();
+      expect(mockListSiteFilesWithSizes).not.toHaveBeenCalled();
       expect(mockReadFile).not.toHaveBeenCalled();
       expect(mockWriteFile).not.toHaveBeenCalled();
     });

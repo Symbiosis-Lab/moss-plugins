@@ -7,7 +7,7 @@
 import {
   readFile,
   writeFile,
-  listFiles,
+  listSiteFilesWithSizes,
   readPluginFile,
   writePluginFile,
   pluginFileExists,
@@ -59,19 +59,23 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     return { success: false, message: `Failed to get newsletter info: ${e}` };
   }
 
-  // List HTML files and inject form
-  const files = await listFiles();
-  const htmlFiles = files.filter((f) => f.endsWith(".html"));
+  // List HTML files in the compiled site output and inject form
+  const siteFiles = await listSiteFilesWithSizes();
+  const htmlFiles = siteFiles
+    .map((f) => f.path)
+    .filter((f) => f.endsWith(".html"));
 
-  for (const filePath of htmlFiles) {
+  for (const sitePath of htmlFiles) {
+    // readFile/writeFile operate on the project root, so prefix with .moss/site/
+    const projectPath = `.moss/site/${sitePath}`;
     try {
-      const html = await readFile(filePath);
+      const html = await readFile(projectPath);
       const modified = injectSubscribeForm(html, username);
       if (modified !== html) {
-        await writeFile(filePath, modified);
+        await writeFile(projectPath, modified);
       }
     } catch (e) {
-      console.warn(`Failed to process ${filePath}: ${e}`);
+      console.warn(`Failed to process ${sitePath}: ${e}`);
     }
   }
 

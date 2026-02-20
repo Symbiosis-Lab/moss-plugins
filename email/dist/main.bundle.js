@@ -27,7 +27,7 @@ var EmailNewsletter = (() => {
     syndicate: () => syndicate
   });
 
-  // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
+  // ../../packages/moss-api/dist/index.mjs
   function getTauriCore() {
     const w = window;
     if (!w.__TAURI__?.core) throw new Error("Tauri core not available");
@@ -79,9 +79,8 @@ var EmailNewsletter = (() => {
       data: content
     });
   }
-  async function listFiles() {
-    const ctx = getInternalContext();
-    return getTauriCore().invoke("list_project_files", { projectPath: ctx.project_path });
+  async function listSiteFilesWithSizes() {
+    return getTauriCore().invoke("list_site_files_with_sizes", {});
   }
   async function readPluginFile(relativePath) {
     const ctx = getInternalContext();
@@ -240,17 +239,18 @@ var EmailNewsletter = (() => {
     } catch (e) {
       return { success: false, message: `Failed to get newsletter info: ${e}` };
     }
-    const files = await listFiles();
-    const htmlFiles = files.filter((f) => f.endsWith(".html"));
-    for (const filePath of htmlFiles) {
+    const siteFiles = await listSiteFilesWithSizes();
+    const htmlFiles = siteFiles.map((f) => f.path).filter((f) => f.endsWith(".html"));
+    for (const sitePath of htmlFiles) {
+      const projectPath = `.moss/site/${sitePath}`;
       try {
-        const html = await readFile(filePath);
+        const html = await readFile(projectPath);
         const modified = injectSubscribeForm(html, username);
         if (modified !== html) {
-          await writeFile(filePath, modified);
+          await writeFile(projectPath, modified);
         }
       } catch (e) {
-        console.warn(`Failed to process ${filePath}: ${e}`);
+        console.warn(`Failed to process ${sitePath}: ${e}`);
       }
     }
     return { success: true };

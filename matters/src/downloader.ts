@@ -10,7 +10,6 @@
  */
 
 import {
-  log,
   reportProgress,
   sleep,
 } from "./utils";
@@ -147,27 +146,27 @@ async function downloadAssetWithRetry(
 ): Promise<{ actualPath: string; success: boolean; error?: string }> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      log("log", `   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
+      console.log(`   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
 
       // Rust handles timeout (30s) and concurrency (5 parallel)
       const result = await downloadAssetRust(url, "assets");
 
       if (!result.ok) {
         const err = new DownloadError(`HTTP ${result.status}`, result.status);
-        log("warn", `   [!] HTTP ${result.status} for ${url}`);
+        console.warn(`   [!] HTTP ${result.status} for ${url}`);
 
         if (!err.isRetryable() || attempt === MAX_RETRIES) {
-          log("error", `   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}`);
+          console.error(`   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}`);
           return { actualPath: "", success: false, error: `HTTP ${result.status}` };
         }
 
         const delay = getFibonacciDelay(attempt);
-        log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        console.warn(`   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await sleep(delay);
         continue;
       }
 
-      log("log", `   [✓] Downloaded: ${result.actualPath}`);
+      console.log(`   [✓] Downloaded: ${result.actualPath}`);
       return { actualPath: result.actualPath, success: true };
 
     } catch (fetchError: unknown) {
@@ -176,23 +175,23 @@ async function downloadAssetWithRetry(
 
       // Log the error type
       if (isTimeout) {
-        log("error", `   [✗] TIMEOUT: ${url} - ${message}`);
+        console.error(`   [✗] TIMEOUT: ${url} - ${message}`);
       } else {
-        log("error", `   [✗] ERROR: ${url} - ${message}`);
+        console.error(`   [✗] ERROR: ${url} - ${message}`);
       }
 
       if (attempt === MAX_RETRIES) {
-        log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
+        console.error(`   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
         return { actualPath: "", success: false, error: message };
       }
 
       const delay = getFibonacciDelay(attempt);
-      log("warn", `   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      console.warn(`   [↻] Retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
       await sleep(delay);
     }
   }
 
-  log("error", `   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
+  console.error(`   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
   return { actualPath: "", success: false, error: "Max retries exceeded" };
 }
 
@@ -249,20 +248,20 @@ export async function downloadMediaAndUpdate(): Promise<{
     errors: [] as string[],
   };
 
-  log("log", "📸 Downloading media assets and updating references...");
+  console.log("📸 Downloading media assets and updating references...");
 
   // Get all project files once
   let allProjectFiles: string[];
   try {
     allProjectFiles = await listFiles();
   } catch (err) {
-    log("error", `Failed to list project files: ${err}`);
+    console.error(`Failed to list project files: ${err}`);
     result.errors.push(`Failed to list files: ${err}`);
     return result;
   }
 
   const allMdFiles = allProjectFiles.filter(f => f.endsWith(".md"));
-  log("log", `   Found ${allMdFiles.length} markdown files`);
+  console.log(`   Found ${allMdFiles.length} markdown files`);
 
   // Build UUID→asset path mapping for existing assets
   // This allows us to skip downloads when assets already exist
@@ -273,7 +272,7 @@ export async function downloadMediaAndUpdate(): Promise<{
       existingAssetsByUuid.set(uuid, assetPath);
     }
   }
-  log("log", `   Found ${existingAssetsByUuid.size} existing assets`);
+  console.log(`   Found ${existingAssetsByUuid.size} existing assets`);
 
   const { parseFrontmatter, regenerateFrontmatter } = await import("./converter");
 
@@ -327,7 +326,7 @@ export async function downloadMediaAndUpdate(): Promise<{
     }
   }
 
-  log("log", `   Found ${filesToProcess.length} files with remote media`);
+  console.log(`   Found ${filesToProcess.length} files with remote media`);
 
   if (filesToProcess.length === 0) {
     return result;
@@ -348,7 +347,7 @@ export async function downloadMediaAndUpdate(): Promise<{
       }
     }
   }
-  log("log", `   Total unique media URLs: ${totalUrls}`);
+  console.log(`   Total unique media URLs: ${totalUrls}`);
 
   // ========================================================================
   // Phase 2: Download all images in parallel (Rust handles concurrency)
@@ -374,7 +373,7 @@ export async function downloadMediaAndUpdate(): Promise<{
     }
   }
 
-  log("log", `   Downloading ${mediaToDownload.length} media files (${result.imagesSkipped} skipped)...`);
+  console.log(`   Downloading ${mediaToDownload.length} media files (${result.imagesSkipped} skipped)...`);
 
   // Fire all downloads in parallel - Rust Semaphore limits to 5 concurrent
   // Promise.allSettled ensures we get results for all, even if some fail
@@ -416,7 +415,7 @@ export async function downloadMediaAndUpdate(): Promise<{
     }
   }
 
-  log("log", `   Downloaded ${result.imagesDownloaded}/${mediaToDownload.length} media files`);
+  console.log(`   Downloaded ${result.imagesDownloaded}/${mediaToDownload.length} media files`);
 
   // ========================================================================
   // Phase 3: Update references in files
@@ -476,10 +475,10 @@ export async function downloadMediaAndUpdate(): Promise<{
         const newContent = regenerateFrontmatter(frontmatter) + "\n" + body;
         await writeFile(file.path, newContent);
         result.filesProcessed++;
-        log("log", `   [📝] Wrote: ${file.path}`);
+        console.log(`   [📝] Wrote: ${file.path}`);
       } catch (err) {
         result.errors.push(`Failed to write ${file.path}: ${err}`);
-        log("error", `   [✗] Failed to write: ${file.path} - ${err}`);
+        console.error(`   [✗] Failed to write: ${file.path} - ${err}`);
       }
     }
   }
@@ -492,7 +491,7 @@ export async function downloadMediaAndUpdate(): Promise<{
     `Downloaded ${result.imagesDownloaded} media, updated ${result.filesProcessed} files`
   );
 
-  log("log", `   ✅ Downloaded ${result.imagesDownloaded}, skipped ${result.imagesSkipped}, updated ${result.filesProcessed} files`);
+  console.log(`   ✅ Downloaded ${result.imagesDownloaded}, skipped ${result.imagesSkipped}, updated ${result.filesProcessed} files`);
 
   return result;
 }
@@ -610,23 +609,23 @@ export async function rewriteAllInternalLinks(
   };
 
   if (articlePathMap.size === 0) {
-    log("log", "🔗 No articles to rewrite links for");
+    console.log("🔗 No articles to rewrite links for");
     return result;
   }
 
-  log("log", "🔗 Rewriting internal Matters links...");
+  console.log("🔗 Rewriting internal Matters links...");
 
   let allFiles: string[];
   try {
     const allProjectFiles = await listFiles();
     allFiles = allProjectFiles.filter((f: string) => f.endsWith(".md"));
   } catch (err) {
-    log("error", `Failed to list project files: ${err}`);
+    console.error(`Failed to list project files: ${err}`);
     result.errors.push(`Failed to list files: ${err}`);
     return result;
   }
 
-  log("log", `   Scanning ${allFiles.length} markdown files for internal links...`);
+  console.log(`   Scanning ${allFiles.length} markdown files for internal links...`);
 
   // Import parseFrontmatter dynamically to avoid circular dependency
   const { parseFrontmatter, regenerateFrontmatter } = await import("./converter");
@@ -658,7 +657,7 @@ export async function rewriteAllInternalLinks(
     }
   }
 
-  log("log", `   Rewrote ${result.linksRewritten} links in ${result.filesProcessed} files`);
+  console.log(`   Rewrote ${result.linksRewritten} links in ${result.filesProcessed} files`);
 
   return result;
 }

@@ -24,9 +24,8 @@ vi.mock("@symbiosis-lab/moss-api", async (importOriginal) => {
   };
 });
 
-// Mock the utils module to prevent actual IPC calls for logging
+// Mock the utils module to prevent actual IPC calls
 vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
   reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),

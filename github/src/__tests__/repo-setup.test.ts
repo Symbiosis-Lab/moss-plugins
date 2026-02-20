@@ -22,7 +22,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 
 // Mock utils
 vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
+  reportProgress: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock token module

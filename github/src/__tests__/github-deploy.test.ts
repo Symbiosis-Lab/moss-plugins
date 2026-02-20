@@ -10,9 +10,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock utils (log)
+// Mock utils
 vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
   showToast: vi.fn().mockResolvedValue(undefined),
 }));
 

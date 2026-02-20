@@ -13,7 +13,7 @@
  */
 
 import { openSystemBrowser, httpPost } from "@symbiosis-lab/moss-api";
-import { log, sleep, reportProgress } from "./utils";
+import { sleep, reportProgress } from "./utils";
 import { storeToken, getToken, clearToken, getTokenFromGit } from "./token";
 import type {
   DeviceCodeResponse,
@@ -54,7 +54,7 @@ const MAX_POLL_TIME_MS = 300000;
  * Uses httpPost to bypass CORS restrictions in Tauri WebView.
  */
 export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
-  await log("log", "   Requesting device code from GitHub...");
+  console.log("   Requesting device code from GitHub...");
 
   const response = await httpPost(
     GITHUB_DEVICE_CODE_URL,
@@ -80,7 +80,7 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
     throw new Error(`GitHub error: ${data.error_description || data.error}`);
   }
 
-  await log("log", `   Device code received. User code: ${data.user_code}`);
+  console.log(`   Device code received. User code: ${data.user_code}`);
 
   return data as DeviceCodeResponse;
 }
@@ -177,7 +177,7 @@ export function hasRequiredScopes(scopes: string[]): boolean {
  * Note: Plugin identity and project path are auto-detected from runtime context.
  */
 export async function checkAuthentication(): Promise<AuthState> {
-  await log("log", "   Checking GitHub authentication...");
+  console.log("   Checking GitHub authentication...");
 
   // 1. Try to get token from plugin cookies (fastest)
   let token = await getToken();
@@ -187,7 +187,7 @@ export async function checkAuthentication(): Promise<AuthState> {
     const validation = await validateToken(token);
 
     if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
-      await log("log", `   Authenticated as ${validation.user?.login} (from plugin cookies)`);
+      console.log(`   Authenticated as ${validation.user?.login} (from plugin cookies)`);
       return {
         isAuthenticated: true,
         username: validation.user?.login,
@@ -196,12 +196,12 @@ export async function checkAuthentication(): Promise<AuthState> {
     }
 
     // Token is invalid - clear it and try git credentials
-    await log("log", "   Cached token invalid, clearing...");
+    console.log("   Cached token invalid, clearing...");
     await clearToken();
   }
 
   // 2. Try git credential helper (Bug 8 fix)
-  await log("log", "   Checking git credential helper...");
+  console.log("   Checking git credential helper...");
   token = await getTokenFromGit();
 
   if (token) {
@@ -210,7 +210,7 @@ export async function checkAuthentication(): Promise<AuthState> {
     if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
       // Store in plugin cookies for faster future access
       await storeToken(token);
-      await log("log", `   Authenticated as ${validation.user?.login} (from git credentials)`);
+      console.log(`   Authenticated as ${validation.user?.login} (from git credentials)`);
       return {
         isAuthenticated: true,
         username: validation.user?.login,
@@ -218,10 +218,10 @@ export async function checkAuthentication(): Promise<AuthState> {
       };
     }
 
-    await log("log", "   Git credential token lacks required scopes or is invalid");
+    console.log("   Git credential token lacks required scopes or is invalid");
   }
 
-  await log("log", "   No valid credentials found");
+  console.log("   No valid credentials found");
   return { isAuthenticated: false };
 }
 
@@ -250,8 +250,8 @@ export async function promptLogin(): Promise<boolean> {
       4,
       `Enter code: ${deviceCodeResponse.user_code}`
     );
-    await log("log", `   Opening system browser for GitHub authorization...`);
-    await log("log", `   Enter code: ${deviceCodeResponse.user_code}`);
+    console.log(`   Opening system browser for GitHub authorization...`);
+    console.log(`   Enter code: ${deviceCodeResponse.user_code}`);
 
     // Use system browser instead of plugin browser (Bug 9 fix)
     await openSystemBrowser(deviceCodeResponse.verification_uri);
@@ -265,7 +265,7 @@ export async function promptLogin(): Promise<boolean> {
     );
 
     if (!token) {
-      await log("warn", "   Authorization timed out or was denied");
+      console.warn("   Authorization timed out or was denied");
       // System browser manages itself - no need to close
       return false;
     }
@@ -275,18 +275,18 @@ export async function promptLogin(): Promise<boolean> {
     const stored = await storeToken(token);
 
     if (!stored) {
-      await log("warn", "   Failed to store token");
+      console.warn("   Failed to store token");
       // Continue anyway - the token is valid, just won't persist
     }
 
     // System browser manages itself - no need to close
 
     await reportProgress("authentication", 4, 4, "Authenticated");
-    await log("log", "   Successfully authenticated with GitHub");
+    console.log("   Successfully authenticated with GitHub");
 
     return true;
   } catch (error) {
-    await log("error", `   Authentication failed: ${error}`);
+    console.error(`   Authentication failed: ${error}`);
     // System browser manages itself - no need to close
     return false;
   }
@@ -322,30 +322,30 @@ async function waitForToken(
       if (response.error === "slow_down") {
         // GitHub wants us to slow down
         interval += 5;
-        await log("log", `   Slowing down, new interval: ${interval}s`);
+        console.log(`   Slowing down, new interval: ${interval}s`);
         continue;
       }
 
       if (response.error === "expired_token") {
-        await log("warn", "   Device code expired");
+        console.warn("   Device code expired");
         return null;
       }
 
       if (response.error === "access_denied") {
-        await log("warn", "   User denied authorization");
+        console.warn("   User denied authorization");
         return null;
       }
 
       // Unknown error
-      await log("error", `   Unexpected error: ${response.error}`);
+      console.error(`   Unexpected error: ${response.error}`);
       return null;
     } catch (error) {
-      await log("error", `   Poll error: ${error}`);
+      console.error(`   Poll error: ${error}`);
       // Continue polling on network errors
     }
   }
 
-  await log("warn", "   Authorization timeout");
+  console.warn("   Authorization timeout");
   return null;
 }
 

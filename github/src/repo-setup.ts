@@ -12,7 +12,7 @@
  */
 
 import { openBrowserWithHtml, closeBrowser, onEvent } from "@symbiosis-lab/moss-api";
-import { log, reportProgress } from "./utils";
+import { reportProgress } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
@@ -49,7 +49,7 @@ interface RepoSetupValue {
  * @returns Repository info, or null if cancelled/failed
  */
 export async function ensureGitHubRepo(): Promise<RepoSetupResult | null> {
-  await log("log", "   Ensuring GitHub repository...");
+  console.log("   Ensuring GitHub repository...");
 
   // Step 1: Ensure authentication
   const token = await ensureAuthenticated();
@@ -62,9 +62,9 @@ export async function ensureGitHubRepo(): Promise<RepoSetupResult | null> {
   try {
     const user = await getAuthenticatedUser(token);
     username = user.login;
-    await log("log", `   Authenticated as ${username}`);
+    console.log(`   Authenticated as ${username}`);
   } catch (error) {
-    await log("error", `   Failed to get user info: ${error}`);
+    console.error(`   Failed to get user info: ${error}`);
     return null;
   }
 
@@ -93,30 +93,30 @@ async function ensureAuthenticated(): Promise<string | null> {
   }
 
   // Try 2: Git credential helper
-  await log("log", "   No cached token, checking git credentials...");
+  console.log("   No cached token, checking git credentials...");
   token = await getTokenFromGit();
   if (token) {
     const validation = await validateToken(token);
     if (validation.valid && hasRequiredScopes(validation.scopes || [])) {
-      await log("log", `   Using token from git credentials (${validation.user?.login})`);
+      console.log(`   Using token from git credentials (${validation.user?.login})`);
       await storeToken(token);
       return token;
     } else {
-      await log("log", "   Git credential token invalid or missing scopes");
+      console.log("   Git credential token invalid or missing scopes");
     }
   }
 
   // Try 3: OAuth login
-  await log("log", "   No valid credentials found, prompting login...");
+  console.log("   No valid credentials found, prompting login...");
   const loginSuccess = await promptLogin();
   if (!loginSuccess) {
-    await log("warn", "   GitHub login cancelled or failed");
+    console.warn("   GitHub login cancelled or failed");
     return null;
   }
 
   token = await getToken();
   if (!token) {
-    await log("error", "   Failed to get token after login");
+    console.error("   Failed to get token after login");
     return null;
   }
 
@@ -131,11 +131,11 @@ async function createRootRepo(
   repoName: string,
   token: string
 ): Promise<RepoSetupResult | null> {
-  await log("log", `   Auto-creating ${repoName} (will deploy to root URL)...`);
+  console.log(`   Auto-creating ${repoName} (will deploy to root URL)...`);
 
   try {
     const createdRepo = await createRepository(repoName, token, "Created with moss");
-    await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
+    console.log(`   Repository created: ${createdRepo.htmlUrl}`);
 
     return {
       name: createdRepo.name,
@@ -143,7 +143,7 @@ async function createRootRepo(
       fullName: createdRepo.fullName,
     };
   } catch (error) {
-    await log("error", `   Failed to create repository: ${error}`);
+    console.error(`   Failed to create repository: ${error}`);
     return null;
   }
 }
@@ -196,7 +196,7 @@ async function showBrowserWithProgress<T>(
       }),
     ]);
   } catch (error) {
-    await log("error", `   Form display error: ${error}`);
+    console.error(`   Form display error: ${error}`);
     return null;
   } finally {
     // Always clear interval and unlisten from event
@@ -214,7 +214,7 @@ async function showRepoNameUI(
   username: string,
   token: string
 ): Promise<RepoSetupResult | null> {
-  await log("log", "   Root repo already exists, showing UI for custom name...");
+  console.log("   Root repo already exists, showing UI for custom name...");
 
   const html = createRepoSetupHtml(username, token);
   const result = await showBrowserWithProgress<RepoSetupValue>(
@@ -225,18 +225,18 @@ async function showRepoNameUI(
   );
 
   if (!result) {
-    await log("log", "   User cancelled repository setup");
+    console.log("   User cancelled repository setup");
     await closeBrowser(); // Close browser on cancellation
     return null;
   }
 
   // Create the custom repo
   const repoName = result.name;
-  await log("log", `   Creating repository: ${repoName}`);
+  console.log(`   Creating repository: ${repoName}`);
 
   try {
     const createdRepo = await createRepository(repoName, token, "Created with moss");
-    await log("log", `   Repository created: ${createdRepo.htmlUrl}`);
+    console.log(`   Repository created: ${createdRepo.htmlUrl}`);
 
     await closeBrowser(); // Close browser after successful repo creation
 
@@ -246,7 +246,7 @@ async function showRepoNameUI(
       fullName: createdRepo.fullName,
     };
   } catch (error) {
-    await log("error", `   Failed to create repository: ${error}`);
+    console.error(`   Failed to create repository: ${error}`);
     await closeBrowser(); // Close browser on error
     return null;
   }

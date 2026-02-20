@@ -3,7 +3,6 @@
  */
 
 import { writeFile, fileExists } from "@symbiosis-lab/moss-api";
-import { log } from "./utils";
 
 /**
  * GitHub Actions workflow template for deploying to GitHub Pages
@@ -63,13 +62,13 @@ export function generateWorkflowContent(branch: string): string {
  * Create the GitHub Actions workflow file
  */
 export async function createWorkflowFile(branch: string): Promise<void> {
-  await log("log", "   Creating .github/workflows/moss-deploy.yml...");
+  console.log("   Creating .github/workflows/moss-deploy.yml...");
 
   const content = generateWorkflowContent(branch);
 
   await writeFile(".github/workflows/moss-deploy.yml", content);
 
-  await log("log", "   Workflow file created");
+  console.log("   Workflow file created");
 }
 
 /**

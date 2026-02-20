@@ -13,7 +13,6 @@
  */
 
 import { getPluginCookie, setPluginCookie, executeBinary } from "@symbiosis-lab/moss-api";
-import { log } from "./utils";
 
 const GITHUB_HOST = "github.com";
 const TOKEN_COOKIE_NAME = "__github_access_token";
@@ -71,7 +70,7 @@ export function parseCredentialOutput(output: string): {
  */
 export async function getTokenFromGit(gitPath: string = "git"): Promise<string | null> {
   try {
-    await log("log", "   Checking git credential helper for GitHub token...");
+    console.log("   Checking git credential helper for GitHub token...");
 
     // Format the credential request for github.com
     const input = formatCredentialInput(GITHUB_HOST, "https");
@@ -85,7 +84,7 @@ export async function getTokenFromGit(gitPath: string = "git"): Promise<string |
     });
 
     if (!result.success) {
-      await log("log", "   No credentials found in git credential helper");
+      console.log("   No credentials found in git credential helper");
       return null;
     }
 
@@ -93,14 +92,14 @@ export async function getTokenFromGit(gitPath: string = "git"): Promise<string |
     const { password } = parseCredentialOutput(result.stdout);
 
     if (password) {
-      await log("log", "   Found GitHub token in git credential helper");
+      console.log("   Found GitHub token in git credential helper");
       return password;
     }
 
-    await log("log", "   Git credential helper returned no password");
+    console.log("   Git credential helper returned no password");
     return null;
   } catch (error) {
-    await log("log", `   Git credential helper failed: ${error}`);
+    console.log(`   Git credential helper failed: ${error}`);
     return null;
   }
 }
@@ -113,7 +112,7 @@ export async function getTokenFromGit(gitPath: string = "git"): Promise<string |
  */
 export async function storeToken(token: string): Promise<boolean> {
   try {
-    await log("log", "   Storing GitHub access token...");
+    console.log("   Storing GitHub access token...");
 
     // Store in plugin cookies
     try {
@@ -124,18 +123,18 @@ export async function storeToken(token: string): Promise<boolean> {
           domain: GITHUB_HOST,
         },
       ]);
-      await log("log", "   Token stored in plugin cookies");
+      console.log("   Token stored in plugin cookies");
     } catch (error) {
-      await log("warn", `   Could not store in cookies: ${error}`);
+      console.warn(`   Could not store in cookies: ${error}`);
     }
 
     // Always cache in memory as fallback
     cachedToken = token;
 
-    await log("log", "   Token stored successfully");
+    console.log("   Token stored successfully");
     return true;
   } catch (error) {
-    await log("error", `   Error storing token: ${error}`);
+    console.error(`   Error storing token: ${error}`);
     return false;
   }
 }
@@ -181,7 +180,7 @@ export function clearTokenCache(): void {
  */
 export async function clearToken(): Promise<boolean> {
   try {
-    await log("log", "   Clearing GitHub access token...");
+    console.log("   Clearing GitHub access token...");
 
     // Clear from plugin cookies
     try {
@@ -193,10 +192,10 @@ export async function clearToken(): Promise<boolean> {
     // Clear memory cache
     cachedToken = null;
 
-    await log("log", "   Token cleared successfully");
+    console.log("   Token cleared successfully");
     return true;
   } catch (error) {
-    await log("error", `   Error clearing token: ${error}`);
+    console.error(`   Error clearing token: ${error}`);
     return false;
   }
 }

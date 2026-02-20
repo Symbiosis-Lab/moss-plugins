@@ -11,7 +11,7 @@
 
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { getTauriCore } from "@symbiosis-lab/moss-api";
-import { log, reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
+import { reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
@@ -83,14 +83,14 @@ async function waitForPagesLive(
 ): Promise<{ isLive: boolean; url: string }> {
   // If no token available, skip status check
   if (!token) {
-    await log("log", "   Status check skipped (no token available)");
+    console.log("   Status check skipped (no token available)");
     return { isLive: false, url: pagesUrl };
   }
 
   const maxAttempts = 6; // 6 attempts × 5s = 30s max
   const pollInterval = 5000;
 
-  await log("log", "   Checking deployment status...");
+  console.log("   Checking deployment status...");
 
   for (let i = 0; i < maxAttempts; i++) {
     // Report progress FIRST to reset the 60-second inactivity timer
@@ -100,12 +100,12 @@ async function waitForPagesLive(
     const status = await checkPagesStatus(owner, repo, token);
 
     if (status.status === "built") {
-      await log("log", "   Site is live!");
+      console.log("   Site is live!");
       return { isLive: true, url: pagesUrl };
     }
 
     if (status.status === "errored") {
-      await log("log", "   Build failed on GitHub");
+      console.log("   Build failed on GitHub");
       return { isLive: false, url: pagesUrl };
     }
 
@@ -116,7 +116,7 @@ async function waitForPagesLive(
   }
 
   // Timeout - return URL anyway with isLive: false
-  await log("log", "   Status check timed out (site may still be building)");
+  console.log("   Status check timed out (site may still be building)");
   return { isLive: false, url: pagesUrl };
 }
 
@@ -137,7 +137,7 @@ async function waitForPagesLive(
 async function deploy(context: OnDeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
-  await log("log", "GitHub Deployer: Starting deployment...");
+  console.log("GitHub Deployer: Starting deployment...");
 
   // Pre-flight: resolve git binary (downloads if needed)
   await reportProgress("configuring", 1, 10, "Checking git...");
@@ -149,7 +149,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await reportError(msg, "validation", true);
     return { success: false, message: msg };
   }
-  await log("log", `   Using git: ${gitPath}`);
+  console.log(`   Using git: ${gitPath}`);
 
   try {
     // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
@@ -159,7 +159,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       await reportError(msg, "validation", true);
       return { success: false, message: msg };
     }
-    await log("log", `   Site files: ${context.site_files.length} files ready`);
+    console.log(`   Site files: ${context.site_files.length} files ready`);
 
     // Phase 0: Determine deploy target from git state (single source of truth)
     let owner: string;
@@ -172,7 +172,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       // .git origin already points to a GitHub repo — use it
       owner = existing.owner;
       repoName = existing.repo;
-      await log("log", `   Deploy target: ${owner}/${repoName} (from git origin)`);
+      console.log(`   Deploy target: ${owner}/${repoName} (from git origin)`);
     } else {
       // No .git or no GitHub origin — run setup flow
       await reportProgress("setup", 0, 10, "Setting up GitHub repository...");
@@ -191,9 +191,9 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       repoName = parsed.repo;
       wasFirstSetup = true;
 
-      await log("log", `   Repository configured: ${repoInfo.fullName}`);
+      console.log(`   Repository configured: ${repoInfo.fullName}`);
       await closeBrowser();
-      await log("log", "   Browser closed - continuing deployment in background");
+      console.log("   Browser closed - continuing deployment in background");
     }
 
     // Phase 1: Ensure authentication (mandatory for GitHub API + push)
@@ -207,7 +207,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
           await storeToken(gitToken);
           token = gitToken;
         } else {
-          await log("log", "   Git credential token invalid or lacks required scopes");
+          console.log("   Git credential token invalid or lacks required scopes");
         }
       }
       if (!token) {
@@ -257,7 +257,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     try {
       await ensurePagesSource(owner, repoName, token, "gh-pages");
     } catch (e) {
-      await log("warn", `   Failed to configure Pages source: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`   Failed to configure Pages source: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Generate pages URL for logging and response
@@ -265,11 +265,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Log the deployment result with URL immediately
     if (commitSha) {
-      await log("log", `   Deployed: ${commitSha.substring(0, 7)}`);
-      await log("log", `   Site URL: ${pagesUrl}`);
+      console.log(`   Deployed: ${commitSha.substring(0, 7)}`);
+      console.log(`   Site URL: ${pagesUrl}`);
     } else {
-      await log("log", "   No changes to deploy");
-      await log("log", `   Site URL: ${pagesUrl}`);
+      console.log("   No changes to deploy");
+      console.log(`   Site URL: ${pagesUrl}`);
     }
 
     // Phase 9: Check if deployment is live (only if we pushed changes)
@@ -328,7 +328,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       : commitSha
         ? "Changes pushed"
         : "No changes";
-    await log("log", `GitHub Deployer: ${logMsg}`);
+    console.log(`GitHub Deployer: ${logMsg}`);
 
     // Show toast with clickable URL (8s duration for clickable link)
     await showToast({
@@ -358,7 +358,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await reportError(errorMessage, "deploy", true);
-    await log("error", `GitHub Deployer: Failed - ${errorMessage}`);
+    console.error(`GitHub Deployer: Failed - ${errorMessage}`);
 
     // Categorize error for toast display
     const lowerError = errorMessage.toLowerCase();
@@ -409,7 +409,7 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
 
   const { domain } = context;
 
-  await log("log", `GitHub Deployer: Configuring custom domain "${domain}"...`);
+  console.log(`GitHub Deployer: Configuring custom domain "${domain}"...`);
 
   try {
     // Resolve git binary (may use portable download if system git unavailable)
@@ -417,7 +417,7 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     try {
       gitPath = await getTauriCore().invoke<string>("resolve_git_path");
     } catch (e) {
-      await log("log", `   Git resolution failed, falling back to system git: ${e instanceof Error ? e.message : String(e)}`);
+      console.log(`   Git resolution failed, falling back to system git: ${e instanceof Error ? e.message : String(e)}`);
       gitPath = "git"; // Fallback — configure_domain is non-fatal
     }
 
@@ -450,10 +450,10 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     }
 
     // Call GitHub Pages API to set the custom domain
-    await log("log", `   Setting CNAME to "${domain}" on ${owner}/${repo}...`);
+    console.log(`   Setting CNAME to "${domain}" on ${owner}/${repo}...`);
     await setCustomDomain(owner, repo, token, domain);
 
-    await log("log", `   Custom domain "${domain}" configured on GitHub Pages`);
+    console.log(`   Custom domain "${domain}" configured on GitHub Pages`);
 
     return {
       success: true,
@@ -461,7 +461,7 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    await log("error", `GitHub Deployer: Failed to configure domain - ${errorMessage}`);
+    console.error(`GitHub Deployer: Failed to configure domain - ${errorMessage}`);
 
     return {
       success: false,

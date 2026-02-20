@@ -13,10 +13,7 @@ import {
   getTokenFromGit,
 } from "../token";
 
-// Mock the utils module
-vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
-}));
+// token.ts no longer imports from utils — no mock needed
 
 describe("token", () => {
   describe("formatCredentialInput", () => {

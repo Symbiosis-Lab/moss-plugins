@@ -5,8 +5,6 @@
  * Used for repository creation and availability checking.
  */
 
-import { log } from "./utils";
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -175,7 +173,7 @@ export async function createRepository(
   token: string,
   description?: string
 ): Promise<CreatedRepository> {
-  await log("log", `Creating repository: ${name}`);
+  console.log(`Creating repository: ${name}`);
 
   const response = await fetch(`${GITHUB_API_BASE}/user/repos`, {
     method: "POST",
@@ -200,7 +198,7 @@ export async function createRepository(
 
   const repo = await response.json();
 
-  await log("log", `Repository created: ${repo.html_url}`);
+  console.log(`Repository created: ${repo.html_url}`);
 
   return {
     name: repo.name,

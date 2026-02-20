@@ -26,7 +26,6 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 const mockReportProgress = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
   reportProgress: (...args: unknown[]) => mockReportProgress(...args),
 }));
 

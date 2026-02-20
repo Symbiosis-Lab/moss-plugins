@@ -6,13 +6,11 @@
 
 import {
   setMessageContext,
-  sendMessage as sdkSendMessage,
   reportProgress as sdkReportProgress,
   reportError as sdkReportError,
   showToast as sdkShowToast,
   dismissToast as sdkDismissToast,
   closeBrowser as sdkCloseBrowser,
-  type PluginMessage,
   type ToastOptions,
 } from "@symbiosis-lab/moss-api";
 
@@ -37,32 +35,6 @@ setMessageContext(PLUGIN_NAME, "deploy");
  */
 export function setCurrentHookName(name: string): void {
   setMessageContext(PLUGIN_NAME, name);
-}
-
-/**
- * Send a message to moss (logs, progress, errors)
- */
-export async function sendMessage(message: PluginMessage): Promise<void> {
-  await sdkSendMessage(message);
-}
-
-/**
- * Log a message to moss terminal
- *
- * @deprecated Use console.log/warn/error directly instead.
- * Plugin runtime now auto-forwards all console.* calls to Rust.
- * This function will be removed in a future version.
- *
- * Migration example:
- *   // Before: await log("log", "Starting...");
- *   // After:  console.log("Starting...");
- */
-export async function log(
-  level: "log" | "error" | "warn" | "info",
-  message: string
-): Promise<void> {
-  // Just call console directly - runtime auto-forwards to Rust
-  console[level](message);
 }
 
 /**

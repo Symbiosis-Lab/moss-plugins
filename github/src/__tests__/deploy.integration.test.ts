@@ -17,7 +17,6 @@ import type { OnDeployContext } from "../types";
 
 // We need to mock the utils module to prevent actual IPC calls for logging
 vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
   reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
@@ -95,7 +94,7 @@ vi.mock("../github-api", () => ({
 
 // Import after mocking
 import { on_deploy } from "../main";
-import { log, reportProgress, showToast } from "../utils";
+import { reportProgress, showToast } from "../utils";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "../github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";

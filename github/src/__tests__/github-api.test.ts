@@ -17,10 +17,7 @@ import {
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock log function
-vi.mock("../utils", () => ({
-  log: vi.fn(),
-}));
+// github-api.ts no longer imports from utils — no mock needed
 
 describe("GitHub API", () => {
   beforeEach(() => {

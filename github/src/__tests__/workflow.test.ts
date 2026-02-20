@@ -11,10 +11,7 @@ import {
   type MockTauriContext,
 } from "@symbiosis-lab/moss-api/testing";
 
-// Mock utils to prevent actual IPC calls for logging
-vi.mock("../utils", () => ({
-  log: vi.fn().mockResolvedValue(undefined),
-}));
+// workflow.ts no longer imports from utils — no mock needed
 
 import {
   WORKFLOW_TEMPLATE,

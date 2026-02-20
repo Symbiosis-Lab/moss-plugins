@@ -16,7 +16,7 @@ import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { checkPagesStatus, setCustomDomain } from "./github-api";
+import { checkPagesStatus, setCustomDomain, ensurePagesSource } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
 // ============================================================================
@@ -251,6 +251,13 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       });
     } finally {
       clearInterval(heartbeat);
+    }
+
+    // Ensure GitHub Pages serves from gh-pages (non-fatal)
+    try {
+      await ensurePagesSource(owner, repoName, token, "gh-pages");
+    } catch (e) {
+      await log("warn", `   Failed to configure Pages source: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Generate pages URL for logging and response

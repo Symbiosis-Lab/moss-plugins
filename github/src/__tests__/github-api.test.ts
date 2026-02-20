@@ -8,6 +8,7 @@ import {
   checkRepoNameAvailable,
   createRepository,
   isValidRepoName,
+  ensurePagesSource,
   type GitHubUser,
   type CreatedRepository,
 } from "../github-api";
@@ -268,7 +269,7 @@ describe("GitHub API", () => {
       expect(body.private).toBe(false);
     });
 
-    it("creates repository with auto_init enabled", async () => {
+    it("creates repository without auto_init (no useless initial commit)", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -285,7 +286,7 @@ describe("GitHub API", () => {
 
       const [, options] = mockFetch.mock.calls[0];
       const body = JSON.parse(options.body);
-      expect(body.auto_init).toBe(true);
+      expect(body.auto_init).toBe(false);
     });
 
     it("throws error on failure", async () => {
@@ -462,6 +463,122 @@ describe("GitHub API", () => {
       const exists = await checkRepoExists("testuser", "testuser.github.io", "test-token");
 
       expect(exists).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // ensurePagesSource() tests
+  // ============================================================================
+  describe("ensurePagesSource", () => {
+    it("creates Pages when not enabled (404)", async () => {
+      // GET /pages → 404 (not enabled)
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // POST /pages → 201 (created)
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 201 });
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: true, wasCreated: true });
+
+      // Verify GET was called first
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/my-repo/pages",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer test-token",
+          }),
+        })
+      );
+
+      // Verify POST was called with correct source
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/my-repo/pages",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ source: { branch: "gh-pages", path: "/" } }),
+        })
+      );
+    });
+
+    it("updates Pages when source branch is wrong", async () => {
+      // GET /pages → 200, source is main
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ source: { branch: "main", path: "/" } }),
+      });
+      // PUT /pages → 200 (updated)
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: true, wasCreated: false });
+
+      // Verify PUT was called to update
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/testuser/my-repo/pages",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ source: { branch: "gh-pages", path: "/" } }),
+        })
+      );
+    });
+
+    it("no-ops when Pages already configured correctly", async () => {
+      // GET /pages → 200, source is already gh-pages
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ source: { branch: "gh-pages", path: "/" } }),
+      });
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: true, wasCreated: false });
+      // Only one call (GET), no PUT
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns configured: false when POST fails", async () => {
+      // GET /pages → 404
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // POST /pages → 422 (error)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: () => Promise.resolve("Validation failed"),
+      });
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: false, wasCreated: false });
+    });
+
+    it("returns configured: false when PUT fails", async () => {
+      // GET /pages → 200, wrong branch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ source: { branch: "main", path: "/" } }),
+      });
+      // PUT /pages → 500 (error)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("Internal server error"),
+      });
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: false, wasCreated: false });
+    });
+
+    it("returns configured: false on network error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+      const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
+
+      expect(result).toEqual({ configured: false, wasCreated: false });
     });
   });
 });

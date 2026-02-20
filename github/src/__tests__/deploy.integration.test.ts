@@ -90,6 +90,7 @@ vi.mock("../github-api", () => ({
   checkRepoExists: vi.fn(),
   createRepository: vi.fn(),
   setCustomDomain: vi.fn(),
+  ensurePagesSource: vi.fn().mockResolvedValue({ configured: true, wasCreated: false }),
 }));
 
 // Import after mocking
@@ -99,7 +100,7 @@ import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "../githu
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { buildPagesUrl, parseGitHubUrl } from "../git";
-import { checkPagesStatus } from "../github-api";
+import { checkPagesStatus, ensurePagesSource } from "../github-api";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
@@ -480,6 +481,35 @@ describe("on_deploy integration", () => {
       for (let i = 1; i < currentValues.length; i++) {
         expect(currentValues[i]).toBeGreaterThanOrEqual(currentValues[i - 1]);
       }
+    });
+  });
+
+  describe("Pages Source Configuration", () => {
+    it("calls ensurePagesSource after successful deploy", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true, token: "test-token" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(ensurePagesSource)).toHaveBeenCalledWith("user", "repo", "test-token", "gh-pages");
+    });
+
+    it("does not fail deploy when ensurePagesSource fails", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true });
+      vi.mocked(ensurePagesSource).mockRejectedValue(new Error("API error"));
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+    });
+
+    it("calls ensurePagesSource even when no changes to push", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: false, token: "test-token" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(ensurePagesSource)).toHaveBeenCalledWith("user", "repo", "test-token", "gh-pages");
     });
   });
 

@@ -188,7 +188,7 @@ export async function createRepository(
       name,
       description: description ?? "Created with moss",
       private: false, // Always public for GitHub Pages
-      auto_init: true, // Initializes repo so Git Data API works immediately
+      auto_init: false, // Force-push overwrites any initial commit; avoid useless "Initial commit"
     }),
   });
 
@@ -355,6 +355,82 @@ export async function setCustomDomain(
   throw new Error(
     `GitHub Pages API error (${response.status}): ${body}`
   );
+}
+
+// ============================================================================
+// Pages Source Configuration
+// ============================================================================
+
+/**
+ * Result of ensuring GitHub Pages source is configured correctly
+ */
+export interface EnsurePagesResult {
+  /** Whether Pages is now serving from the desired branch */
+  configured: boolean;
+  /** Whether Pages was newly created (vs. already existed) */
+  wasCreated: boolean;
+}
+
+/**
+ * Ensure GitHub Pages serves from the specified branch.
+ *
+ * - If Pages is not enabled (404): POST to create it
+ * - If Pages exists but on the wrong branch: PUT to update it
+ * - If Pages is already on the correct branch: no-op
+ *
+ * Non-fatal: returns { configured: false } on errors instead of throwing.
+ *
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param token - GitHub access token
+ * @param branch - Desired source branch (e.g. "gh-pages")
+ * @returns Result indicating whether Pages was configured
+ */
+export async function ensurePagesSource(
+  owner: string,
+  repo: string,
+  token: string,
+  branch: string,
+): Promise<EnsurePagesResult> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages`;
+  const headers = {
+    ...GITHUB_API_HEADERS,
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  const sourceBody = JSON.stringify({ source: { branch, path: "/" } });
+
+  try {
+    // Check current Pages config
+    const getResp = await fetch(url, { headers });
+
+    if (getResp.status === 404) {
+      // Pages not enabled — create it
+      const postResp = await fetch(url, { method: "POST", headers, body: sourceBody });
+      if (postResp.ok) {
+        return { configured: true, wasCreated: true };
+      }
+      return { configured: false, wasCreated: false };
+    }
+
+    if (getResp.ok) {
+      const data = await getResp.json();
+      if (data.source?.branch === branch) {
+        // Already correct
+        return { configured: true, wasCreated: false };
+      }
+      // Wrong branch — update it
+      const putResp = await fetch(url, { method: "PUT", headers, body: sourceBody });
+      if (putResp.ok) {
+        return { configured: true, wasCreated: false };
+      }
+      return { configured: false, wasCreated: false };
+    }
+
+    return { configured: false, wasCreated: false };
+  } catch {
+    return { configured: false, wasCreated: false };
+  }
 }
 
 // ============================================================================

@@ -236,6 +236,59 @@ describe("enhance hook", () => {
     });
   });
 
+  describe("enhance is idempotent (safe to run multiple times)", () => {
+    it("should produce identical output when run twice on the same HTML", async () => {
+      const originalHtml = `<!DOCTYPE html>
+<html>
+<body>
+  <div class="footer-content">
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+  </div>
+</body>
+</html>`;
+
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+      mockWriteFile.mockResolvedValue(undefined);
+
+      // First run: inject into original HTML
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(originalHtml);
+
+      const ctx = createEnhanceContext();
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const firstRunOutput = mockWriteFile.mock.calls[0][1] as string;
+
+      // Second run: inject into already-enhanced HTML
+      vi.clearAllMocks();
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+      mockWriteFile.mockResolvedValue(undefined);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(firstRunOutput);
+
+      await enhance(ctx);
+
+      // If idempotent, writeFile should NOT be called (modified === html)
+      // OR if called, the output should be identical
+      if (mockWriteFile.mock.calls.length > 0) {
+        const secondRunOutput = mockWriteFile.mock.calls[0][1] as string;
+        expect(secondRunOutput).toBe(firstRunOutput);
+      }
+      // If writeFile wasn't called, that means modified === html, which is perfect
+    });
+  });
+
   describe("enhance handles missing API key gracefully", () => {
     it("should return success:false when no API key configured", async () => {
       const ctx = createEnhanceContext({ api_key: undefined });

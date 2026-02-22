@@ -499,6 +499,93 @@ Old description`;
     expect(preservedContent).toContain("Old Collection Name");
     expect(preservedContent).toContain("Old description");
   });
+
+  it("should skip article when file has been renamed but still has syndicated URL", async () => {
+    // Setup: Article exists locally at a RENAMED path, but has the original syndicated URL
+    const renamedArticle = `---
+title: "My Better Title"
+date: "2024-01-01T00:00:00Z"
+syndicated:
+  - "https://matters.town/@testuser/original-title-abc123"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/my-better-title.md`, renamedArticle);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [
+        {
+          id: "a1",
+          title: "Original Title",
+          slug: "original-title",
+          shortHash: "abc123",
+          content: "<p>Article content</p>",
+          summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z",
+          tags: [],
+        },
+      ],
+      [],
+      [],
+      "testuser",
+      {},
+      {
+        displayName: "Test User",
+        userName: "testuser",
+        description: "",
+        pinnedWorks: [],
+      }
+    );
+
+    // Article should be skipped (not duplicated at articles/original-title.md)
+    // skipped count includes homepage (already doesn't exist, so homepage is created)
+    // The article itself should be skipped
+    const articleFile = ctx.filesystem.getFile(`${ctx.projectPath}/articles/original-title.md`);
+    expect(articleFile).toBeUndefined();
+
+    // The renamed file should still exist untouched
+    const renamedFile = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-better-title.md`);
+    expect(renamedFile).toBeDefined();
+  });
+
+  it("should use actual local path in articlePathMap when file is renamed", async () => {
+    // Setup: Article exists at a renamed path
+    const renamedArticle = `---
+title: "Renamed Article"
+syndicated:
+  - "https://matters.town/@testuser/some-slug-xyz789"
+---
+
+Content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/custom-name.md`, renamedArticle);
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [
+        {
+          id: "a1",
+          title: "Some Slug",
+          slug: "some-slug",
+          shortHash: "xyz789",
+          content: "<p>Content</p>",
+          summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z",
+          tags: [],
+        },
+      ],
+      [],
+      [],
+      "testuser",
+      {},
+      { displayName: "Test", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    // articlePathMap should map to the actual renamed path, not the computed one
+    const mattersUrl = "https://matters.town/@testuser/some-slug-xyz789";
+    expect(result.articlePathMap.get(mattersUrl)).toBe("articles/custom-name.md");
+    expect(result.articlePathMap.get("xyz789")).toBe("articles/custom-name.md");
+  });
 });
 
 // ============================================================================

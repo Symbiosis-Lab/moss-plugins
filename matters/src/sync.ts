@@ -328,6 +328,14 @@ export async function syncToLocalFiles(
     drafts: getDefaultFolderNames().drafts,
   };
 
+  // Build dedup index: shortHash → local file path
+  // Catches renamed files that still have a Matters syndicated URL in frontmatter
+  const localArticles = await scanLocalArticles();
+  const knownShortHashes = new Map<string, string>();
+  for (const local of localArticles) {
+    knownShortHashes.set(local.shortHash, local.path);
+  }
+
   const totalItems = articles.length + drafts.length + collections.length + 1; // +1 for homepage
   let processedItems = 0;
 
@@ -535,8 +543,18 @@ export async function syncToLocalFiles(
         }
       }
 
-      // Add to articlePathMap for internal link rewriting
-      // Map both the full Matters URL and the shortHash to the local path
+      // Check if article already exists locally (even under a different filename)
+      const existingLocalPath = knownShortHashes.get(article.shortHash);
+      if (existingLocalPath) {
+        // Article exists locally — use actual path for link rewriting
+        articlePathMap.set(mattersUrl, existingLocalPath);
+        articlePathMap.set(article.shortHash, existingLocalPath);
+        console.log(`   ⏭️  Skipping (already synced): ${existingLocalPath}`);
+        result.skipped++;
+        continue;
+      }
+
+      // New article — map the computed filename for link rewriting
       articlePathMap.set(mattersUrl, filename);
       articlePathMap.set(article.shortHash, filename);
 

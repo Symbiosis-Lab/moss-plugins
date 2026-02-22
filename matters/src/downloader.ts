@@ -13,6 +13,7 @@ import {
   reportProgress,
   sleep,
 } from "./utils";
+import { overallProgress } from "./progress";
 import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
 import { isInternalMattersLink as isDomainInternalLink } from "./domain";
@@ -383,8 +384,8 @@ export async function downloadMediaAndUpdate(): Promise<{
     // Report progress as each download completes
     reportProgress(
       "downloading_media",
-      index + 1,
-      mediaToDownload.length,
+      overallProgress("downloading_media", index + 1, mediaToDownload.length),
+      100,
       `Downloading ${index + 1}/${mediaToDownload.length}...`
     );
 
@@ -486,8 +487,8 @@ export async function downloadMediaAndUpdate(): Promise<{
   // Final report
   reportProgress(
     "downloading_media",
-    totalUrls,
-    totalUrls,
+    overallProgress("downloading_media", totalUrls, totalUrls),
+    100,
     `Downloaded ${result.imagesDownloaded} media, updated ${result.filesProcessed} files`
   );
 

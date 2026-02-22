@@ -32,6 +32,7 @@ import {
 import { syncToLocalFiles, scanLocalArticles } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
+import { overallProgress } from "./progress";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
 import { readFile, writeFile, showToast } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
@@ -190,7 +191,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
   try {
     // Phase 1: Authentication
-    await reportProgress("authentication", 0, 1, "Checking authentication...");
+    await reportProgress("authentication", overallProgress("authentication", 0, 1), 100, "Checking authentication...");
     let isAuthenticated = await checkAuthentication();
     let usingUnauthenticatedMode = false;
 
@@ -208,12 +209,12 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         apiConfig.testUserName = config.userName;
         usingUnauthenticatedMode = true;
 
-        await reportProgress("authentication", 1, 1, `Using saved user: @${config.userName}`);
+        await reportProgress("authentication", overallProgress("authentication", 1, 1), 100, `Using saved user: @${config.userName}`);
         console.log(`✅ Matters: Using unauthenticated mode for @${config.userName}`);
       } else {
         // No saved username, prompt for login
         console.warn("🔓 Not authenticated, will prompt login...");
-        await reportProgress("authentication", 0, 1, "Waiting for login...");
+        await reportProgress("authentication", overallProgress("authentication", 0, 1), 100, "Waiting for login...");
 
         const loginSuccess = await promptLogin();
 
@@ -226,12 +227,12 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         }
 
         isAuthenticated = true;
-        await reportProgress("authentication", 1, 1, "Authenticated");
+        await reportProgress("authentication", overallProgress("authentication", 1, 1), 100, "Authenticated");
         console.log("✅ Matters: Authenticated");
       }
     } else {
       console.log("✅ Already authenticated, skipping browser");
-      await reportProgress("authentication", 1, 1, "Authenticated");
+      await reportProgress("authentication", overallProgress("authentication", 1, 1), 100, "Authenticated");
       console.log("✅ Matters: Authenticated");
     }
 
@@ -255,27 +256,27 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     }
 
     // Phase 2: Fetch articles (with incremental sync)
-    await reportProgress("fetching_articles", 0, 1, "Fetching articles from Matters.town...");
+    await reportProgress("fetching_articles", overallProgress("fetching_articles", 0, 1), 100, "Fetching articles from Matters.town...");
     const { articles, userName } = await fetchAllArticlesSince(lastSyncedAt);
-    await reportProgress("fetching_articles", 1, 1, `Found ${articles.length} article(s) to sync`);
+    await reportProgress("fetching_articles", overallProgress("fetching_articles", 1, 1), 100, `Found ${articles.length} article(s) to sync`);
     console.log(`   Found ${articles.length} article(s) to sync`);
 
     // Phase 3: Fetch drafts
-    await reportProgress("fetching_drafts", 0, 1, "Fetching drafts from Matters.town...");
+    await reportProgress("fetching_drafts", overallProgress("fetching_drafts", 0, 1), 100, "Fetching drafts from Matters.town...");
     const drafts = await fetchAllDrafts();
-    await reportProgress("fetching_drafts", 1, 1, `Found ${drafts.length} draft(s)`);
+    await reportProgress("fetching_drafts", overallProgress("fetching_drafts", 1, 1), 100, `Found ${drafts.length} draft(s)`);
     console.log(`   Found ${drafts.length} draft(s)`);
 
     // Phase 4: Fetch collections
-    await reportProgress("fetching_collections", 0, 1, "Fetching collections from Matters.town...");
+    await reportProgress("fetching_collections", overallProgress("fetching_collections", 0, 1), 100, "Fetching collections from Matters.town...");
     const collections = await fetchAllCollections();
-    await reportProgress("fetching_collections", 1, 1, `Found ${collections.length} collection(s)`);
+    await reportProgress("fetching_collections", overallProgress("fetching_collections", 1, 1), 100, `Found ${collections.length} collection(s)`);
     console.log(`   Found ${collections.length} collection(s)`);
 
     // Phase 5: Fetch user profile (for homepage and language detection)
-    await reportProgress("fetching_profile", 0, 1, "Fetching user profile...");
+    await reportProgress("fetching_profile", overallProgress("fetching_profile", 0, 1), 100, "Fetching user profile...");
     const profile = await fetchUserProfile();
-    await reportProgress("fetching_profile", 1, 1, `Profile: ${profile.displayName}`);
+    await reportProgress("fetching_profile", overallProgress("fetching_profile", 1, 1), 100, `Profile: ${profile.displayName}`);
     console.log(`   Profile: ${profile.displayName} (language: ${profile.language || "default"})`);
 
     // Save userName to config for future unauthenticated fallback (only when authenticated)
@@ -297,7 +298,8 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     }
 
     // Phase 6: Sync to local files
-    await reportProgress("syncing", 0, articles.length + drafts.length + collections.length + 1, "Starting sync...");
+    const syncTotal = articles.length + drafts.length + collections.length + 1;
+    await reportProgress("syncing", overallProgress("syncing", 0, syncTotal), 100, "Starting sync...");
     const { result: syncResult, articlePathMap } = await syncToLocalFiles(
       articles,
       drafts,
@@ -315,7 +317,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     if (syncResult.errors.length > 0) parts.push(`${syncResult.errors.length} errors`);
 
     const summary = parts.length > 0 ? parts.join(", ") : "no changes";
-    await reportProgress("syncing", 1, 1, `Sync complete: ${summary}`);
+    await reportProgress("syncing", overallProgress("syncing", syncTotal, syncTotal), 100, `Sync complete: ${summary}`);
     console.log(`✅ Sync complete: ${summary}`);
 
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
@@ -352,7 +354,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     const localArticles = await scanLocalArticles();
 
     if (localArticles.length > 0) {
-      await reportProgress("fetching_social", 0, localArticles.length, "Fetching social data...");
+      await reportProgress("fetching_social", overallProgress("fetching_social", 0, localArticles.length), 100, "Fetching social data...");
       console.log(`📊 Fetching social data (comments) for ${localArticles.length} local articles...`);
 
       const socialData = await loadSocialData();
@@ -362,8 +364,8 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         const article = localArticles[i];
         await reportProgress(
           "fetching_social",
-          i + 1,
-          localArticles.length,
+          overallProgress("fetching_social", i + 1, localArticles.length),
+          100,
           `Social data: ${article.title}`
         );
 
@@ -398,7 +400,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
       console.warn(`Failed to save lastSyncedAt: ${error}`);
     }
 
-    await reportProgress("complete", 1, 1, `Complete: ${summary}${mediaSummary}${linkSummary}${socialSummary}`);
+    await reportProgress("complete", overallProgress("complete", 1, 1), 100, `Complete: ${summary}${mediaSummary}${linkSummary}${socialSummary}`);
 
     // Only core sync errors are critical; media/link errors are non-critical (nice-to-have)
     // This allows partial success (e.g., all articles synced but some images failed to download)

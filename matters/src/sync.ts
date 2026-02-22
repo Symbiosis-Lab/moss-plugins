@@ -43,6 +43,7 @@ import type {
 } from "./types";
 import type { MattersPluginConfig } from "./config";
 import { slugify, reportProgress, reportError } from "./utils";
+import { overallProgress } from "./progress";
 import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
 import { readFile, writeFile, listFiles } from "@symbiosis-lab/moss-api";
 import { isMattersUrl, articleUrl } from "./domain";
@@ -382,7 +383,7 @@ export async function syncToLocalFiles(
   // The homepage is created at the project root with only the user's display name
   // in frontmatter. Moss identifies it as the homepage by its location (root index.md).
   processedItems++;
-  await reportProgress("syncing_homepage", processedItems, totalItems, "Creating homepage...");
+  await reportProgress("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
 
   try {
     const homepageFrontmatter = generateFrontmatter({
@@ -445,8 +446,8 @@ export async function syncToLocalFiles(
     processedItems++;
     await reportProgress(
       "syncing_collections",
-      processedItems,
-      totalItems,
+      overallProgress("syncing_collections", processedItems, totalItems),
+      100,
       `Syncing collection: ${collection.title}`
     );
 
@@ -517,8 +518,8 @@ export async function syncToLocalFiles(
     processedItems++;
     await reportProgress(
       "syncing_articles",
-      processedItems,
-      totalItems,
+      overallProgress("syncing_articles", processedItems, totalItems),
+      100,
       `Syncing article: ${article.title}`
     );
 
@@ -631,8 +632,8 @@ export async function syncToLocalFiles(
       const draftTitle = draft.title || "Untitled";
       await reportProgress(
         "syncing_drafts",
-        processedItems,
-        totalItems,
+        overallProgress("syncing_drafts", processedItems, totalItems),
+        100,
         `Syncing draft: ${draftTitle}`
       );
 

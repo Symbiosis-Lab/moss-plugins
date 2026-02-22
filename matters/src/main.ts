@@ -324,7 +324,9 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     // Both operations read/write the same markdown files, so they must not run in parallel.
     // Order: Media download first (updates image references), then link rewriting
     const mediaResult = await downloadMediaAndUpdate();
+    await reportProgress("rewriting_links", overallProgress("rewriting_links", 0, 1), 100, "Rewriting internal links...");
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
+    await reportProgress("rewriting_links", overallProgress("rewriting_links", 1, 1), 100, `Rewrote ${linkResult.linksRewritten} internal links`);
 
     // Build media summary with correct labels:
     // - imagesDownloaded: successfully downloaded

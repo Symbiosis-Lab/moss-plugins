@@ -10,18 +10,26 @@ describe("overallProgress", () => {
     expect(overallProgress("complete", 1, 1)).toBe(100);
   });
 
-  it("monotonically increases across phase boundaries", () => {
+  it("monotonically increases across all phase boundaries", () => {
     const values = [
       overallProgress("authentication", 0, 1),
       overallProgress("authentication", 1, 1),
       overallProgress("fetching_articles", 0, 1),
       overallProgress("fetching_articles", 1, 1),
+      overallProgress("fetching_drafts", 0, 1),
+      overallProgress("fetching_drafts", 1, 1),
+      overallProgress("fetching_collections", 0, 1),
+      overallProgress("fetching_collections", 1, 1),
+      overallProgress("fetching_profile", 0, 1),
+      overallProgress("fetching_profile", 1, 1),
       overallProgress("syncing", 0, 10),
       overallProgress("syncing", 5, 10),
       overallProgress("syncing", 10, 10),
       overallProgress("downloading_media", 0, 50),
       overallProgress("downloading_media", 25, 50),
       overallProgress("downloading_media", 50, 50),
+      overallProgress("rewriting_links", 0, 1),
+      overallProgress("rewriting_links", 1, 1),
       overallProgress("fetching_social", 0, 20),
       overallProgress("fetching_social", 10, 20),
       overallProgress("fetching_social", 20, 20),

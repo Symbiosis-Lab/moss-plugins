@@ -21,7 +21,7 @@ const PHASE_WEIGHTS = [
   { name: "downloading_media", weight: 35 },
   { name: "rewriting_links", weight: 5 },
   { name: "fetching_social", weight: 25 },
-  { name: "complete", weight: 5 },
+  { name: "complete", weight: 2 },
 ] as const;
 
 const TOTAL_WEIGHT = PHASE_WEIGHTS.reduce((s, p) => s + p.weight, 0);

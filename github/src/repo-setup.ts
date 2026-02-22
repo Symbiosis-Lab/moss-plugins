@@ -201,8 +201,8 @@ async function showBrowserWithProgress<T>(
   } finally {
     // Always clear interval and unlisten from event
     clearInterval(heartbeat);
-    if (unlisten) {
-      unlisten();
+    if (unlisten != null) {
+      (unlisten as () => void)();
     }
   }
 }

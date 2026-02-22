@@ -10,7 +10,8 @@
     "clean": "rm -rf dist && mkdir -p dist",
     "copy-assets": "cp assets/* dist/ && cp browser/moss-comments.css dist/",
     "watch-assets": "chokidar 'assets/**/*' 'browser/**/*' -c 'npm run copy-assets'",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "moss",

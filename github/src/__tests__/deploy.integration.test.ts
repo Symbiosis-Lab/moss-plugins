@@ -76,7 +76,6 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writePluginFile: vi.fn(),
   pluginFileExists: vi.fn(),
   listSiteFilesWithSizes: vi.fn().mockResolvedValue([]),
-  httpPostSiteFile: vi.fn().mockResolvedValue({ status: 201, ok: true, body_base64: "", content_type: null }),
   getTauriCore: vi.fn().mockReturnValue({
     invoke: vi.fn().mockResolvedValue("git"),
   }),

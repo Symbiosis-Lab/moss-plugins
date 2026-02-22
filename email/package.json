@@ -11,6 +11,7 @@
     "copy-assets": "cp assets/* dist/",
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"
   },
   "keywords": [

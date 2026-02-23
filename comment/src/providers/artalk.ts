@@ -13,16 +13,20 @@ import { escapeForSingleQuotedJs } from "../client-js";
  *
  * @param serverUrl - Artalk server URL (e.g., "https://artalk.example.com")
  * @param pagePath - Page path for the comment (e.g., "/posts/foo/")
+ * @param uid - Content uid to use as the page key. Falls back to pagePath if empty.
  * @param siteName - Artalk site name (e.g., "MySite")
  * @returns JavaScript code string
  */
 export function buildArtalkClientScript(
   serverUrl: string,
   pagePath: string,
+  uid: string = "",
   siteName: string = ""
 ): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
-  const safePagePath = escapeForSingleQuotedJs(pagePath);
+  // Use uid as the page key if available, otherwise fall back to pagePath
+  const pageKey = uid || pagePath;
+  const safePageKey = escapeForSingleQuotedJs(pageKey);
   const safeSiteName = escapeForSingleQuotedJs(siteName);
 
   return `(function() {
@@ -54,7 +58,7 @@ export function buildArtalkClientScript(
       name: form.elements['name'].value,
       email: form.elements['email'].value,
       link: form.elements['link'].value || '',
-      page_key: '${safePagePath}',
+      page_key: '${safePageKey}',
       site_name: '${safeSiteName}',
       ua: navigator.userAgent
     };

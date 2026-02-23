@@ -2,9 +2,11 @@
  * Social data reader
  *
  * Reads .moss/social/*.json files and converts comments
- * to NormalizedComment[] grouped by article key (source .md path).
+ * to NormalizedComment[] grouped by article key (uid or source .md path).
  *
- * Also reads .moss/article-map.json to build source→output URL mapping.
+ * Also reads .moss/article-map.json to build:
+ * - source→output URL mapping (path-based, legacy)
+ * - uid→output URL mapping (uid-based, preferred)
  *
  * NOTE: listFiles() from moss-api skips hidden directories (.moss/),
  * so we discover social files by trying known source names rather than listing.
@@ -75,6 +77,43 @@ export async function buildSourceToUrlMap(): Promise<Map<string, string>> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`[warn] Comment: Could not read article-map.json: ${msg}`);
+  }
+
+  return result;
+}
+
+/**
+ * Build a mapping from content uid to output URL path
+ * using the article-map.json written by Moss core.
+ *
+ * article-map.json structure:
+ *   { articles: { [prettyUrl]: { source_path: string, url_path: string, uid?: string } } }
+ *
+ * Returns Map: uid -> url_path
+ *   e.g., "abc123" -> "posts/foo/"
+ *
+ * Articles without a uid are skipped.
+ */
+export async function buildUidToUrlMap(): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+
+  try {
+    const content = await readFile(".moss/article-map.json");
+    const data = JSON.parse(content) as {
+      articles: Record<string, { source_path: string; url_path: string; uid?: string }>;
+    };
+
+    if (!data.articles) {
+      return result;
+    }
+
+    for (const [_prettyUrl, entry] of Object.entries(data.articles)) {
+      if (!entry.uid || !entry.url_path) continue;
+      result.set(entry.uid, entry.url_path);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[warn] Comment: Could not read article-map.json for uid map: ${msg}`);
   }
 
   return result;

@@ -27,11 +27,14 @@ export function escapeForSingleQuotedJs(str: string): string {
  *
  * @param serverUrl - Waline server URL (e.g., "https://comments.example.com")
  * @param pagePath - Page path for the comment (e.g., "/posts/foo/")
+ * @param uid - Content uid to use as the page key. Falls back to pagePath if empty.
  * @returns JavaScript code string
  */
-export function buildClientScript(serverUrl: string, pagePath: string): string {
+export function buildClientScript(serverUrl: string, pagePath: string, uid?: string): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
-  const safePagePath = escapeForSingleQuotedJs(pagePath);
+  // Use uid as the page key if available, otherwise fall back to pagePath
+  const pageKey = uid || pagePath;
+  const safePageKey = escapeForSingleQuotedJs(pageKey);
 
   return `(function() {
   var form = document.getElementById('moss-comment-form');
@@ -62,7 +65,7 @@ export function buildClientScript(serverUrl: string, pagePath: string): string {
       nick: 'Anonymous',
       mail: '',
       link: '',
-      url: '${safePagePath}',
+      url: '${safePageKey}',
       ua: navigator.userAgent
     };
 

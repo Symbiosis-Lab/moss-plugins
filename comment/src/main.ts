@@ -16,7 +16,7 @@
  */
 
 import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
-import { loadAllComments, buildSourceToUrlMap } from "./social-reader";
+import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
@@ -202,27 +202,40 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   }
 
   // 1. Load existing comments from .moss/social/*.json files
-  const commentsByMdPath = await loadAllComments();
-  console.log(`[info] Comment: Loaded comments for ${commentsByMdPath.size} articles`);
+  //    Keys may be uids (new format) or source .md paths (legacy format)
+  //    Include "comment" source since the process hook writes to comment.json
+  const commentsByKey = await loadAllComments(["comment"]);
+  console.log(`[info] Comment: Loaded comments for ${commentsByKey.size} articles`);
 
-  // 2. Build authoritative source->output mapping from Moss's article-map.json
+  // 2. Build both uid-based and path-based mappings from article-map.json
+  const uidToUrl = await buildUidToUrlMap();
   const sourceToUrl = await buildSourceToUrlMap();
-  console.log(`[info] Comment: Article map has ${sourceToUrl.size} entries`);
+  console.log(`[info] Comment: Article map has ${sourceToUrl.size} source entries, ${uidToUrl.size} uid entries`);
 
-  // 3. Resolve: source .md path -> output URL path
+  // 3. Build reverse map: urlPath -> uid (for passing uid to client-side forms)
+  const urlToUid = new Map<string, string>();
+  for (const [uid, urlPath] of uidToUrl) {
+    urlToUid.set(urlPath, uid);
+  }
+
+  // 4. Resolve comment keys (uid or path) -> output URL path
+  //    Try uid-based lookup first, then fall back to path-based
   const commentsByPage = new Map<string, NormalizedComment[]>();
-  for (const [mdPath, comments] of commentsByMdPath) {
-    const urlPath = sourceToUrl.get(mdPath);
+  for (const [key, comments] of commentsByKey) {
+    const urlPath = uidToUrl.get(key) || sourceToUrl.get(key);
     if (urlPath) {
-      commentsByPage.set(urlPath, comments);
+      // Merge with any existing comments for this page (from different social sources)
+      const existing = commentsByPage.get(urlPath) || [];
+      existing.push(...comments);
+      commentsByPage.set(urlPath, existing);
     }
   }
   console.log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
 
-  // 4. Derive output prefix for project-relative paths
+  // 5. Derive output prefix for project-relative paths
   const outputPrefix = getOutputPrefix(ctx);
 
-  // 5. Collect pages that need injection:
+  // 6. Collect pages that need injection:
   //    - Pages with comments always get a section
   //    - Pages without comments only get a section if there's a form (serverUrl set)
   const allUrlPaths: string[] = [];
@@ -245,6 +258,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
       : `${outputPrefix}/${urlPath}/index.html`;
 
     const comments = commentsByPage.get(urlPath) || [];
+    // Look up uid for this page, fall back to urlPath if not available
+    const uid = urlToUid.get(urlPath) || "";
 
     try {
       const result = await processHtmlFile(
@@ -254,7 +269,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         serverUrl,
         buildScript,
         providerName,
-        siteName
+        siteName,
+        uid
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -263,7 +279,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     }
   }
 
-  // 6. Copy CSS to output directory
+  // 7. Copy CSS to output directory
   await copyCss(outputPrefix);
 
   console.log(`[info] Comment: Injected comments into ${injectedCount} pages`);
@@ -275,15 +291,19 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
 
 /**
  * Process a single HTML file: read it, inject comments, write it back.
+ *
+ * @param uid - Content uid for the page, used as page key in client-side forms.
+ *              Falls back to urlPath if empty.
  */
 async function processHtmlFile(
   htmlRelPath: string,
   urlPath: string,
   comments: NormalizedComment[],
   serverUrl: string,
-  buildScript: ((serverUrl: string, pagePath: string, siteName?: string) => string) | null,
+  buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string) => string) | null,
   providerName: string = "waline",
-  siteName: string = ""
+  siteName: string = "",
+  uid: string = ""
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
@@ -304,8 +324,9 @@ async function processHtmlFile(
     }
 
     // Build the submit script if we have a server
+    // Pass uid so the client-side form uses it as the page key
     const submitScript = (buildScript && serverUrl)
-      ? buildScript(serverUrl, "/" + urlPath, siteName)
+      ? buildScript(serverUrl, "/" + urlPath, uid, siteName)
       : "";
 
     // Render the comment section

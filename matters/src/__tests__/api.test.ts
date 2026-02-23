@@ -165,7 +165,12 @@ describe("User Queries (Public)", () => {
     expect(USER_PROFILE_QUERY).toContain("$userName: String!");
     expect(USER_PROFILE_QUERY).toContain("displayName");
     expect(USER_PROFILE_QUERY).toContain("avatar");
-    expect(USER_PROFILE_QUERY).toContain("language");
+  });
+
+  it("USER_PROFILE_QUERY does NOT include settings (private field)", () => {
+    // settings { language } is a private field that causes authorization errors
+    // for unauthenticated public user queries
+    expect(USER_PROFILE_QUERY).not.toMatch(/settings\s*\{/);
   });
 });
 

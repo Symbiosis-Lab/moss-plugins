@@ -270,9 +270,6 @@ query UserProfile($userName: String!) {
       profileCover
     }
     avatar
-    settings {
-      language
-    }
     pinnedWorks {
       id
       pinned

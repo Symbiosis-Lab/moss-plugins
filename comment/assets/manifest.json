@@ -4,7 +4,7 @@
   "description": "Comment section with custom UI -- renders stored + accepts new comments",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["enhance"],
+  "capabilities": ["process", "enhance"],
   "global_name": "CommentPlugin",
   "icon": "icon.svg",
   "config": {

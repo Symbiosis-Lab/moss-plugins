@@ -1,12 +1,18 @@
 /**
  * Comment Plugin for Moss
  *
- * Main entry point. Provides an enhance hook that:
- * 1. Reads comments from all JSON files in .moss/social/
- * 2. Reads .moss/article-map.json for source->output path mapping
- * 3. Renders a minimal comment section (author, date, text)
- * 4. Injects the section before </article> in each page
- * 5. Copies CSS to the output directory
+ * Main entry point. Provides:
+ *
+ * process hook (pre-build):
+ *   Fetches comments from configured server (Waline or Artalk)
+ *   and writes them to .moss/social/comment.json keyed by content uid.
+ *
+ * enhance hook (post-build):
+ *   1. Reads comments from all JSON files in .moss/social/
+ *   2. Reads .moss/article-map.json for source->output path mapping
+ *   3. Renders a minimal comment section (author, date, text)
+ *   4. Injects the section before </article> in each page
+ *   5. Copies CSS to the output directory
  */
 
 import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
@@ -14,7 +20,19 @@ import { loadAllComments, buildSourceToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
-import type { EnhanceContext, HookResult, NormalizedComment } from "./types";
+import { fetchWalineComments, fetchArtalkComments } from "./fetcher";
+import {
+  loadCommentSocialData,
+  saveCommentSocialData,
+  mergeCommentSocialData,
+} from "./social-writer";
+import type {
+  ProcessContext,
+  EnhanceContext,
+  HookResult,
+  NormalizedComment,
+  ArticleMap,
+} from "./types";
 
 const COMMENTS_CSS_FILENAME = "moss-comments.css";
 
@@ -36,6 +54,131 @@ function getOutputPrefix(ctx: EnhanceContext): string {
   // Fallback: standard location
   return ".moss/site";
 }
+
+// ============================================================================
+// Process Hook
+// ============================================================================
+
+/**
+ * Process hook - fetch comments from server before build.
+ *
+ * Reads article-map.json from the previous build to get content uids,
+ * then fetches comments from the configured server for each page.
+ * Results are written to .moss/social/comment.json keyed by uid.
+ *
+ * On first build (no article-map.json), gracefully skips.
+ */
+export async function process(ctx: ProcessContext): Promise<HookResult> {
+  console.log("[info] Comment: Starting process hook...");
+
+  const config = ctx.config || {};
+  const serverUrl = (config.server_url as string) || "";
+  const providerName = (config.provider as string) || "waline";
+  const siteName = (config.site_name as string) || "";
+
+  // 1. If no server_url, skip (nothing to fetch)
+  if (!serverUrl) {
+    console.log(
+      "[info] Comment: No server_url configured, skipping comment fetch"
+    );
+    return {
+      success: true,
+      message: "No server_url configured, skipping comment fetch",
+    };
+  }
+
+  // 2. Read article-map.json from previous build
+  let articleMap: ArticleMap;
+  try {
+    const content = await readFile(".moss/article-map.json");
+    articleMap = JSON.parse(content) as ArticleMap;
+  } catch {
+    console.log(
+      "[info] Comment: No article map found (first build?), skipping comment fetch"
+    );
+    return {
+      success: true,
+      message: "No article map found (first build?), skipping comment fetch",
+    };
+  }
+
+  if (!articleMap.articles) {
+    console.log("[info] Comment: Article map has no articles, skipping");
+    return {
+      success: true,
+      message: "No article map found (first build?), skipping comment fetch",
+    };
+  }
+
+  // 3. Collect pages with uids
+  const pagesWithUids: Array<{ urlPath: string; uid: string }> = [];
+  for (const [_key, entry] of Object.entries(articleMap.articles)) {
+    if (entry.uid) {
+      pagesWithUids.push({ urlPath: entry.url_path, uid: entry.uid });
+    }
+  }
+
+  if (pagesWithUids.length === 0) {
+    console.log("[info] Comment: No pages with uids found, skipping");
+    return {
+      success: true,
+      message: "Fetched comments for 0 pages (no uids)",
+    };
+  }
+
+  console.log(
+    `[info] Comment: Fetching comments for ${pagesWithUids.length} pages from ${providerName} at ${serverUrl}`
+  );
+
+  // 4. Load existing social data
+  const socialData = await loadCommentSocialData();
+
+  // 5. Fetch comments for each page and merge
+  let totalComments = 0;
+
+  for (const { uid } of pagesWithUids) {
+    try {
+      let comments;
+      if (providerName === "artalk") {
+        comments = await fetchArtalkComments(serverUrl, uid, siteName);
+      } else {
+        comments = await fetchWalineComments(serverUrl, uid);
+      }
+
+      if (comments.length > 0) {
+        mergeCommentSocialData(socialData, uid, comments);
+        totalComments += comments.length;
+      }
+    } catch (error) {
+      console.log(
+        `[warn] Comment: Failed to fetch comments for uid=${uid}: ${error}`
+      );
+    }
+  }
+
+  // 6. Write social data (even if no new comments, to update timestamp)
+  try {
+    await saveCommentSocialData(socialData);
+    console.log(
+      `[info] Comment: Saved ${totalComments} comments for ${pagesWithUids.length} pages`
+    );
+  } catch (error) {
+    console.log(`[warn] Comment: Failed to save social data: ${error}`);
+    return {
+      success: false,
+      message: `Failed to save comment data: ${error}`,
+    };
+  }
+
+  return {
+    success: true,
+    message: `Fetched comments for ${pagesWithUids.length} pages (${totalComments} comments)`,
+  };
+}
+
+// ============================================================================
+// Enhance Hook
+// ============================================================================
 
 /**
  * Enhance hook - inject comment sections into generated HTML pages.

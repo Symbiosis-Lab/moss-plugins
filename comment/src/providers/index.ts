@@ -8,7 +8,7 @@
 import { buildWalineSubmitScript } from "./waline";
 import { buildArtalkClientScript } from "./artalk";
 
-export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, siteName?: string) => string;
+export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, uid: string, siteName?: string) => string;
 
 const providers: Record<string, SubmitScriptBuilder> = {
   waline: buildWalineSubmitScript,

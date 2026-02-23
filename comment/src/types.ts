@@ -38,8 +38,29 @@ export interface GenericSocialFile {
 }
 
 // ============================================================================
+// Article Map Types
+// ============================================================================
+
+/** Entry in .moss/article-map.json */
+export interface ArticleMapEntry {
+  source_path: string;
+  url_path: string;
+  uid?: string;
+}
+
+/** Structure of .moss/article-map.json */
+export interface ArticleMap {
+  articles: Record<string, ArticleMapEntry>;
+}
+
+// ============================================================================
 // Hook Context Types
 // ============================================================================
+
+export interface ProcessContext {
+  project_info: { total_files: number; homepage_file: string | null };
+  config: Record<string, any>;
+}
 
 export interface EnhanceContext {
   project_path: string;

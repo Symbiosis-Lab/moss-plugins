@@ -20,7 +20,7 @@ import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
-import { fetchWalineComments, fetchArtalkComments } from "./fetcher";
+import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
 import {
   loadCommentSocialData,
   saveCommentSocialData,
@@ -73,7 +73,6 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
 
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
-  const providerName = (config.provider as string) || "waline";
   const siteName = (config.site_name as string) || "";
 
   // 1. If no server_url, skip (nothing to fetch)
@@ -125,6 +124,9 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       message: "Fetched comments for 0 pages (no uids)",
     };
   }
+
+  // 3b. Auto-detect provider from server
+  const providerName = await detectProvider(serverUrl);
 
   console.log(
     `[info] Comment: Fetching comments for ${pagesWithUids.length} pages from ${providerName} at ${serverUrl}`
@@ -187,9 +189,9 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   console.log("[info] Comment: Starting enhance hook...");
 
   const config = ctx.config || {};
-  const providerName = (config.provider as string) || "waline";
   const serverUrl = (config.server_url as string) || "";
   const siteName = (config.site_name as string) || "";
+  const providerName = serverUrl ? await detectProvider(serverUrl) : "waline";
   const buildScript = getSubmitScriptBuilder(providerName);
 
   if (buildScript && serverUrl) {

@@ -15,7 +15,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   httpGet: mockHttpGet,
 }));
 
-import { fetchWalineComments, fetchArtalkComments } from "../fetcher";
+import { fetchWalineComments, fetchArtalkComments, detectProvider, clearDetectionCache } from "../fetcher";
 
 describe("fetchWalineComments", () => {
   beforeEach(() => {
@@ -382,5 +382,87 @@ describe("fetchArtalkComments", () => {
     expect(mockHttpGet).toHaveBeenCalledWith(
       "https://artalk.example.com/api/v2/comments?page_key=posts/hello/&site_name=My%20Site%20Name&limit=100"
     );
+  });
+});
+
+describe("detectProvider", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+    // Clear the detection cache between tests
+    clearDetectionCache();
+  });
+
+  it('returns "artalk" when server responds to /api/v2/conf with 200', async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ app_name: "Artalk" }),
+    });
+
+    const result = await detectProvider("https://comments.example.com");
+
+    expect(result).toBe("artalk");
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      "https://comments.example.com/api/v2/conf"
+    );
+  });
+
+  it('returns "waline" when server responds with non-200', async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => "Not Found",
+    });
+
+    const result = await detectProvider("https://comments.example.com");
+
+    expect(result).toBe("waline");
+  });
+
+  it('returns "waline" when server throws network error', async () => {
+    mockHttpGet.mockRejectedValue(new Error("Connection refused"));
+
+    const result = await detectProvider("https://comments.example.com");
+
+    expect(result).toBe("waline");
+  });
+
+  it("caches result (second call does not make HTTP request)", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ app_name: "Artalk" }),
+    });
+
+    const result1 = await detectProvider("https://comments.example.com");
+    const result2 = await detectProvider("https://comments.example.com");
+
+    expect(result1).toBe("artalk");
+    expect(result2).toBe("artalk");
+    expect(mockHttpGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses different cache entries for different URLs", async () => {
+    mockHttpGet.mockImplementation((url: string) => {
+      if (url.includes("artalk-server")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => JSON.stringify({ app_name: "Artalk" }),
+        });
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        text: () => "Not Found",
+      });
+    });
+
+    const result1 = await detectProvider("https://artalk-server.example.com");
+    const result2 = await detectProvider("https://waline-server.example.com");
+
+    expect(result1).toBe("artalk");
+    expect(result2).toBe("waline");
+    expect(mockHttpGet).toHaveBeenCalledTimes(2);
   });
 });

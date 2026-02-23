@@ -22,6 +22,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 }));
 
 import { process } from "../main";
+import { clearDetectionCache } from "../fetcher";
 import type { ProcessContext, ArticleMap } from "../types";
 
 function makeContext(config: Record<string, unknown> = {}): ProcessContext {
@@ -36,10 +37,11 @@ describe("process hook", () => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset();
     mockHttpGet.mockReset();
+    clearDetectionCache();
   });
 
   it("skips when no server_url is configured", async () => {
-    const ctx = makeContext({ provider: "waline" });
+    const ctx = makeContext({});
 
     const result = await process(ctx);
 
@@ -51,7 +53,7 @@ describe("process hook", () => {
   });
 
   it("skips when server_url is empty string", async () => {
-    const ctx = makeContext({ provider: "waline", server_url: "" });
+    const ctx = makeContext({ server_url: "" });
 
     const result = await process(ctx);
 
@@ -61,7 +63,6 @@ describe("process hook", () => {
 
   it("skips gracefully when article-map.json does not exist (first build)", async () => {
     const ctx = makeContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -80,7 +81,6 @@ describe("process hook", () => {
 
   it("skips pages without a uid in article-map", async () => {
     const ctx = makeContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -112,7 +112,6 @@ describe("process hook", () => {
 
   it("fetches Waline comments for pages with uids and writes social data", async () => {
     const ctx = makeContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -141,8 +140,12 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    // Mock httpGet for Waline API calls
+    // Mock httpGet for auto-detection probe + Waline API calls
     mockHttpGet.mockImplementation((url: string) => {
+      // Auto-detection probe: /api/v2/conf returns 404 → waline
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({ ok: false, status: 404, text: () => "Not Found" });
+      }
       if (url.includes("abc123")) {
         return Promise.resolve({
           ok: true,
@@ -180,8 +183,11 @@ describe("process hook", () => {
     expect(result.success).toBe(true);
     expect(result.message).toContain("Fetched comments");
 
-    // Should have called httpGet for each page with a uid
-    expect(mockHttpGet).toHaveBeenCalledTimes(2);
+    // Should have called httpGet: 1 detection probe + 2 comment fetches
+    expect(mockHttpGet).toHaveBeenCalledTimes(3);
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      "https://waline.example.com/api/v2/conf"
+    );
     expect(mockHttpGet).toHaveBeenCalledWith(
       "https://waline.example.com/api/comment?path=abc123&pageSize=100"
     );
@@ -199,9 +205,8 @@ describe("process hook", () => {
     expect(parsed.articles["abc123"].comments[0].id).toBe("w1");
   });
 
-  it("fetches Artalk comments when provider is artalk", async () => {
+  it("fetches Artalk comments when server is auto-detected as artalk", async () => {
     const ctx = makeContext({
-      provider: "artalk",
       server_url: "https://artalk.example.com",
       site_name: "My Blog",
     });
@@ -225,32 +230,48 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    mockHttpGet.mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        JSON.stringify({
-          data: {
-            comments: [
-              {
-                id: 101,
-                content: "<p>Artalk comment</p>",
-                date: "2025-06-15T10:00:00.000Z",
-                nick: "Charlie",
-                email: "",
-                link: "",
-                rid: 0,
-                is_collapsed: false,
-                is_pending: false,
-              },
-            ],
-          },
-        }),
+    // Mock httpGet: detection probe returns 200 (Artalk), comment fetch returns data
+    mockHttpGet.mockImplementation((url: string) => {
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => JSON.stringify({ app_name: "Artalk" }),
+        });
+      }
+      // Artalk comments endpoint
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            data: {
+              comments: [
+                {
+                  id: 101,
+                  content: "<p>Artalk comment</p>",
+                  date: "2025-06-15T10:00:00.000Z",
+                  nick: "Charlie",
+                  email: "",
+                  link: "",
+                  rid: 0,
+                  is_collapsed: false,
+                  is_pending: false,
+                },
+              ],
+            },
+          }),
+      });
     });
 
     const result = await process(ctx);
 
     expect(result.success).toBe(true);
+
+    // Should have probed for Artalk first
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      "https://artalk.example.com/api/v2/conf"
+    );
 
     // Should have used Artalk API format
     expect(mockHttpGet).toHaveBeenCalledWith(
@@ -269,7 +290,6 @@ describe("process hook", () => {
 
   it("merges with existing social data", async () => {
     const ctx = makeContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -312,25 +332,31 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    mockHttpGet.mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        JSON.stringify({
-          data: [
-            {
-              objectId: "w-new",
-              comment: "<p>New comment</p>",
-              insertedAt: "2025-06-15T10:00:00.000Z",
-              nick: "NewUser",
-              link: "",
-              mail: "",
-              pid: null,
-              rid: null,
-              status: "approved",
-            },
-          ],
-        }),
+    mockHttpGet.mockImplementation((url: string) => {
+      // Detection probe: non-200 → waline
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({ ok: false, status: 404, text: () => "Not Found" });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            data: [
+              {
+                objectId: "w-new",
+                comment: "<p>New comment</p>",
+                insertedAt: "2025-06-15T10:00:00.000Z",
+                nick: "NewUser",
+                link: "",
+                mail: "",
+                pid: null,
+                rid: null,
+                status: "approved",
+              },
+            ],
+          }),
+      });
     });
 
     const result = await process(ctx);
@@ -353,7 +379,6 @@ describe("process hook", () => {
 
   it("handles fetch errors gracefully (continues with other pages)", async () => {
     const ctx = makeContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -382,6 +407,10 @@ describe("process hook", () => {
     mockWriteFile.mockResolvedValue(undefined);
 
     mockHttpGet.mockImplementation((url: string) => {
+      // Detection probe: non-200 → waline
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({ ok: false, status: 404, text: () => "Not Found" });
+      }
       if (url.includes("fail-uid")) {
         // Network error for this page
         return Promise.reject(new Error("Server down"));

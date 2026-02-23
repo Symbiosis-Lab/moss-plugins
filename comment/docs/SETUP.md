@@ -316,37 +316,12 @@ curl -X POST https://your-waline-server.com/api/comment \
 
 In moss, open the comment plugin settings and configure:
 
-**For Artalk (recommended):**
-
-```json
-{
-  "provider": "artalk",
-  "server_url": "https://comments.example.com",
-  "site_name": "my-blog"
-}
-```
-
 | Setting | Value |
 |---------|-------|
-| `provider` | `artalk` |
-| `server_url` | Your Artalk server URL (e.g., `https://comments.example.com`) |
-| `site_name` | Site name configured in Artalk admin dashboard |
+| `server_url` | Your comment server URL (e.g., `https://comments.example.com`) |
+| `site_name` | Site name configured in your comment server's admin dashboard |
 
-**For Waline:**
-
-```json
-{
-  "provider": "waline",
-  "server_url": "https://your-waline-server.com"
-}
-```
-
-| Setting | Value |
-|---------|-------|
-| `provider` | `waline` |
-| `server_url` | Your Waline server URL (e.g., `https://comments.example.com`) |
-
-Edit `.moss/plugins/comment/config.json` directly, or use the plugin settings UI in moss.
+The plugin auto-detects whether your server is **Artalk** or **Waline** — no manual provider selection needed.
 
 After setting `server_url`, rebuild your site. Each article page will now include:
 - A comment submission form (name, email, website, comment body)

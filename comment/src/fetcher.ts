@@ -11,6 +11,55 @@ import { httpGet } from "@symbiosis-lab/moss-api";
 import type { GenericSocialComment } from "./types";
 
 // ============================================================================
+// Provider Detection
+// ============================================================================
+
+/**
+ * Cache of detected providers per server URL.
+ * Avoids repeated probes during the same build.
+ */
+const detectionCache = new Map<string, "artalk" | "waline">();
+
+/**
+ * Auto-detect whether a comment server is Artalk or Waline by probing
+ * Artalk's config endpoint.
+ *
+ * - Probes GET {serverUrl}/api/v2/conf (Artalk's config endpoint)
+ * - If 200 response → "artalk"
+ * - Otherwise (non-200 or network error) → "waline" (default fallback)
+ *
+ * Results are cached per serverUrl to avoid repeated probes.
+ */
+export async function detectProvider(
+  serverUrl: string
+): Promise<"artalk" | "waline"> {
+  const cached = detectionCache.get(serverUrl);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let result: "artalk" | "waline" = "waline";
+  try {
+    const response = await httpGet(`${serverUrl}/api/v2/conf`);
+    if (response.ok) {
+      result = "artalk";
+    }
+  } catch {
+    // Network error — fall back to waline
+  }
+
+  detectionCache.set(serverUrl, result);
+  return result;
+}
+
+/**
+ * Clear the detection cache. Exposed for testing.
+ */
+export function clearDetectionCache(): void {
+  detectionCache.clear();
+}
+
+// ============================================================================
 // Waline
 // ============================================================================
 

@@ -13,14 +13,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockReadFile = vi.hoisted(() => vi.fn());
 const mockWriteFile = vi.hoisted(() => vi.fn());
 const mockReadPluginFile = vi.hoisted(() => vi.fn());
+const mockHttpGet = vi.hoisted(() => vi.fn());
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   readFile: mockReadFile,
   writeFile: mockWriteFile,
   readPluginFile: mockReadPluginFile,
+  httpGet: mockHttpGet,
 }));
 
 import { enhance } from "../main";
+import { clearDetectionCache } from "../fetcher";
 import type { EnhanceContext, ArticleMap } from "../types";
 
 function makeEnhanceContext(
@@ -55,6 +58,8 @@ describe("enhance hook uid resolution", () => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset();
     mockReadPluginFile.mockReset();
+    mockHttpGet.mockReset();
+    clearDetectionCache();
     mockReadPluginFile.mockResolvedValue("/* comments css */");
     mockWriteFile.mockResolvedValue(undefined);
 
@@ -65,7 +70,7 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("resolves uid-based social data keys to url paths", async () => {
-    const ctx = makeEnhanceContext({ provider: "waline" });
+    const ctx = makeEnhanceContext({});
 
     const articleMap: ArticleMap = {
       articles: {
@@ -129,7 +134,7 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("falls back to path-based keys for backward compatibility", async () => {
-    const ctx = makeEnhanceContext({ provider: "waline" });
+    const ctx = makeEnhanceContext({});
 
     const articleMap: ArticleMap = {
       articles: {
@@ -184,7 +189,7 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("prefers uid-based lookup over path-based when both exist", async () => {
-    const ctx = makeEnhanceContext({ provider: "waline" });
+    const ctx = makeEnhanceContext({});
 
     const articleMap: ArticleMap = {
       articles: {
@@ -261,8 +266,10 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("passes uid to client-side submit script (Waline)", async () => {
+    // Detection probe: non-200 → waline
+    mockHttpGet.mockResolvedValue({ ok: false, status: 404, text: () => "Not Found" });
+
     const ctx = makeEnhanceContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 
@@ -298,8 +305,14 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("passes uid to client-side submit script (Artalk)", async () => {
+    // Detection probe: 200 → artalk
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ app_name: "Artalk" }),
+    });
+
     const ctx = makeEnhanceContext({
-      provider: "artalk",
       server_url: "https://artalk.example.com",
       site_name: "Test Site",
     });
@@ -336,8 +349,10 @@ describe("enhance hook uid resolution", () => {
   });
 
   it("falls back to urlPath when uid is not available", async () => {
+    // Detection probe: non-200 → waline
+    mockHttpGet.mockResolvedValue({ ok: false, status: 404, text: () => "Not Found" });
+
     const ctx = makeEnhanceContext({
-      provider: "waline",
       server_url: "https://waline.example.com",
     });
 

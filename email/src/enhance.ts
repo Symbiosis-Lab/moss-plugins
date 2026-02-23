@@ -86,16 +86,32 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
  * Inject subscribe form into HTML footer
  */
 function injectSubscribeForm(html: string, username: string): string {
+  // Skip if form already injected (idempotency)
+  if (html.includes('footer-subscribe-form')) return html;
+
   const footerContentRegex = /<div class="footer-content">([\s\S]*?)<\/div>/;
   const match = html.match(footerContentRegex);
   if (!match) return html;
 
+  // Preserve existing content (RSS link, description) and append form
+  const existingContent = match[1].trim();
+
+  // Detect language from HTML lang attribute
+  const langMatch = html.match(/<html[^>]*\blang="([^"]+)"/);
+  const lang = langMatch?.[1] || 'en';
+  const isZh = lang.startsWith('zh');
+  const labelText = isZh ? '输入你的邮箱' : 'Enter your email';
+  const buttonText = isZh ? '订阅' : 'Sign up';
+
   const formHtml = `<div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    ${existingContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
-        <input type="email" name="email" placeholder="your@email.com" required />
-        <input type="hidden" value="1" name="embed" />
-        <button type="submit">Subscribe</button>
+        <label for="footer-email" class="footer-email-label">${labelText}</label>
+        <div class="footer-form-row">
+            <input type="email" id="footer-email" name="email" class="moss-site-input" required />
+            <input type="hidden" value="1" name="embed" />
+            <button type="submit" class="moss-site-btn">${buttonText}</button>
+        </div>
     </form>
 </div>`;
 

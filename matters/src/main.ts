@@ -374,7 +374,16 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         try {
           const comments = await fetchArticleComments(article.shortHash);
 
-          mergeSocialData(socialData, article.path, comments, [], []);
+          // Use uid as the social data key when available; fall back to path
+          let socialKey: string;
+          if (article.uid) {
+            socialKey = article.uid;
+          } else {
+            console.warn(`   Article "${article.title}" has no uid, falling back to path as social data key`);
+            socialKey = article.path;
+          }
+
+          mergeSocialData(socialData, socialKey, comments, [], []);
 
           totalComments += comments.length;
 

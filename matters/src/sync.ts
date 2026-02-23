@@ -211,10 +211,13 @@ export function extractShortHash(mattersUrl: string): string | null {
 
 /**
  * Scan local markdown files to find all synced Matters articles
- * Returns array of { shortHash, path } for all articles with Matters syndicated URLs
+ * Returns array of { shortHash, path, title, uid } for all articles with Matters syndicated URLs
+ *
+ * The uid comes from frontmatter and is used as the key for local social data storage.
+ * When uid is null (file hasn't been built yet), callers should fall back to path.
  */
-export async function scanLocalArticles(): Promise<Array<{ shortHash: string; path: string; title: string }>> {
-  const articles: Array<{ shortHash: string; path: string; title: string }> = [];
+export async function scanLocalArticles(): Promise<Array<{ shortHash: string; path: string; title: string; uid: string | null }>> {
+  const articles: Array<{ shortHash: string; path: string; title: string; uid: string | null }> = [];
 
   try {
     // List all files in the project
@@ -252,10 +255,14 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
           if (mattersUrl) {
             const shortHash = extractShortHash(mattersUrl);
             if (shortHash) {
+              const uid = typeof parsed.frontmatter.uid === "string"
+                ? parsed.frontmatter.uid
+                : null;
               articles.push({
                 shortHash,
                 path: file,
                 title: (parsed.frontmatter.title as string) || file,
+                uid,
               });
             }
           }

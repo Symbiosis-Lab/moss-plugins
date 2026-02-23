@@ -712,4 +712,70 @@ syndicated:
 
     expect(articles).toHaveLength(0);
   });
+
+  it("returns uid from frontmatter when present", async () => {
+    const articleContent = `---
+title: "Article With UID"
+uid: "abc123-def456"
+syndicated:
+  - "https://matters.town/@testuser/test-article-abc123"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/test-article.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].uid).toBe("abc123-def456");
+    expect(articles[0].shortHash).toBe("abc123");
+  });
+
+  it("returns null uid when not present in frontmatter", async () => {
+    const articleContent = `---
+title: "Article Without UID"
+syndicated:
+  - "https://matters.town/@testuser/test-article-xyz789"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/test-article.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].uid).toBeNull();
+    expect(articles[0].shortHash).toBe("xyz789");
+  });
+
+  it("returns uid for each article independently", async () => {
+    const articleWithUid = `---
+title: "Has UID"
+uid: "uid-111"
+syndicated:
+  - "https://matters.town/@testuser/has-uid-aaa111"
+---
+
+Content`;
+    const articleWithoutUid = `---
+title: "No UID"
+syndicated:
+  - "https://matters.town/@testuser/no-uid-bbb222"
+---
+
+Content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/has-uid.md`, articleWithUid);
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/no-uid.md`, articleWithoutUid);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(2);
+    const withUid = articles.find(a => a.shortHash === "aaa111");
+    const withoutUid = articles.find(a => a.shortHash === "bbb222");
+    expect(withUid?.uid).toBe("uid-111");
+    expect(withoutUid?.uid).toBeNull();
+  });
 });

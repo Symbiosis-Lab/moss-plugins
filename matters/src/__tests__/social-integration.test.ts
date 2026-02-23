@@ -197,6 +197,92 @@ describe("Social Data Integration", () => {
     });
   });
 
+  describe("UID-based keying", () => {
+    it("stores social data keyed by uid when uid is available", async () => {
+      const socialData = await loadSocialData();
+
+      // Simulate using uid as the key (what main.ts will do when article has uid)
+      const uid = "abc123-def456";
+      mergeSocialData(
+        socialData,
+        uid,
+        [createComment("c1", "Great article!")],
+        [],
+        []
+      );
+
+      await saveSocialData(socialData);
+
+      const savedFile = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/social/matters.json`
+      );
+      const parsed = JSON.parse(savedFile!.content);
+
+      // Should be keyed by uid, not by file path
+      expect(parsed.articles[uid]).toBeDefined();
+      expect(parsed.articles[uid].comments).toHaveLength(1);
+      // Should NOT have a path-based key
+      expect(parsed.articles["articles/some-article.md"]).toBeUndefined();
+    });
+
+    it("falls back to file path key when uid is null", async () => {
+      const socialData = await loadSocialData();
+
+      // Simulate fallback: when uid is null, use path instead
+      const filePath = "articles/legacy-article.md";
+      mergeSocialData(
+        socialData,
+        filePath,
+        [createComment("c1", "Comment on legacy article")],
+        [],
+        []
+      );
+
+      await saveSocialData(socialData);
+
+      const savedFile = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/social/matters.json`
+      );
+      const parsed = JSON.parse(savedFile!.content);
+
+      expect(parsed.articles[filePath]).toBeDefined();
+      expect(parsed.articles[filePath].comments).toHaveLength(1);
+    });
+
+    it("handles mixed uid and path keys across articles", async () => {
+      const socialData = await loadSocialData();
+
+      // Article with uid
+      mergeSocialData(
+        socialData,
+        "uid-001",
+        [createComment("c1", "Comment on new article")],
+        [],
+        []
+      );
+
+      // Article without uid (fallback to path)
+      mergeSocialData(
+        socialData,
+        "articles/old-article.md",
+        [createComment("c2", "Comment on old article")],
+        [],
+        []
+      );
+
+      await saveSocialData(socialData);
+
+      const savedFile = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/social/matters.json`
+      );
+      const parsed = JSON.parse(savedFile!.content);
+
+      expect(Object.keys(parsed.articles)).toHaveLength(2);
+      expect(parsed.articles["uid-001"]).toBeDefined();
+      expect(parsed.articles["articles/old-article.md"]).toBeDefined();
+    });
+  });
+
   describe("Error handling", () => {
     it("should propagate errors from writeFile", async () => {
       // This test verifies that if writeFile throws, saveSocialData propagates the error

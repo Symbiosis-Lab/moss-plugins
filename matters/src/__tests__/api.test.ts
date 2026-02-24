@@ -16,18 +16,21 @@ import {
   apiConfig,
   clearTokenCache,
   getAccessToken,
+  fetchAllDraftsSince,
 } from "../api";
+import type { MattersDraft } from "../types";
 
-// Mock the SDK's getPluginCookie
+// Mock the SDK's getPluginCookie and httpPost
 vi.mock("@symbiosis-lab/moss-api", async () => {
   const actual = await vi.importActual("@symbiosis-lab/moss-api");
   return {
     ...actual,
     getPluginCookie: vi.fn(),
+    httpPost: vi.fn(),
   };
 });
 
-import { getPluginCookie } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, httpPost } from "@symbiosis-lab/moss-api";
 
 describe("API Constants", () => {
   it("has correct GraphQL endpoint", () => {
@@ -298,5 +301,114 @@ describe("API Configuration", () => {
     apiConfig.queryMode = "user";
     expect(apiConfig.queryMode).toBe("user");
     apiConfig.queryMode = originalMode; // Reset
+  });
+});
+
+describe("fetchAllDraftsSince", () => {
+  const mockGetPluginCookie = vi.mocked(getPluginCookie);
+  const mockHttpPost = vi.mocked(httpPost);
+
+  // Sample drafts with different creation dates
+  const sampleDrafts: MattersDraft[] = [
+    {
+      id: "draft-1",
+      title: "Old Draft",
+      content: "<p>Old content</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+    },
+    {
+      id: "draft-2",
+      title: "Mid Draft",
+      content: "<p>Mid content</p>",
+      summary: "A mid-period draft",
+      createdAt: "2024-06-15T12:00:00Z",
+      tags: ["test"],
+    },
+    {
+      id: "draft-3",
+      title: "Recent Draft",
+      content: "<p>Recent content</p>",
+      createdAt: "2025-01-10T08:30:00Z",
+      cover: "https://example.com/cover.jpg",
+    },
+  ];
+
+  /**
+   * Helper: build a mock httpPost response that returns a single page of drafts.
+   * Mimics the GraphQL response shape for ViewerDraftsResponse.
+   */
+  function mockDraftsResponse(drafts: MattersDraft[]) {
+    const responseBody = JSON.stringify({
+      data: {
+        viewer: {
+          id: "viewer-1",
+          drafts: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            edges: drafts.map((d) => ({ node: d })),
+          },
+        },
+      },
+    });
+    return {
+      status: 200,
+      ok: true,
+      contentType: "application/json",
+      body: new Uint8Array(),
+      text: () => responseBody,
+    };
+  }
+
+  beforeEach(() => {
+    clearTokenCache();
+    mockGetPluginCookie.mockReset();
+    mockHttpPost.mockReset();
+
+    // Default: authenticated with a valid token
+    mockGetPluginCookie.mockResolvedValue([
+      { name: "__access_token", value: "test-token" },
+    ]);
+
+    // Default: return all sample drafts
+    mockHttpPost.mockResolvedValue(mockDraftsResponse(sampleDrafts));
+  });
+
+  it("returns all drafts when no since parameter is provided", async () => {
+    const result = await fetchAllDraftsSince();
+
+    expect(result).toHaveLength(3);
+    expect(result.map((d) => d.id)).toEqual(["draft-1", "draft-2", "draft-3"]);
+  });
+
+  it("filters drafts by createdAt > since when since is provided", async () => {
+    // since is between draft-1 (2024-01-01) and draft-2 (2024-06-15)
+    const result = await fetchAllDraftsSince("2024-03-01T00:00:00Z");
+
+    // draft-2 and draft-3 are after the since date
+    expect(result).toHaveLength(2);
+    const ids = result.map((d) => d.id);
+    expect(ids).toContain("draft-2");
+    expect(ids).toContain("draft-3");
+    expect(ids).not.toContain("draft-1");
+  });
+
+  it("returns empty array when all drafts are before since", async () => {
+    // since is in the future, so no drafts should match
+    const result = await fetchAllDraftsSince("2026-01-01T00:00:00Z");
+
+    expect(result).toHaveLength(0);
+    expect(result).toEqual([]);
+  });
+
+  it("excludes draft with exact createdAt === since (strict >)", async () => {
+    // Use the exact createdAt of draft-2 as the since timestamp
+    const result = await fetchAllDraftsSince("2024-06-15T12:00:00Z");
+
+    // draft-2 has createdAt exactly equal to since, so it must be excluded
+    const ids = result.map((d) => d.id);
+    expect(ids).not.toContain("draft-2");
+
+    // Only draft-3 is strictly after
+    expect(result).toHaveLength(1);
+    expect(ids).toContain("draft-3");
   });
 });

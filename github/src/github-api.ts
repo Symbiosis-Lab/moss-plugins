@@ -414,6 +414,12 @@ export async function setCustomDomain(
     });
     if (retryResponse.ok) return true;
 
+    // GitHub returns 404 when the SSL certificate doesn't exist yet.
+    // The CNAME is typically set despite the 404 response — GitHub
+    // processes the CNAME before checking the cert. Return true and
+    // let getPages() verify the actual state on the next call.
+    if (retryResponse.status === 404) return true;
+
     const body = await retryResponse.text();
     throw new Error(
       `GitHub Pages API error (${retryResponse.status}): ${body}`

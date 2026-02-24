@@ -9,6 +9,7 @@ import {
   createRepository,
   isValidRepoName,
   ensurePagesSource,
+  setCustomDomain,
   type GitHubUser,
   type CreatedRepository,
 } from "../github-api";
@@ -576,6 +577,79 @@ describe("GitHub API", () => {
       const result = await ensurePagesSource("testuser", "my-repo", "test-token", "gh-pages");
 
       expect(result).toEqual({ configured: false, wasCreated: false });
+    });
+  });
+
+  // ============================================================================
+  // setCustomDomain() — 404 retry behavior
+  // ============================================================================
+  describe("setCustomDomain", () => {
+    const pagesUrl = "https://api.github.com/repos/testuser/my-repo/pages";
+
+    it("returns true when first PUT succeeds", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+      const result = await setCustomDomain("testuser", "my-repo", "test-token", "example.com");
+
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns true when first PUT returns 404 and retry succeeds", async () => {
+      // First PUT (with https_enforced) → 404
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // Retry PUT (without https_enforced) → 200
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+      const result = await setCustomDomain("testuser", "my-repo", "test-token", "example.com");
+
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns true when both PUTs return 404 (cert not yet provisioned)", async () => {
+      // First PUT (with https_enforced) → 404
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // Retry PUT (without https_enforced) → 404
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve('{"message":"The certificate does not exist yet"}'),
+      });
+
+      const result = await setCustomDomain("testuser", "my-repo", "test-token", "example.com");
+
+      // Should NOT throw — CNAME is set despite the 404
+      expect(result).toBe(true);
+    });
+
+    it("throws when first PUT returns 404 and retry returns 500", async () => {
+      // First PUT (with https_enforced) → 404
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // Retry PUT (without https_enforced) → 500
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("Internal Server Error"),
+      });
+
+      await expect(
+        setCustomDomain("testuser", "my-repo", "test-token", "example.com")
+      ).rejects.toThrow("GitHub Pages API error (500)");
+    });
+
+    it("throws when first PUT returns non-retryable error", async () => {
+      // First PUT → 403 (not retryable)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: () => Promise.resolve("Forbidden"),
+      });
+
+      await expect(
+        setCustomDomain("testuser", "my-repo", "test-token", "example.com")
+      ).rejects.toThrow("GitHub Pages API error (403)");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -59,6 +59,17 @@ export interface PagesStatus {
   url: string;
 }
 
+/**
+ * GitHub Pages configuration (custom domain + HTTPS state)
+ * Used by the idempotent configure_domain hook to check current state.
+ */
+export interface PagesConfig {
+  /** Currently configured custom domain (CNAME), or null if none */
+  cname: string | null;
+  /** Whether HTTPS is enforced for the custom domain */
+  https_enforced: boolean;
+}
+
 // ============================================================================
 // API Constants
 // ============================================================================
@@ -296,6 +307,65 @@ export async function checkPagesStatus(
 }
 
 /**
+ * Get current GitHub Pages configuration (custom domain + HTTPS state)
+ *
+ * Used by the idempotent configure_domain hook to check what's already
+ * configured before making changes.
+ *
+ * @see https://docs.github.com/en/rest/pages/pages#get-a-github-pages-site
+ *
+ * @param owner - Repository owner (username or org)
+ * @param repo - Repository name
+ * @param token - GitHub OAuth access token
+ * @returns Pages config, or null if Pages is not enabled (404)
+ */
+export async function getPages(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<PagesConfig | null> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages`;
+  const response = await fetch(url, {
+    headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) return null;
+  const data = await response.json();
+  return { cname: data.cname || null, https_enforced: !!data.https_enforced };
+}
+
+/**
+ * Enforce HTTPS on a GitHub Pages custom domain
+ *
+ * This requires the SSL certificate to be provisioned by Let's Encrypt,
+ * which happens automatically after DNS propagation. If the cert isn't
+ * ready yet, GitHub returns an error and this function returns false.
+ *
+ * @see https://docs.github.com/en/rest/pages/pages#update-information-about-a-github-pages-site
+ *
+ * @param owner - Repository owner (username or org)
+ * @param repo - Repository name
+ * @param token - GitHub OAuth access token
+ * @returns true if HTTPS was successfully enforced, false if not yet possible
+ */
+export async function enforceHttps(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<boolean> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages`;
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      ...GITHUB_API_HEADERS,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ https_enforced: true }),
+  });
+  return response.ok;
+}
+
+/**
  * Set a custom domain (CNAME) for GitHub Pages
  *
  * Uses the GitHub Pages API to configure a custom domain for the repository.
@@ -332,10 +402,11 @@ export async function setCustomDomain(
 
   if (response.ok) return true;
 
-  // GitHub rejects https_enforced if DNS hasn't propagated yet (422).
+  // GitHub rejects https_enforced if DNS hasn't propagated yet (422),
+  // or if the SSL certificate doesn't exist yet (404).
   // Retry without it — HTTPS can be enabled later in GitHub settings
   // once DNS propagates and the certificate is provisioned.
-  if (response.status === 422) {
+  if (response.status === 422 || response.status === 404) {
     const retryResponse = await fetch(url, {
       method: "PUT",
       headers,

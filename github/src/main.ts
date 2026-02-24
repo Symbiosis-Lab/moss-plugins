@@ -16,7 +16,7 @@ import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { checkPagesStatus, setCustomDomain, ensurePagesSource } from "./github-api";
+import { checkPagesStatus, setCustomDomain, ensurePagesSource, getPages, enforceHttps } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
 // ============================================================================
@@ -449,16 +449,45 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
       };
     }
 
-    // Call GitHub Pages API to set the custom domain
-    console.log(`   Setting CNAME to "${domain}" on ${owner}/${repo}...`);
-    await setCustomDomain(owner, repo, token, domain);
+    // Check current GitHub Pages state (idempotent — safe to call repeatedly)
+    const pages = await getPages(owner, repo, token);
 
-    console.log(`   Custom domain "${domain}" configured on GitHub Pages`);
+    if (!pages) {
+      // Pages not enabled yet — can't configure domain until first deploy
+      return {
+        success: false,
+        message: "GitHub Pages not enabled. Deploy first.",
+      };
+    }
 
-    return {
-      success: true,
-      message: `Custom domain "${domain}" configured on GitHub Pages for ${owner}/${repo}`,
-    };
+    if (!pages.cname || pages.cname.toLowerCase() !== domain.toLowerCase()) {
+      // Phase 1: CNAME not set (or wrong) — set it without HTTPS
+      console.log(`   Setting CNAME to "${domain}" on ${owner}/${repo}...`);
+      await setCustomDomain(owner, repo, token, domain);
+      console.log(`   Custom domain "${domain}" configured on GitHub Pages`);
+      return {
+        success: true,
+        message: `Custom domain "${domain}" set on GitHub Pages. HTTPS will be enforced after certificate provisioning.`,
+      };
+    }
+
+    if (!pages.https_enforced) {
+      // Phase 2: CNAME is set, but HTTPS not enforced — try to enforce
+      console.log(`   CNAME already set. Enforcing HTTPS...`);
+      const enforced = await enforceHttps(owner, repo, token);
+      if (enforced) {
+        console.log(`   HTTPS enforced for "${domain}"`);
+        return { success: true, message: `HTTPS enforced for "${domain}" on GitHub Pages.` };
+      } else {
+        // Cert not ready yet — will retry on next orchestrator call (self-healing)
+        console.log(`   HTTPS enforcement not yet available (certificate pending)`);
+        return { success: true, message: `CNAME set. HTTPS pending certificate provisioning.` };
+      }
+    }
+
+    // Fully configured — idempotent no-op
+    console.log(`   Domain "${domain}" already fully configured with HTTPS`);
+    return { success: true, message: `Domain "${domain}" already configured with HTTPS on GitHub Pages.` };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`GitHub Deployer: Failed to configure domain - ${errorMessage}`);

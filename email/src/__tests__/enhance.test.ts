@@ -62,7 +62,7 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
   </div>
 </body>
 </html>`;
@@ -101,7 +101,7 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
   </div>
 </body>
 </html>`;
@@ -163,7 +163,7 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
   </div>
 </body>
 </html>`;
@@ -196,7 +196,7 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
   </div>
 </body>
 </html>`;
@@ -242,7 +242,7 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
   </div>
 </body>
 </html>`;

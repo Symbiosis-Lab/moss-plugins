@@ -21,7 +21,7 @@ import {
   clearTokenCache,
   getAccessToken,
   fetchAllArticlesSince,
-  fetchAllDrafts,
+  fetchAllDraftsSince,
   fetchAllCollections,
   fetchUserProfile,
   fetchArticleComments,
@@ -263,15 +263,18 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
     // Phase 3: Fetch drafts
     await reportProgress("fetching_drafts", overallProgress("fetching_drafts", 0, 1), 100, "Fetching drafts from Matters.town...");
-    const drafts = await fetchAllDrafts();
+    const drafts = await fetchAllDraftsSince(lastSyncedAt);
     await reportProgress("fetching_drafts", overallProgress("fetching_drafts", 1, 1), 100, `Found ${drafts.length} draft(s)`);
     console.log(`   Found ${drafts.length} draft(s)`);
 
     // Phase 4: Fetch collections
     await reportProgress("fetching_collections", overallProgress("fetching_collections", 0, 1), 100, "Fetching collections from Matters.town...");
-    const collections = await fetchAllCollections();
-    await reportProgress("fetching_collections", overallProgress("fetching_collections", 1, 1), 100, `Found ${collections.length} collection(s)`);
-    console.log(`   Found ${collections.length} collection(s)`);
+    const allCollections = await fetchAllCollections();
+    const knownCollectionIds = new Set(pluginConfig.knownCollectionIds || []);
+    const newCollections = allCollections.filter(c => !knownCollectionIds.has(c.id));
+    const allCollectionIds = allCollections.map(c => c.id);
+    await reportProgress("fetching_collections", overallProgress("fetching_collections", 1, 1), 100, `Found ${newCollections.length} new collection(s) (${allCollections.length} total)`);
+    console.log(`   Found ${newCollections.length} new collection(s) (${allCollections.length} total)`);
 
     // Phase 5: Fetch user profile (for homepage and language detection)
     await reportProgress("fetching_profile", overallProgress("fetching_profile", 0, 1), 100, "Fetching user profile...");
@@ -298,12 +301,12 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
     }
 
     // Phase 6: Sync to local files
-    const syncTotal = articles.length + drafts.length + collections.length + 1;
+    const syncTotal = articles.length + drafts.length + allCollections.length + 1;
     await reportProgress("syncing", overallProgress("syncing", 0, syncTotal), 100, "Starting sync...");
     const { result: syncResult, articlePathMap } = await syncToLocalFiles(
       articles,
       drafts,
-      collections,
+      allCollections,
       userName,
       context.config || {},
       profile
@@ -349,24 +352,36 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
         ? `, ${linkResult.linksRewritten} internal links rewritten`
         : "";
 
-    // Phase 8: Fetch social data (comments only) for ALL local articles
-    // This ensures we get new comments even for articles synced in previous runs
+    // Phase 8: Fetch social data (comments only)
+    // First sync: fetch for ALL local articles
+    // Incremental sync: only fetch for newly synced articles (comments on old
+    // articles keep their existing data from previous syncs — to refresh all
+    // social data, clear lastSyncedAt from plugin config)
     // Save incrementally after each article to avoid losing data if a fetch hangs
     let socialSummary = "";
-    const localArticles = await scanLocalArticles();
+    let articlesForSocialFetch: Array<{ shortHash: string; path: string; title: string; uid: string | null }>;
 
-    if (localArticles.length > 0) {
-      await reportProgress("fetching_social", overallProgress("fetching_social", 0, localArticles.length), 100, "Fetching social data...");
-      console.log(`📊 Fetching social data (comments) for ${localArticles.length} local articles...`);
+    if (!lastSyncedAt) {
+      articlesForSocialFetch = await scanLocalArticles();
+      console.log(`📊 First sync: fetching social data for all ${articlesForSocialFetch.length} local articles`);
+    } else {
+      const newArticleShortHashes = new Set(articles.map(a => a.shortHash));
+      const allLocalArticles = await scanLocalArticles();
+      articlesForSocialFetch = allLocalArticles.filter(la => newArticleShortHashes.has(la.shortHash));
+      console.log(`📊 Incremental sync: fetching social data for ${articlesForSocialFetch.length} new articles (${allLocalArticles.length} total local)`);
+    }
+
+    if (articlesForSocialFetch.length > 0) {
+      await reportProgress("fetching_social", overallProgress("fetching_social", 0, articlesForSocialFetch.length), 100, "Fetching social data...");
 
       const socialData = await loadSocialData();
       let totalComments = 0;
 
-      for (let i = 0; i < localArticles.length; i++) {
-        const article = localArticles[i];
+      for (let i = 0; i < articlesForSocialFetch.length; i++) {
+        const article = articlesForSocialFetch[i];
         await reportProgress(
           "fetching_social",
-          overallProgress("fetching_social", i + 1, localArticles.length),
+          overallProgress("fetching_social", i + 1, articlesForSocialFetch.length),
           100,
           `Social data: ${article.title}`
         );
@@ -396,6 +411,8 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
 
       socialSummary = `, ${totalComments} comments`;
       console.log(`✅ Social data saved: ${totalComments} comments`);
+    } else {
+      console.log(`📊 No new articles, skipping social data fetch`);
     }
 
     // Phase 9: Update lastSyncedAt timestamp
@@ -405,6 +422,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
       await saveConfig({
         ...currentConfig,
         lastSyncedAt: syncEndTime,
+        knownCollectionIds: allCollectionIds,
       });
       console.log(`📅 Updated lastSyncedAt to ${syncEndTime}`);
     } catch (error) {

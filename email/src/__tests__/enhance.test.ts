@@ -289,6 +289,125 @@ describe("enhance hook", () => {
     });
   });
 
+  describe("enhance produces inline footer layout", () => {
+    it("should not include a label element", async () => {
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<body>
+  <div class="footer-content">
+    <p class="footer-description">Subscribe <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+  </div>
+</body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(html);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext();
+
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      // No label element — use placeholder instead
+      expect(writtenHtml).not.toContain('<label');
+    });
+
+    it("should use placeholder text for email input", async () => {
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<body>
+  <div class="footer-content">
+    <p class="footer-description">Subscribe <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+  </div>
+</body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(html);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext();
+
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenHtml).toContain('placeholder="email"');
+    });
+
+    it("should use Chinese placeholder for zh-lang pages", async () => {
+      const html = `<!DOCTYPE html>
+<html lang="zh-Hans">
+<body>
+  <div class="footer-content">
+    <p class="footer-description">订阅 <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+  </div>
+</body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(html);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext();
+
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenHtml).toContain('placeholder="邮箱"');
+    });
+
+    it("should use Subscribe/订阅 as button text", async () => {
+      const html = `<!DOCTYPE html>
+<html lang="zh-Hans">
+<body>
+  <div class="footer-content">
+    <p class="footer-description">订阅 <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+  </div>
+</body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(html);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext();
+
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenHtml).toContain('>订阅</button>');
+    });
+  });
+
   describe("enhance handles missing API key gracefully", () => {
     it("should return success:false when no API key configured", async () => {
       const ctx = createEnhanceContext({ api_key: undefined });

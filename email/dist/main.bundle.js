@@ -146,7 +146,7 @@ var EmailNewsletter = (() => {
       }
     };
   }
-  var TOAST_EVENT = "plugin-toast";
+  var TOAST_EVENT = "show-toast";
   async function showToast(options) {
     await emitEvent(TOAST_EVENT, typeof options === "string" ? { message: options } : options);
   }
@@ -256,15 +256,22 @@ var EmailNewsletter = (() => {
     return { success: true };
   }
   function injectSubscribeForm(html, username) {
+    if (html.includes("footer-subscribe-form")) return html;
     const footerContentRegex = /<div class="footer-content">([\s\S]*?)<\/div>/;
     const match = html.match(footerContentRegex);
     if (!match) return html;
+    const existingContent = match[1].trim();
+    const langMatch = html.match(/<html[^>]*\blang="([^"]+)"/);
+    const lang = langMatch?.[1] || "en";
+    const isZh = lang.startsWith("zh");
+    const placeholderText = isZh ? "\u90AE\u7BB1" : "email";
+    const buttonText = isZh ? "\u8BA2\u9605" : "Subscribe";
     const formHtml = `<div class="footer-content">
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+    ${existingContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
-        <input type="email" name="email" placeholder="your@email.com" required />
+        <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
         <input type="hidden" value="1" name="embed" />
-        <button type="submit">Subscribe</button>
+        <button type="submit" class="moss-btn">${buttonText}</button>
     </form>
 </div>`;
     return html.replace(footerContentRegex, formHtml);

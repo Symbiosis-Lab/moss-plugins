@@ -106,11 +106,11 @@ function injectSubscribeForm(html: string, username: string): string {
   const formHtml = `<div class="footer-content">
     ${existingContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
-        <label for="footer-email" class="moss-site-label">${labelText}</label>
+        <label for="footer-email" class="moss-label">${labelText}</label>
         <div class="footer-form-row">
-            <input type="email" id="footer-email" name="email" class="moss-site-input" required />
+            <input type="email" id="footer-email" name="email" class="moss-input" required />
             <input type="hidden" value="1" name="embed" />
-            <button type="submit" class="moss-site-btn">${buttonText}</button>
+            <button type="submit" class="moss-btn">${buttonText}</button>
         </div>
     </form>
 </div>`;

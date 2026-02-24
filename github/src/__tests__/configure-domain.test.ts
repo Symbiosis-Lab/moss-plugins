@@ -235,4 +235,29 @@ describe("configure_domain (idempotent)", () => {
     expect(mockEnforceHttps).not.toHaveBeenCalled();
     expect(result.message).toContain("already configured");
   });
+
+  // --------------------------------------------------------------------------
+  // 8. setCustomDomain throws an error
+  // --------------------------------------------------------------------------
+  it("returns failure when setCustomDomain throws", async () => {
+    mockGetPages.mockResolvedValue({ cname: null, https_enforced: false });
+    mockSetCustomDomain.mockRejectedValue(new Error("GitHub Pages API error (500): Internal Server Error"));
+
+    const result = await configure_domain(makeContext("example.com"));
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("GitHub Pages API error");
+  });
+
+  // --------------------------------------------------------------------------
+  // 9. getPages throws a network error
+  // --------------------------------------------------------------------------
+  it("returns failure when getPages throws a network error", async () => {
+    mockGetPages.mockRejectedValue(new Error("fetch failed"));
+
+    const result = await configure_domain(makeContext("example.com"));
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("fetch failed");
+  });
 });

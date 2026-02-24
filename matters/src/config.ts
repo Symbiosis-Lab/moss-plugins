@@ -32,6 +32,8 @@ export interface MattersPluginConfig {
   articleFolder?: string;
   /** Override Matters domain (default: "matters.town", test: "matters.icu") */
   domain?: string;
+  /** Known collection IDs from previous syncs (collections lack createdAt, so we track IDs to detect new ones) */
+  knownCollectionIds?: string[];
 }
 
 // ============================================================================

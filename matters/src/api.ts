@@ -712,6 +712,32 @@ export async function fetchAllDrafts(): Promise<MattersDraft[]> {
 }
 
 /**
+ * Fetch drafts created since a given timestamp
+ *
+ * Like fetchAllArticlesSince, fetches all drafts and filters client-side.
+ * We filter by createdAt only (not updatedAt) for consistency with articles.
+ *
+ * @param since - ISO timestamp to filter drafts (optional, fetches all if not provided)
+ */
+export async function fetchAllDraftsSince(since?: string): Promise<MattersDraft[]> {
+  const drafts = await fetchAllDrafts();
+
+  if (!since) {
+    console.log(`   📅 No lastSyncedAt, returning all ${drafts.length} drafts`);
+    return drafts;
+  }
+
+  const sinceDate = new Date(since);
+  const filteredDrafts = drafts.filter((draft) => {
+    const draftDate = new Date(draft.createdAt);
+    return draftDate > sinceDate;
+  });
+
+  console.log(`   📅 Filtered to ${filteredDrafts.length} new drafts since ${since}`);
+  return filteredDrafts;
+}
+
+/**
  * Fetch all collections with pagination
  * Uses viewer query (authenticated) or user query (public) based on apiConfig.queryMode
  */

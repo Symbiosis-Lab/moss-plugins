@@ -62,7 +62,8 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -101,7 +102,8 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -163,7 +165,8 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -196,7 +199,8 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -242,7 +246,8 @@ describe("enhance hook", () => {
 <html>
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe via <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -295,7 +300,8 @@ describe("enhance hook", () => {
 <html lang="en">
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -325,7 +331,8 @@ describe("enhance hook", () => {
 <html lang="en">
 <body>
   <div class="footer-content">
-    <p class="footer-description">Subscribe <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -354,7 +361,8 @@ describe("enhance hook", () => {
 <html lang="zh-Hans">
 <body>
   <div class="footer-content">
-    <p class="footer-description">订阅 <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">订阅</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -383,7 +391,8 @@ describe("enhance hook", () => {
 <html lang="zh-Hans">
 <body>
   <div class="footer-content">
-    <p class="footer-description">订阅 <a href="/feed.xml" class="footer-link" data-external>RSS</a></p>
+    <p class="footer-description">订阅</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
   </div>
 </body>
 </html>`;
@@ -405,6 +414,43 @@ describe("enhance hook", () => {
 
       const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenHtml).toContain('>订阅</button>');
+    });
+  });
+
+  describe("enhance removes footer-description when injecting form", () => {
+    it("should strip the footer-description paragraph since the button replaces it", async () => {
+      // Real footer structure: <p class="footer-description"> and <a class="footer-link"> as siblings
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<body>
+  <div class="footer-content">
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+  </div>
+</body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(html);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext();
+
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      // Footer-description should be removed (button already says Subscribe)
+      expect(writtenHtml).not.toContain("footer-description");
+      // Form and RSS link should still be present
+      expect(writtenHtml).toContain("footer-subscribe-form");
+      expect(writtenHtml).toContain("footer-link");
     });
   });
 

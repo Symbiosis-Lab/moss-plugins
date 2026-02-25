@@ -93,8 +93,11 @@ function injectSubscribeForm(html: string, username: string): string {
   const match = html.match(footerContentRegex);
   if (!match) return html;
 
-  // Preserve existing content (RSS link, description) and append inline form
+  // Preserve existing content (RSS link) but remove description (button replaces it)
   const existingContent = match[1].trim();
+  const cleanedContent = existingContent
+    .replace(/<p class="footer-description">[\s\S]*?<\/p>/, '')
+    .trim();
 
   // Detect language from HTML lang attribute
   const langMatch = html.match(/<html[^>]*\blang="([^"]+)"/);
@@ -104,7 +107,7 @@ function injectSubscribeForm(html: string, username: string): string {
   const buttonText = isZh ? '订阅' : 'Subscribe';
 
   const formHtml = `<div class="footer-content">
-    ${existingContent}
+    ${cleanedContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
         <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
         <input type="hidden" value="1" name="embed" />

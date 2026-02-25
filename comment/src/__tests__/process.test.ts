@@ -25,9 +25,12 @@ import { process } from "../main";
 import { clearDetectionCache } from "../fetcher";
 import type { ProcessContext, ArticleMap } from "../types";
 
-function makeContext(config: Record<string, unknown> = {}): ProcessContext {
+function makeContext(
+  config: Record<string, unknown> = {},
+  projectInfoOverrides: Record<string, unknown> = {}
+): ProcessContext {
   return {
-    project_info: { total_files: 10, homepage_file: "index.md" },
+    project_info: { total_files: 10, homepage_file: "index.md", ...projectInfoOverrides },
     config,
   };
 }
@@ -206,10 +209,10 @@ describe("process hook", () => {
   });
 
   it("fetches Artalk comments when server is auto-detected as artalk", async () => {
-    const ctx = makeContext({
-      server_url: "https://artalk.example.com",
-      site_name: "My Blog",
-    });
+    const ctx = makeContext(
+      { server_url: "https://artalk.example.com" },
+      { site_name: "My Blog" }
+    );
 
     const articleMap: ArticleMap = {
       articles: {

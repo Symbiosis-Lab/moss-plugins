@@ -8,11 +8,9 @@
   "global_name": "CommentPlugin",
   "icon": "icon.svg",
   "config": {
-    "server_url": "",
-    "site_name": ""
+    "server_url": ""
   },
   "config_schema": {
-    "server_url": "string",
-    "site_name": "string"
+    "server_url": "string"
   }
 }

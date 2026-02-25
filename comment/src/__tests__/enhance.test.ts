@@ -27,13 +27,14 @@ import { clearDetectionCache } from "../fetcher";
 import type { EnhanceContext, ArticleMap } from "../types";
 
 function makeEnhanceContext(
-  config: Record<string, unknown> = {}
+  config: Record<string, unknown> = {},
+  projectInfoOverrides: Record<string, unknown> = {}
 ): EnhanceContext {
   return {
     project_path: "/Users/test/site",
     moss_dir: "/Users/test/site/.moss",
     output_dir: "/Users/test/site/.moss/site",
-    project_info: { total_files: 5, homepage_file: "index.md" },
+    project_info: { total_files: 5, homepage_file: "index.md", ...projectInfoOverrides },
     config,
     interactions: [],
   };
@@ -312,10 +313,10 @@ describe("enhance hook uid resolution", () => {
       text: () => JSON.stringify({ app_name: "Artalk" }),
     });
 
-    const ctx = makeEnhanceContext({
-      server_url: "https://artalk.example.com",
-      site_name: "Test Site",
-    });
+    const ctx = makeEnhanceContext(
+      { server_url: "https://artalk.example.com" },
+      { site_name: "Test Site" }
+    );
 
     const articleMap: ArticleMap = {
       articles: {

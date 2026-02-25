@@ -57,8 +57,14 @@ export interface ArticleMap {
 // Hook Context Types
 // ============================================================================
 
+export interface ProjectInfo {
+  total_files: number;
+  homepage_file: string | null;
+  site_name?: string;
+}
+
 export interface ProcessContext {
-  project_info: { total_files: number; homepage_file: string | null };
+  project_info: ProjectInfo;
   config: Record<string, any>;
 }
 
@@ -66,7 +72,7 @@ export interface EnhanceContext {
   project_path: string;
   moss_dir: string;
   output_dir: string;
-  project_info: { total_files: number; homepage_file: string | null };
+  project_info: ProjectInfo;
   config: Record<string, any>;
   interactions: any[];
 }

@@ -261,13 +261,14 @@ var EmailNewsletter = (() => {
     const match = html.match(footerContentRegex);
     if (!match) return html;
     const existingContent = match[1].trim();
+    const cleanedContent = existingContent.replace(/<p class="footer-description">[\s\S]*?<\/p>/, "").trim();
     const langMatch = html.match(/<html[^>]*\blang="([^"]+)"/);
     const lang = langMatch?.[1] || "en";
     const isZh = lang.startsWith("zh");
     const placeholderText = isZh ? "\u90AE\u7BB1" : "email";
     const buttonText = isZh ? "\u8BA2\u9605" : "Subscribe";
     const formHtml = `<div class="footer-content">
-    ${existingContent}
+    ${cleanedContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
         <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
         <input type="hidden" value="1" name="embed" />

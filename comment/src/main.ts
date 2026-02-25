@@ -191,6 +191,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
   const siteName = ctx.project_info.site_name || "";
+  const defaultComments = config.default_comments !== false; // default true for backward compat
   const providerName = serverUrl ? await detectProvider(serverUrl) : "waline";
   const buildScript = getSubmitScriptBuilder(providerName);
 
@@ -272,7 +273,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         buildScript,
         providerName,
         siteName,
-        uid
+        uid,
+        defaultComments
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -305,15 +307,21 @@ async function processHtmlFile(
   buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string) => string) | null,
   providerName: string = "waline",
   siteName: string = "",
-  uid: string = ""
+  uid: string = "",
+  defaultComments: boolean = true
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
 
-    // Check for data-comments="false" opt-out
-    if (html.includes('data-comments="false"')) {
-      return false;
-    }
+    // Check explicit opt-in/opt-out attributes
+    const hasExplicitTrue = html.includes('data-comments="true"');
+    const hasExplicitFalse = html.includes('data-comments="false"');
+
+    // Explicit opt-out always wins
+    if (hasExplicitFalse) return false;
+
+    // If default is off and no explicit opt-in, skip
+    if (!defaultComments && !hasExplicitTrue) return false;
 
     // Skip if already injected (idempotent on re-compile)
     if (html.includes('class="moss-comments"')) {

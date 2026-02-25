@@ -41,12 +41,13 @@ function makeEnhanceContext(
 }
 
 // Minimal HTML template with <article> and </article> tags
-function makeArticleHtml(title: string = "Test"): string {
+function makeArticleHtml(title: string = "Test", dataComments?: "true" | "false"): string {
+  const articleAttr = dataComments ? ` data-comments="${dataComments}"` : "";
   return `<!DOCTYPE html>
 <html>
 <head><title>${title}</title></head>
 <body>
-<article>
+<article${articleAttr}>
 <h1>${title}</h1>
 <p>Content here.</p>
 </article>
@@ -386,5 +387,154 @@ describe("enhance hook uid resolution", () => {
     expect(htmlCall).toBeDefined();
     // Should fall back to URL path since there's no uid
     expect(htmlCall![1]).toContain("/posts/no-uid/");
+  });
+});
+
+describe("enhance hook default_comments config", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockReadPluginFile.mockReset();
+    mockHttpGet.mockReset();
+    clearDetectionCache();
+    mockReadPluginFile.mockResolvedValue("/* comments css */");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    (globalThis as any).__MOSS_INTERNAL_CONTEXT__ = {
+      project_path: "/Users/test/site",
+    };
+  });
+
+  /**
+   * Helper: set up a single-article scenario for default_comments tests.
+   * The article map has one page; social data has one comment keyed by uid.
+   * The HTML can optionally include a data-comments attribute on the <article> tag.
+   */
+  function setupSingleArticle(dataComments?: "true" | "false") {
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1.0.0",
+      articles: {
+        "uid-hello": {
+          comments: [
+            {
+              id: "c1",
+              content: "<p>Nice article!</p>",
+              createdAt: "2025-06-15T10:00:00.000Z",
+              author: { displayName: "Tester", name: "Tester" },
+            },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello", dataComments));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+  }
+
+  it("default_comments: false + no data attribute -> skips injection", async () => {
+    const ctx = makeEnhanceContext({ default_comments: false });
+    setupSingleArticle(); // no data-comments attribute
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    // No HTML file should have been written (injection was skipped)
+    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
+      (call: any[]) =>
+        typeof call[0] === "string" && call[0].endsWith("index.html")
+    );
+    expect(htmlWriteCalls.length).toBe(0);
+  });
+
+  it('default_comments: false + data-comments="true" -> injects comments', async () => {
+    const ctx = makeEnhanceContext({ default_comments: false });
+    setupSingleArticle("true"); // explicit opt-in
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    expect(htmlCall![1]).toContain("Nice article!");
+    expect(htmlCall![1]).toContain("Tester");
+  });
+
+  it("default_comments: true (explicit) -> injects comments (existing behavior)", async () => {
+    const ctx = makeEnhanceContext({ default_comments: true });
+    setupSingleArticle(); // no data-comments attribute
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    expect(htmlCall![1]).toContain("Nice article!");
+  });
+
+  it("default_comments: undefined (not set) -> injects comments (backward compat)", async () => {
+    const ctx = makeEnhanceContext({}); // no default_comments key
+    setupSingleArticle();
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    expect(htmlCall![1]).toContain("Nice article!");
+  });
+
+  it('data-comments="false" -> always skips, regardless of default_comments: true', async () => {
+    const ctx = makeEnhanceContext({ default_comments: true });
+    setupSingleArticle("false"); // explicit opt-out
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    // Should NOT inject (explicit opt-out overrides default_comments: true)
+    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
+      (call: any[]) =>
+        typeof call[0] === "string" && call[0].endsWith("index.html")
+    );
+    expect(htmlWriteCalls.length).toBe(0);
+  });
+
+  it('data-comments="false" -> always skips, regardless of default_comments: false', async () => {
+    const ctx = makeEnhanceContext({ default_comments: false });
+    setupSingleArticle("false"); // explicit opt-out
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
+      (call: any[]) =>
+        typeof call[0] === "string" && call[0].endsWith("index.html")
+    );
+    expect(htmlWriteCalls.length).toBe(0);
   });
 });

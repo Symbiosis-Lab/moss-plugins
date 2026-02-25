@@ -1,7 +1,7 @@
 {
   "name": "hugo",
   "version": "1.0.0",
-  "description": "Hugo static site generator plugin for Moss",
+  "description": "Hugo static site generator plugin for moss",
   "main": "dist/main.js",
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",

@@ -2,7 +2,7 @@
  * Shared types for Nostr plugin
  *
  * These types match the Rust types in moss core (plugins/types.rs).
- * They define the contract between the plugin and the Moss build system.
+ * They define the contract between the plugin and the moss build system.
  *
  * @module types
  */
@@ -104,7 +104,7 @@ export interface Interaction {
 // ============================================================================
 
 /**
- * Information about the Moss project being built.
+ * Information about the moss project being built.
  *
  * Shared across all hook contexts to provide project metadata.
  */

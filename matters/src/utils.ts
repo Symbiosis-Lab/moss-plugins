@@ -228,7 +228,7 @@ export async function fetchWithTimeout(
  * passing the binary data through JavaScript. This avoids event loop blocking
  * that occurs with large files when using base64 encoding/decoding.
  *
- * Moss handles filename derivation from the URL and adds file extension from
+ * moss handles filename derivation from the URL and adds file extension from
  * Content-Type if the URL has no extension.
  *
  * @param url - URL to download

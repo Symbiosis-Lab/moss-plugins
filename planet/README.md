@@ -107,9 +107,9 @@ set_dnslink = true              # Auto-set DNS TXT record after pinning
 
 **"I want .eth"** — Same as above, plus set ENS content hash to IPNS address (Planet already supports this). Now `name.eth` resolves via IPFS and `site.com` resolves via HTTP. Same content, two naming systems.
 
-## Why Planet + Moss Together
+## Why Planet + moss Together
 
-| | Moss alone | Planet alone | Moss + Planet |
+| | moss alone | Planet alone | moss + Planet |
 |---|---|---|---|
 | Authoring | Any editor, markdown folders | Built-in editor only | Any editor, markdown folders |
 | Theming | Full CSS + HTML templates | Stencil templates | Full CSS + HTML templates |

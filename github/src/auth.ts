@@ -26,7 +26,7 @@ import type {
 // Configuration
 // ============================================================================
 
-/** GitHub OAuth App Client ID for Moss */
+/** GitHub OAuth App Client ID for moss */
 const CLIENT_ID = "Ov23li8HTgRH8nuO16oK";
 
 /** Required OAuth scopes for GitHub Pages deployment
@@ -136,7 +136,7 @@ export async function validateToken(token: string): Promise<{
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Moss-GitHub-Deployer",
+        "User-Agent": "moss-GitHub-Deployer",
       },
     });
 

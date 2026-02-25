@@ -1,6 +1,6 @@
-# Eleventy Generator Plugin for Moss
+# Eleventy Generator Plugin for moss
 
-Generate static sites using [Eleventy (11ty)](https://www.11ty.dev/) with Moss's zero-flicker preview and smart-diff refresh.
+Generate static sites using [Eleventy (11ty)](https://www.11ty.dev/) with moss's zero-flicker preview and smart-diff refresh.
 
 ## Features
 
@@ -11,7 +11,7 @@ Generate static sites using [Eleventy (11ty)](https://www.11ty.dev/) with Moss's
 
 ## Installation
 
-The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
+The plugin is bundled with moss. Configure it in `.moss/config.toml`:
 
 ```toml
 [hooks]
@@ -34,9 +34,9 @@ build_args = ["--quiet"]
 
 ## Structure Translation
 
-The plugin translates Moss's flexible folder structure to Eleventy's expected layout using symlinks:
+The plugin translates moss's flexible folder structure to Eleventy's expected layout using symlinks:
 
-| Moss Structure | Eleventy Structure | Resulting URL |
+| moss Structure | Eleventy Structure | Resulting URL |
 |----------------|-------------------|---------------|
 | `index.md` (homepage) | `src/index.md` | `/` |
 | `posts/` (collection) | `src/posts/` | `/posts/*` |
@@ -50,7 +50,7 @@ The plugin translates Moss's flexible folder structure to Eleventy's expected la
 2. **Config Generation**: Auto-generates `eleventy.config.js` with site settings
 3. **Layout Generation**: Creates default Nunjucks layouts for pages and posts
 4. **Build**: Runs Eleventy to generate static files to `_site/`
-5. **Preview**: Moss serves the output with smart-diff for instant updates
+5. **Preview**: moss serves the output with smart-diff for instant updates
 
 ## Requirements
 

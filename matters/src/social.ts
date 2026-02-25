@@ -24,7 +24,7 @@
  * - Items are NEVER removed (to preserve data from different sync runs)
  *
  * This allows multiple plugins to write to separate files in .moss/social/
- * and Moss can aggregate them when rendering.
+ * and moss can aggregate them when rendering.
  */
 
 import { writeFile, readFile } from "@symbiosis-lab/moss-api";

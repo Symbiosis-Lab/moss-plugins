@@ -1,5 +1,5 @@
 /**
- * Comment Plugin for Moss
+ * Comment Plugin for moss
  *
  * Main entry point. Provides:
  *

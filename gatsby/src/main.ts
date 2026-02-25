@@ -1,5 +1,5 @@
 /**
- * Gatsby Generator Plugin for Moss
+ * Gatsby Generator Plugin for moss
  *
  * This plugin runs Gatsby via npx to generate static sites.
  */

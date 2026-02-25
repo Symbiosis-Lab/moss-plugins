@@ -1,6 +1,6 @@
-# Gatsby Generator Plugin for Moss
+# Gatsby Generator Plugin for moss
 
-Generate static sites using [Gatsby](https://www.gatsbyjs.com/) with Moss's zero-flicker preview and smart-diff refresh.
+Generate static sites using [Gatsby](https://www.gatsbyjs.com/) with moss's zero-flicker preview and smart-diff refresh.
 
 ## Features
 
@@ -11,7 +11,7 @@ Generate static sites using [Gatsby](https://www.gatsbyjs.com/) with Moss's zero
 
 ## Installation
 
-The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
+The plugin is bundled with moss. Configure it in `.moss/config.toml`:
 
 ```toml
 [hooks]
@@ -34,9 +34,9 @@ build_args = ["build"]
 
 ## Structure Translation
 
-The plugin translates Moss's flexible folder structure to Gatsby's expected layout using symlinks:
+The plugin translates moss's flexible folder structure to Gatsby's expected layout using symlinks:
 
-| Moss Structure | Gatsby Structure | Resulting URL |
+| moss Structure | Gatsby Structure | Resulting URL |
 |----------------|------------------|---------------|
 | `index.md` (homepage) | `src/pages/index.js` | `/` |
 | `posts/` (collection) | `src/content/posts/` | `/posts/*` |
@@ -50,7 +50,7 @@ The plugin translates Moss's flexible folder structure to Gatsby's expected layo
 2. **Page Generation**: Generates React page components for markdown files
 3. **Config Generation**: Auto-generates `gatsby-config.js` with plugins and settings
 4. **Build**: Runs `gatsby build` to generate static files to `public/`
-5. **Preview**: Moss serves the output with smart-diff for instant updates
+5. **Preview**: moss serves the output with smart-diff for instant updates
 
 ## Requirements
 

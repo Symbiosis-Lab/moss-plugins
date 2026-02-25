@@ -1,5 +1,5 @@
 /**
- * Astro Generator Plugin for Moss
+ * Astro Generator Plugin for moss
  *
  * This plugin runs Astro via npx to generate static sites.
  */

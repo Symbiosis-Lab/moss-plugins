@@ -24,7 +24,7 @@ const DEFAULT_SOCIAL_SOURCES = ["matters", "nostr", "webmention", "activitypub"]
 
 /**
  * Build a mapping from relative source .md path to output URL path
- * using the article-map.json written by Moss core.
+ * using the article-map.json written by moss core.
  *
  * article-map.json structure:
  *   { articles: { [prettyUrl]: { source_path: string, url_path: string, ... } } }
@@ -84,7 +84,7 @@ export async function buildSourceToUrlMap(): Promise<Map<string, string>> {
 
 /**
  * Build a mapping from content uid to output URL path
- * using the article-map.json written by Moss core.
+ * using the article-map.json written by moss core.
  *
  * article-map.json structure:
  *   { articles: { [prettyUrl]: { source_path: string, url_path: string, uid?: string } } }

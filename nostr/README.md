@@ -1,10 +1,10 @@
-# Nostr Plugin for Moss
+# Nostr Plugin for moss
 
 Social interactions via the Nostr protocol - comments, likes, zaps, and article syndication.
 
 ## Overview
 
-This plugin enables Moss-generated static sites to:
+This plugin enables moss-generated static sites to:
 
 1. **Fetch interactions** from Nostr relays (comments, likes, zaps)
 2. **Render interactions** into generated HTML pages with progressive enhancement
@@ -14,7 +14,7 @@ This plugin enables Moss-generated static sites to:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Moss Build Pipeline                         │
+│                         moss Build Pipeline                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐    │
@@ -41,7 +41,7 @@ This plugin enables Moss-generated static sites to:
 
 ## Installation
 
-1. Copy the plugin to your Moss project:
+1. Copy the plugin to your moss project:
    ```bash
    cp -r nostr/ your-project/.moss/plugins/nostr/
    ```

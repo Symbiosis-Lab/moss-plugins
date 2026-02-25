@@ -7,7 +7,7 @@
 
 ## Overview
 
-The comment widget enables readers to comment on any blog using the Moss Nostr plugin. It supports multiple identity tiers with graceful fallback, works across all major SSGs, and preserves scroll position during preview refreshes.
+The comment widget enables readers to comment on any blog using the moss Nostr plugin. It supports multiple identity tiers with graceful fallback, works across all major SSGs, and preserves scroll position during preview refreshes.
 
 ## Identity Resolution
 
@@ -177,7 +177,7 @@ The enhance hook must find the correct insertion point for each SSG's HTML outpu
 | Astro | `</article>` | `<slot />` after content | Layout-dependent |
 | Jekyll | `</article>` | `.post-content` | Theme-dependent |
 | Zola | `</article>` | `.post`, `.article` | Theme-dependent |
-| Moss default | `</article>` | `.content` | Controlled |
+| moss default | `</article>` | `.content` | Controlled |
 | 11ty | `</article>` | `.post`, `main` | Layout-dependent |
 
 ### Detection Algorithm
@@ -339,14 +339,14 @@ Browser JS checks this attribute and handles updates accordingly.
     <h4>Sign in to comment</h4>
     <button class="quick-start">Quick Start</button>
     <button class="use-extension">Use Browser Extension</button>
-    <button class="use-app">Use Moss App</button>
+    <button class="use-app">Use moss App</button>
   </div>
 
   <!-- Upgrade prompt (shown after local fallback) -->
   <div class="upgrade-prompt" hidden>
     <p>Your identity is stored locally on this blog only.</p>
     <button class="save-key">Save My Key</button>
-    <button class="install-app">Install Moss App</button>
+    <button class="install-app">Install moss App</button>
   </div>
 </section>
 ```
@@ -403,7 +403,7 @@ nostr/
 
 ### E2E Tests (CI only)
 
-- Full build with Moss binary
+- Full build with moss binary
 - Widget injection verified in output HTML
 - Browser tests with Playwright
 
@@ -427,7 +427,7 @@ plugins:
       # Disable widget entirely (still fetch interactions)
       enabled: true
 
-      # NIP-46 relay for Moss app connections
+      # NIP-46 relay for moss app connections
       nip46_relay: "wss://relay.moss.social"
 ```
 

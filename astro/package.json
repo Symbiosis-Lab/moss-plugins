@@ -1,7 +1,7 @@
 {
   "name": "astro",
   "version": "1.0.0",
-  "description": "Astro static site generator plugin for Moss",
+  "description": "Astro static site generator plugin for moss",
   "main": "dist/main.js",
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",

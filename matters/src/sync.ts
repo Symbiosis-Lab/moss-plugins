@@ -388,7 +388,7 @@ export async function syncToLocalFiles(
   // Generate Homepage (index.md)
   // ============================================================================
   // The homepage is created at the project root with only the user's display name
-  // in frontmatter. Moss identifies it as the homepage by its location (root index.md).
+  // in frontmatter. moss identifies it as the homepage by its location (root index.md).
   processedItems++;
   await reportProgress("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
 

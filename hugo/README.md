@@ -1,6 +1,6 @@
-# Hugo Generator Plugin for Moss
+# Hugo Generator Plugin for moss
 
-Generate static sites using [Hugo](https://gohugo.io/) with Moss's zero-flicker preview and smart-diff refresh.
+Generate static sites using [Hugo](https://gohugo.io/) with moss's zero-flicker preview and smart-diff refresh.
 
 ## Features
 
@@ -11,7 +11,7 @@ Generate static sites using [Hugo](https://gohugo.io/) with Moss's zero-flicker 
 
 ## Installation
 
-The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
+The plugin is bundled with moss. Configure it in `.moss/config.toml`:
 
 ```toml
 [hooks]
@@ -34,9 +34,9 @@ build_args = ["--minify", "--gc"]
 
 ## Structure Translation
 
-The plugin translates Moss's flexible folder structure to Hugo's expected layout using symlinks:
+The plugin translates moss's flexible folder structure to Hugo's expected layout using symlinks:
 
-| Moss Structure | Hugo Structure | Resulting URL |
+| moss Structure | Hugo Structure | Resulting URL |
 |----------------|----------------|---------------|
 | `index.md` (homepage) | `content/_index.md` | `/` |
 | `posts/` (collection) | `content/posts/` | `/posts/*` |
@@ -49,7 +49,7 @@ The plugin translates Moss's flexible folder structure to Hugo's expected layout
 1. **Binary Resolution**: Finds Hugo in PATH or auto-downloads if not found
 2. **Structure Translation**: Creates symlinks from your content to Hugo's expected layout
 3. **Build**: Runs Hugo to generate static files
-4. **Preview**: Moss serves the output with smart-diff for instant updates
+4. **Preview**: moss serves the output with smart-diff for instant updates
 
 ## Requirements
 

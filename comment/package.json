@@ -1,7 +1,7 @@
 {
   "name": "@symbiosis-lab/moss-plugin-comment",
   "version": "0.1.0",
-  "description": "Comment section plugin for Moss - renders stored comments and accepts new ones",
+  "description": "Comment section plugin for moss - renders stored comments and accepts new ones",
   "main": "dist/main.bundle.js",
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",

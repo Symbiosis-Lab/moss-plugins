@@ -77,7 +77,7 @@ export interface PagesConfig {
 export const GITHUB_API_BASE = "https://api.github.com";
 export const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github.v3+json",
-  "User-Agent": "Moss-GitHub-Deployer",
+  "User-Agent": "moss-GitHub-Deployer",
 };
 
 // ============================================================================

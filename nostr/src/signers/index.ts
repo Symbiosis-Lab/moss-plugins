@@ -3,7 +3,7 @@
  *
  * Provides a unified interface for different identity providers:
  * - NIP-07 browser extensions
- * - NIP-46 remote signers (Moss app)
+ * - NIP-46 remote signers (moss app)
  * - Host iframe signers (signer.moss.host)
  * - Local fallback (IndexedDB)
  */

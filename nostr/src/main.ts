@@ -1,8 +1,8 @@
 /**
- * Nostr Plugin for Moss
+ * Nostr Plugin for moss
  *
  * This is the main entry point for the Nostr plugin. It provides three hooks
- * that integrate with the Moss build pipeline:
+ * that integrate with the moss build pipeline:
  *
  * 1. **process** - Fetches social interactions from Nostr relays during build
  * 2. **enhance** - Renders all interactions into generated HTML pages
@@ -567,7 +567,7 @@ const plugin = new NostrPluginImpl();
  *
  * Called during the build to fetch social interactions from Nostr relays.
  *
- * @param ctx - Process context from Moss
+ * @param ctx - Process context from moss
  * @returns HookResult with fetched interactions
  */
 export const process = (ctx: ProcessContext) => plugin.process(ctx);

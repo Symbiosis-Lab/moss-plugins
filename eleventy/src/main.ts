@@ -1,5 +1,5 @@
 /**
- * Eleventy Generator Plugin for Moss
+ * Eleventy Generator Plugin for moss
  *
  * This plugin runs Eleventy via npx to generate static sites.
  */

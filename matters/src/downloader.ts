@@ -127,7 +127,7 @@ class DownloadError extends Error {
 /**
  * Download a single asset with retry logic and comprehensive logging.
  * Uses Rust to download and save directly to disk (avoids JS base64 blocking).
- * Moss handles filename derivation and extension from content-type.
+ * moss handles filename derivation and extension from content-type.
  *
  * Timeout and concurrency are handled by Rust side:
  * - Semaphore limits concurrent downloads to 5

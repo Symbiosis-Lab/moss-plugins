@@ -1,5 +1,5 @@
 /**
- * E2E Tests for Moss Pipeline with SSG and Nostr Plugins
+ * E2E Tests for moss pipeline with SSG and Nostr Plugins
  *
  * These tests verify the full moss pipeline:
  * 1. SSG plugin transforms markdown to HTML
@@ -203,7 +203,7 @@ function getHtmlFiles(dir: string): string[] {
 }
 
 // Skip all tests if moss is not available
-describe.skipIf(!MOSS_AVAILABLE)("Moss Pipeline E2E", () => {
+describe.skipIf(!MOSS_AVAILABLE)("moss pipeline E2E", () => {
   beforeAll(() => {
     // Create temp directory
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "moss-pipeline-e2e-"));
@@ -414,7 +414,7 @@ describe.skipIf(!MOSS_AVAILABLE)("Moss Pipeline E2E", () => {
 // Provide feedback when dependencies are missing
 describe("Pipeline E2E Prerequisites", () => {
   it.skipIf(MOSS_AVAILABLE)("moss binary not found", () => {
-    console.log(`Moss binary not found at ${MOSS_BINARY}`);
+    console.log(`moss binary not found at ${MOSS_BINARY}`);
     console.log("Set MOSS_BINARY environment variable to run pipeline tests");
   });
 

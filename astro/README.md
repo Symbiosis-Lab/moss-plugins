@@ -1,6 +1,6 @@
-# Astro Generator Plugin for Moss
+# Astro Generator Plugin for moss
 
-Generate static sites using [Astro](https://astro.build/) with Moss's zero-flicker preview and smart-diff refresh.
+Generate static sites using [Astro](https://astro.build/) with moss's zero-flicker preview and smart-diff refresh.
 
 ## Features
 
@@ -11,7 +11,7 @@ Generate static sites using [Astro](https://astro.build/) with Moss's zero-flick
 
 ## Installation
 
-The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
+The plugin is bundled with moss. Configure it in `.moss/config.toml`:
 
 ```toml
 [hooks]
@@ -34,9 +34,9 @@ build_args = ["build"]
 
 ## Structure Translation
 
-The plugin translates Moss's flexible folder structure to Astro's expected layout using symlinks:
+The plugin translates moss's flexible folder structure to Astro's expected layout using symlinks:
 
-| Moss Structure | Astro Structure | Resulting URL |
+| moss Structure | Astro Structure | Resulting URL |
 |----------------|-----------------|---------------|
 | `index.md` (homepage) | `src/pages/index.astro` | `/` |
 | `posts/` (collection) | `src/content/posts/` | `/posts/*` |
@@ -50,7 +50,7 @@ The plugin translates Moss's flexible folder structure to Astro's expected layou
 2. **Component Generation**: Wraps markdown in Astro page components
 3. **Config Generation**: Auto-generates `astro.config.mjs` with site settings
 4. **Build**: Runs `astro build` to generate static files to `dist/`
-5. **Preview**: Moss serves the output with smart-diff for instant updates
+5. **Preview**: moss serves the output with smart-diff for instant updates
 
 ## Requirements
 

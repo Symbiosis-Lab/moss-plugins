@@ -1,5 +1,5 @@
 /**
- * Hugo Generator Plugin for Moss
+ * Hugo Generator Plugin for moss
  *
  * This plugin runs Hugo as a subprocess to generate static sites.
  * It integrates with moss's plugin system and leverages the existing
@@ -7,13 +7,13 @@
  *
  * ## Architecture
  *
- * The plugin follows the **Moss scans → Plugin translates → Hugo builds** pattern:
+ * The plugin follows the **moss scans → Plugin translates → Hugo builds** pattern:
  *
- * 1. **Moss scans** the project folder and detects the structure (homepage, collections, etc.)
+ * 1. **moss scans** the project folder and detects the structure (homepage, collections, etc.)
  * 2. **Plugin receives** OnBuildContext with parsed project_info
  * 3. **Plugin translates** moss's structure to Hugo-compatible layout by copying files
  * 4. **Hugo builds** from the translated structure, outputs to staging directory
- * 5. **Moss handles** the zero-flicker staging pattern (atomic swap)
+ * 5. **moss handles** the zero-flicker staging pattern (atomic swap)
  *
  * ## Configuration
  *
@@ -87,7 +87,7 @@ interface PluginConfig {
  *
  * This is the main entry point called by moss during the build phase.
  * Hugo writes output to context.output_dir (typically .moss/site-stage/).
- * Moss handles the zero-flicker staging pattern after this hook completes.
+ * moss handles the zero-flicker staging pattern after this hook completes.
  *
  * ## Build Flow
  *

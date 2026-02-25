@@ -1,5 +1,5 @@
 /**
- * E2E Tests for GitHub Deployer Plugin using Moss CLI
+ * E2E Tests for GitHub Deployer Plugin using moss CLI
  *
  * These tests verify the plugin works correctly when invoked through
  * the moss CLI, testing real-world scenarios.
@@ -162,12 +162,12 @@ function runMoss(
   });
 }
 
-describe("Moss CLI E2E Tests", () => {
+describe("moss CLI E2E Tests", () => {
   beforeAll(async () => {
     // Verify moss binary exists - fail if not available
     if (!fs.existsSync(MOSS_BINARY)) {
       throw new Error(
-        `Moss binary not found at ${MOSS_BINARY}. ` +
+        `moss binary not found at ${MOSS_BINARY}. ` +
         `Either build moss locally, or set MOSS_BINARY environment variable. ` +
         `In CI, the binary should be downloaded from releases.`
       );

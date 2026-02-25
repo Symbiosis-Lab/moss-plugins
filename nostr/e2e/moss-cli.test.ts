@@ -1,5 +1,5 @@
 /**
- * E2E Tests for Nostr Plugin using Moss CLI
+ * E2E Tests for Nostr Plugin using moss CLI
  *
  * These tests verify the Nostr plugin works correctly when invoked through
  * the moss CLI, testing real-world scenarios.

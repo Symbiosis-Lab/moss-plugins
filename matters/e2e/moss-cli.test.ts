@@ -1,5 +1,5 @@
 /**
- * E2E Tests for Matters Plugin using Moss CLI
+ * E2E Tests for Matters Plugin using moss CLI
  *
  * These tests verify the Matters plugin works correctly when invoked through
  * the moss CLI, testing real-world scenarios.
@@ -175,7 +175,7 @@ describe("Matters Plugin E2E Tests", () => {
     // Verify moss binary exists
     if (!fs.existsSync(MOSS_BINARY)) {
       throw new Error(
-        `Moss binary not found at ${MOSS_BINARY}. ` +
+        `moss binary not found at ${MOSS_BINARY}. ` +
           `Set MOSS_BINARY environment variable or build moss locally.`
       );
     }

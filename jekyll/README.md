@@ -1,6 +1,6 @@
-# Jekyll Generator Plugin for Moss
+# Jekyll Generator Plugin for moss
 
-Generate static sites using [Jekyll](https://jekyllrb.com/) with Moss's zero-flicker preview and smart-diff refresh.
+Generate static sites using [Jekyll](https://jekyllrb.com/) with moss's zero-flicker preview and smart-diff refresh.
 
 ## Features
 
@@ -11,7 +11,7 @@ Generate static sites using [Jekyll](https://jekyllrb.com/) with Moss's zero-fli
 
 ## Installation
 
-The plugin is bundled with Moss. Configure it in `.moss/config.toml`:
+The plugin is bundled with moss. Configure it in `.moss/config.toml`:
 
 ```toml
 [hooks]
@@ -34,9 +34,9 @@ build_args = ["build", "--drafts"]
 
 ## Structure Translation
 
-The plugin translates Moss's flexible folder structure to Jekyll's expected layout using symlinks:
+The plugin translates moss's flexible folder structure to Jekyll's expected layout using symlinks:
 
-| Moss Structure | Jekyll Structure | Resulting URL |
+| moss Structure | Jekyll Structure | Resulting URL |
 |----------------|------------------|---------------|
 | `index.md` (homepage) | `index.md` | `/` |
 | `posts/` (collection) | `_posts/` | `/posts/*` |
@@ -49,7 +49,7 @@ The plugin translates Moss's flexible folder structure to Jekyll's expected layo
 1. **Structure Translation**: Creates symlinks from your content to Jekyll's expected layout
 2. **Config Generation**: Auto-generates `_config.yml` with site settings
 3. **Build**: Runs Jekyll to generate static files to `_site/`
-4. **Preview**: Moss serves the output with smart-diff for instant updates
+4. **Preview**: moss serves the output with smart-diff for instant updates
 
 ## Requirements
 

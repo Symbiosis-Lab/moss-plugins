@@ -65,7 +65,7 @@ export async function reportError(
 // ============================================================================
 
 /**
- * Show a toast notification in the main Moss UI
+ * Show a toast notification in the main moss UI
  *
  * @example
  * ```typescript

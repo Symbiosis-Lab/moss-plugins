@@ -73,7 +73,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
 
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
-  const siteName = ctx.project_info.site_name || "";
+  const siteName = (config.site_name as string) || ctx.project_info.site_name || "";
 
   // 1. If no server_url, skip (nothing to fetch)
   if (!serverUrl) {
@@ -190,7 +190,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
 
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
-  const siteName = ctx.project_info.site_name || "";
+  const siteName = (config.site_name as string) || ctx.project_info.site_name || "";
   const defaultComments = config.default_comments !== false; // default true for backward compat
   const providerName = serverUrl ? await detectProvider(serverUrl) : "waline";
   const buildScript = getSubmitScriptBuilder(providerName);

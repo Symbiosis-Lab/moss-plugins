@@ -380,6 +380,102 @@ describe("process hook", () => {
     expect(ids).toContain("w-new");
   });
 
+  it("uses config.site_name over project_info.site_name for Artalk", async () => {
+    const ctx = makeContext(
+      { server_url: "https://artalk.example.com", site_name: "config-site" },
+      { site_name: "project-site" }
+    );
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "abc123",
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    mockWriteFile.mockResolvedValue(undefined);
+
+    mockHttpGet.mockImplementation((url: string) => {
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => JSON.stringify({ app_name: "Artalk" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => JSON.stringify({ data: { comments: [] } }),
+      });
+    });
+
+    await process(ctx);
+
+    // Should use config.site_name ("config-site"), NOT project_info.site_name ("project-site")
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      "https://artalk.example.com/api/v2/comments?page_key=abc123&site_name=config-site&limit=100"
+    );
+  });
+
+  it("falls back to project_info.site_name when config.site_name is empty", async () => {
+    const ctx = makeContext(
+      { server_url: "https://artalk.example.com", site_name: "" },
+      { site_name: "project-site" }
+    );
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "abc123",
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    mockWriteFile.mockResolvedValue(undefined);
+
+    mockHttpGet.mockImplementation((url: string) => {
+      if (url.endsWith("/api/v2/conf")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => JSON.stringify({ app_name: "Artalk" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => JSON.stringify({ data: { comments: [] } }),
+      });
+    });
+
+    await process(ctx);
+
+    // Should fall back to project_info.site_name
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      "https://artalk.example.com/api/v2/comments?page_key=abc123&site_name=project-site&limit=100"
+    );
+  });
+
   it("handles fetch errors gracefully (continues with other pages)", async () => {
     const ctx = makeContext({
       server_url: "https://waline.example.com",

@@ -10,20 +10,25 @@
   "icon": "icon.svg",
   "config": {
     "server_url": "",
+    "site_name": "",
     "default_comments": true
   },
   "config_schema": {
     "server_url": "string",
+    "site_name": "string",
     "default_comments": "boolean"
   },
   "config_labels": {
     "server_url": "Server API",
+    "site_name": "Site Name",
     "default_comments": "Enabled by Default"
   },
   "config_descriptions": {
+    "site_name": "Site name registered on your comment server (e.g. your domain). If empty, uses the project name.",
     "default_comments": "Show comments on all articles. Override per-page with comments: true/false in frontmatter."
   },
   "config_placeholders": {
-    "server_url": "https://comment.example.com"
+    "server_url": "https://comment.example.com",
+    "site_name": "example.com"
   }
 }

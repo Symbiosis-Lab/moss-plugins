@@ -390,6 +390,111 @@ describe("enhance hook uid resolution", () => {
   });
 });
 
+describe("enhance hook config.site_name override", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockReadPluginFile.mockReset();
+    mockHttpGet.mockReset();
+    clearDetectionCache();
+    mockReadPluginFile.mockResolvedValue("/* comments css */");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    (globalThis as any).__MOSS_INTERNAL_CONTEXT__ = {
+      project_path: "/Users/test/site",
+    };
+  });
+
+  it("uses config.site_name over project_info.site_name in Artalk submit script", async () => {
+    // Detection probe: 200 → artalk
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ app_name: "Artalk" }),
+    });
+
+    const ctx = makeEnhanceContext(
+      { server_url: "https://artalk.example.com", site_name: "config-site" },
+      { site_name: "project-site" }
+    );
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    // The injected script should use "config-site", NOT "project-site"
+    expect(htmlCall![1]).toContain("config-site");
+    expect(htmlCall![1]).not.toContain("project-site");
+  });
+
+  it("falls back to project_info.site_name when config.site_name is empty", async () => {
+    // Detection probe: 200 → artalk
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ app_name: "Artalk" }),
+    });
+
+    const ctx = makeEnhanceContext(
+      { server_url: "https://artalk.example.com", site_name: "" },
+      { site_name: "project-site" }
+    );
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    // Should fall back to project_info.site_name
+    expect(htmlCall![1]).toContain("project-site");
+  });
+});
+
 describe("enhance hook default_comments config", () => {
   beforeEach(() => {
     mockReadFile.mockReset();

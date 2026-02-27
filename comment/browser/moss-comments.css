@@ -1,7 +1,7 @@
 /* ==========================================================================
    moss Comments Plugin - Styles
 
-   Collapsible comment section with dashed thread borders,
+   Collapsible comment section with solid thread borders,
    underline-style form inputs, and responsive grid layout.
    Uses CSS custom properties from moss default.css.
    ========================================================================== */
@@ -233,7 +233,7 @@ a.comment-author:hover {
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1.25rem;
-  background: rgba(45, 90, 45, 0.08);
+  background: color-mix(in srgb, var(--moss-accent, #2d5a2d) 8%, transparent);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -245,7 +245,7 @@ a.comment-author:hover {
 }
 
 .comment-form-submit:hover {
-  background: rgba(45, 90, 45, 0.15);
+  background: color-mix(in srgb, var(--moss-accent, #2d5a2d) 15%, transparent);
 }
 
 .comment-form-submit:focus {

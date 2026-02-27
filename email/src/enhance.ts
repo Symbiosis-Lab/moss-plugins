@@ -14,7 +14,10 @@ import {
   type HookResult,
 } from "@symbiosis-lab/moss-api";
 import { getNewsletterInfo } from "./buttondown";
+import { injectInlineStyle } from "./inject";
 import type { PluginConfig } from "./types";
+
+const CSS_FILENAME = "email-subscribe.css";
 
 /**
  * Context passed to enhance hook
@@ -59,6 +62,14 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     return { success: false, message: `Failed to get newsletter info: ${e}` };
   }
 
+  // Read plugin CSS for inline injection
+  let subscribeCss = "";
+  try {
+    subscribeCss = await readPluginFile(CSS_FILENAME);
+  } catch {
+    // CSS file not found — form will be unstyled
+  }
+
   // List HTML files in the compiled site output and inject form
   const siteFiles = await listSiteFilesWithSizes();
   const htmlFiles = siteFiles
@@ -70,7 +81,11 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     const projectPath = `.moss/site/${sitePath}`;
     try {
       const html = await readFile(projectPath);
-      const modified = injectSubscribeForm(html, username);
+      const withForm = injectSubscribeForm(html, username);
+      // Only inject CSS if the form was actually injected
+      const modified = withForm !== html
+        ? injectInlineStyle(withForm, subscribeCss)
+        : html;
       if (modified !== html) {
         await writeFile(projectPath, modified);
       }

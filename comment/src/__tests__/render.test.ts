@@ -145,17 +145,22 @@ describe("form redesign with provider=artalk", () => {
     expect(html).toContain('placeholder="Leave your thoughts"');
   });
 
-  it("submit button contains send SVG icon (paper plane)", () => {
+  it("submit button shows 'Reply' text (not SVG icon)", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
-    // Check for the Lucide send icon path
-    expect(html).toContain("M14.536 21.686");
+    expect(html).toContain('>Reply</button>');
+    // SVG icon should NOT be present
+    expect(html).not.toContain("M14.536 21.686");
+    expect(html).not.toContain("visually-hidden");
   });
 
-  it("submit button has visually-hidden accessible text", () => {
-    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
-    expect(html).toContain("visually-hidden");
-    // Should contain accessible text for the submit action
-    expect(html).toMatch(/visually-hidden[^<]*<\/span>/);
+  it("submit button shows localized text for zh-hans", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "zh-hans");
+    expect(html).toContain('>回复</button>');
+  });
+
+  it("submit button shows localized text for zh-hant", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "zh-hant");
+    expect(html).toContain('>回覆</button>');
   });
 });
 
@@ -191,9 +196,11 @@ describe("form redesign with provider=waline (backward compat)", () => {
     expect(html).toContain('placeholder="Leave your thoughts"');
   });
 
-  it("submit button contains send SVG icon", () => {
+  it("submit button shows 'Reply' text (not SVG icon)", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "waline");
-    expect(html).toContain("M14.536 21.686");
+    expect(html).toContain('>Reply</button>');
+    // SVG icon should NOT be present
+    expect(html).not.toContain("M14.536 21.686");
   });
 
   it("wraps output in details/summary", () => {

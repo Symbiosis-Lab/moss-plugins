@@ -21,7 +21,7 @@ import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectInlineStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
-import { parseLang } from "./i18n";
+import { parseLang, type Lang } from "./i18n";
 import {
   loadCommentSocialData,
   saveCommentSocialData,
@@ -311,7 +311,7 @@ async function processHtmlFile(
   urlPath: string,
   comments: NormalizedComment[],
   serverUrl: string,
-  buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string) => string) | null,
+  buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang) => string) | null,
   providerName: string = "waline",
   siteName: string = "",
   uid: string = "",
@@ -341,14 +341,15 @@ async function processHtmlFile(
       return false;
     }
 
-    // Build the submit script if we have a server
-    // Pass uid so the client-side form uses it as the page key
-    const submitScript = (buildScript && serverUrl)
-      ? buildScript(serverUrl, "/" + urlPath, uid, siteName)
-      : "";
-
     // Detect language from the HTML file for i18n
     const lang = parseLang(html);
+
+    // Build the submit script if we have a server
+    // Pass uid so the client-side form uses it as the page key
+    // Pass lang so the client-side JS uses i18n strings
+    const submitScript = (buildScript && serverUrl)
+      ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang)
+      : "";
 
     // Render the comment section
     const commentHtml = renderCommentSection(

@@ -12,14 +12,11 @@ import { translations, type Lang } from "./i18n";
 import sanitizeHtmlLib from 'sanitize-html';
 
 // ============================================================================
-// SVG Icons (Lucide)
+// SVG Icon (Lucide)
 // ============================================================================
 
-/** Lucide message-circle icon (24x24, stroke) */
+/** Lucide message-circle icon (24x24, stroke) — used in <summary> toggle */
 const ICON_MESSAGE_CIRCLE = `<svg class="comments-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>`;
-
-/** Lucide send icon (24x24, stroke) */
-const ICON_SEND = `<svg class="send-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>`;
 
 // ============================================================================
 // HTML Sanitization
@@ -172,12 +169,12 @@ function renderSummaryText(commentCount: number, lang: Lang = "en"): string {
  * For "waline" (default): minimal form with just a textarea and submit button.
  * For "artalk": includes name, email, and website fields in a single row.
  *
- * Uses paper-plane (send) icon for submit button.
+ * Submit button shows localized text ("Reply" / "回复" / "回覆").
  * Field labels and placeholder text are localized via the i18n module.
  */
 function renderCommentForm(pagePath: string, provider: string = "waline", lang: Lang = "en"): string {
   const t = translations[lang];
-  const submitButton = `<button type="submit" class="comment-form-submit">${ICON_SEND}<span class="visually-hidden">Submit comment</span></button>`;
+  const submitButton = `<button type="submit" class="comment-form-submit">${t.reply}</button>`;
   const statusDiv = `<div class="comment-form-status" id="moss-comment-status"></div>`;
 
   if (provider === "artalk") {

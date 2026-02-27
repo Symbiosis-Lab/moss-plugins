@@ -5,10 +5,11 @@
  * builder for the named provider, or null if not found.
  */
 
+import type { Lang } from "../i18n";
 import { buildWalineSubmitScript } from "./waline";
 import { buildArtalkClientScript } from "./artalk";
 
-export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, uid: string, siteName?: string) => string;
+export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang) => string;
 
 const providers: Record<string, SubmitScriptBuilder> = {
   waline: buildWalineSubmitScript,

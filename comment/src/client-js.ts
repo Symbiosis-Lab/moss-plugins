@@ -4,7 +4,12 @@
  * Generates inline vanilla JS for:
  * 1. Comment form submission (POST to Waline API)
  * 2. Textarea auto-grow (expands as user types)
+ *
+ * All user-facing strings are localized via the i18n module. Strings are
+ * embedded at build time (not runtime) since the JS is generated per-page.
  */
+
+import { translations, type Lang } from "./i18n";
 
 /**
  * Properly escapes a string for use in a single-quoted JavaScript string literal.
@@ -28,13 +33,20 @@ export function escapeForSingleQuotedJs(str: string): string {
  * @param serverUrl - Waline server URL (e.g., "https://comments.example.com")
  * @param pagePath - Page path for the comment (e.g., "/posts/foo/")
  * @param uid - Content uid to use as the page key. Falls back to pagePath if empty.
+ * @param lang - Language code for i18n strings. Defaults to "en".
  * @returns JavaScript code string
  */
-export function buildClientScript(serverUrl: string, pagePath: string, uid?: string): string {
+export function buildClientScript(serverUrl: string, pagePath: string, uid?: string, lang: Lang = "en"): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
   // Use uid as the page key if available, otherwise fall back to pagePath
   const pageKey = uid || pagePath;
   const safePageKey = escapeForSingleQuotedJs(pageKey);
+
+  const t = translations[lang];
+  const safeSubmitting = escapeForSingleQuotedJs(t.submitting);
+  const safeReply = escapeForSingleQuotedJs(t.reply);
+  const safeCommentSubmitted = escapeForSingleQuotedJs(t.comment_submitted);
+  const safeNetworkError = escapeForSingleQuotedJs(t.network_error);
 
   return `(function() {
   var form = document.getElementById('moss-comment-form');
@@ -57,7 +69,7 @@ export function buildClientScript(serverUrl: string, pagePath: string, uid?: str
     e.preventDefault();
     var btn = form.querySelector('.comment-form-submit');
     btn.disabled = true;
-    btn.textContent = 'Submitting...';
+    btn.textContent = '${safeSubmitting}';
     if (statusEl) { statusEl.textContent = ''; statusEl.className = 'comment-form-status'; }
 
     var body = {
@@ -77,7 +89,7 @@ export function buildClientScript(serverUrl: string, pagePath: string, uid?: str
     .then(function(res) { return res.json(); })
     .then(function(data) {
       btn.disabled = false;
-      btn.textContent = 'Submit';
+      btn.textContent = '${safeReply}';
 
       if (data.errno !== 0 && data.errmsg) {
         if (statusEl) {
@@ -88,7 +100,7 @@ export function buildClientScript(serverUrl: string, pagePath: string, uid?: str
       }
 
       if (statusEl) {
-        statusEl.textContent = 'Comment submitted!';
+        statusEl.textContent = '${safeCommentSubmitted}';
         statusEl.className = 'comment-form-status comment-form-status--success';
       }
 
@@ -113,9 +125,9 @@ export function buildClientScript(serverUrl: string, pagePath: string, uid?: str
     })
     .catch(function() {
       btn.disabled = false;
-      btn.textContent = 'Submit';
+      btn.textContent = '${safeReply}';
       if (statusEl) {
-        statusEl.textContent = 'Network error. Please try again.';
+        statusEl.textContent = '${safeNetworkError}';
         statusEl.className = 'comment-form-status comment-form-status--error';
       }
     });

@@ -32,6 +32,8 @@ export interface DeviceCodeResponse {
   user_code: string;
   /** The URL where user enters the code */
   verification_uri: string;
+  /** Pre-filled URL with user_code embedded (user just clicks "Continue") */
+  verification_uri_complete?: string;
   /** Seconds until the codes expire */
   expires_in: number;
   /** Minimum seconds between poll requests */

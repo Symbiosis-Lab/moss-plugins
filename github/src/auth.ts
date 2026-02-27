@@ -12,7 +12,7 @@
  * 4. Store token in git credential helper
  */
 
-import { openSystemBrowser, httpPost } from "@symbiosis-lab/moss-api";
+import { openSystemBrowser, httpPost, openBrowserWithHtml, closeBrowser, onEvent } from "@symbiosis-lab/moss-api";
 import { sleep, reportProgress } from "./utils";
 import { storeToken, getToken, clearToken, getTokenFromGit } from "./token";
 import type {
@@ -230,12 +230,11 @@ export async function checkAuthentication(): Promise<AuthState> {
  *
  * This will:
  * 1. Request a device code
- * 2. Open the SYSTEM browser for user authorization (Bug 9 fix)
- * 3. Display the user code
- * 4. Poll for the access token
+ * 2. Show auth UI panel with the user code
+ * 3. Open the system browser with pre-filled verification URL
+ * 4. Poll for the access token (cancellable via auth UI)
  * 5. Store the token in plugin cookies
- *
- * Note: Plugin identity and project path are auto-detected from runtime context.
+ * 6. Close the auth UI panel
  */
 export async function promptLogin(): Promise<boolean> {
   try {
@@ -243,69 +242,302 @@ export async function promptLogin(): Promise<boolean> {
     await reportProgress("authentication", 0, 4, "Requesting authorization...");
     const deviceCodeResponse = await requestDeviceCode();
 
-    // Step 2: Open SYSTEM browser (Bug 9 fix - user may already be logged in)
-    await reportProgress(
-      "authentication",
-      1,
-      4,
-      `Enter code: ${deviceCodeResponse.user_code}`
-    );
+    const userCode = deviceCodeResponse.user_code;
+    const browserUrl = deviceCodeResponse.verification_uri_complete
+      ?? deviceCodeResponse.verification_uri;
+
+    // Step 2: Show auth UI panel with the user code
+    await reportProgress("authentication", 1, 4, `Enter code: ${userCode}`);
+    await openBrowserWithHtml(createAuthUiHtml(userCode));
+
+    // Step 3: Open system browser with pre-filled URL
     console.log(`   Opening system browser for GitHub authorization...`);
-    console.log(`   Enter code: ${deviceCodeResponse.user_code}`);
+    console.log(`   Enter code: ${userCode}`);
+    await openSystemBrowser(browserUrl);
 
-    // Use system browser instead of plugin browser (Bug 9 fix)
-    await openSystemBrowser(deviceCodeResponse.verification_uri);
+    // Step 4: Listen for cancel from auth UI
+    let cancelled = false;
+    const unlisten = await onEvent<object>("github:auth-cancel", () => {
+      cancelled = true;
+    });
 
-    // Step 3: Poll for token
-    await reportProgress("authentication", 2, 4, "Waiting for authorization...");
-    const token = await waitForToken(
-      deviceCodeResponse.device_code,
-      deviceCodeResponse.interval,
-      deviceCodeResponse.expires_in * 1000
-    );
+    try {
+      // Step 5: Poll for token
+      await reportProgress("authentication", 2, 4, "Waiting for authorization...");
+      const token = await waitForToken(
+        deviceCodeResponse.device_code,
+        deviceCodeResponse.interval,
+        deviceCodeResponse.expires_in * 1000,
+        () => cancelled
+      );
 
-    if (!token) {
-      console.warn("   Authorization timed out or was denied");
-      // System browser manages itself - no need to close
-      return false;
+      if (!token) {
+        console.warn("   Authorization timed out or was denied");
+        if (!cancelled) {
+          await emitAuthState("error", "Authorization timed out or was denied");
+          await closeBrowser().catch(() => {});
+        }
+        return false;
+      }
+
+      // Step 6: Success — notify auth UI and store token
+      await emitAuthState("success");
+      await reportProgress("authentication", 3, 4, "Storing credentials...");
+
+      const stored = await storeToken(token);
+      if (!stored) {
+        console.warn("   Failed to store token");
+      }
+
+      await reportProgress("authentication", 4, 4, "Authenticated");
+      console.log("   Successfully authenticated with GitHub");
+
+      // Close auth UI panel
+      await closeBrowser();
+
+      return true;
+    } finally {
+      unlisten();
     }
-
-    // Step 4: Store token
-    await reportProgress("authentication", 3, 4, "Storing credentials...");
-    const stored = await storeToken(token);
-
-    if (!stored) {
-      console.warn("   Failed to store token");
-      // Continue anyway - the token is valid, just won't persist
-    }
-
-    // System browser manages itself - no need to close
-
-    await reportProgress("authentication", 4, 4, "Authenticated");
-    console.log("   Successfully authenticated with GitHub");
-
-    return true;
   } catch (error) {
     console.error(`   Authentication failed: ${error}`);
-    // System browser manages itself - no need to close
+    await emitAuthState("error", String(error));
     return false;
   }
 }
 
+// ============================================================================
+// Auth UI
+// ============================================================================
+
 /**
- * Poll for access token until authorization is complete or timeout
+ * Emit a state transition event to the auth UI panel
+ */
+async function emitAuthState(phase: "success" | "error", error?: string): Promise<void> {
+  try {
+    const w = window as unknown as {
+      __TAURI__?: { event?: { emit: (name: string, payload: unknown) => Promise<void> } }
+    };
+    await w.__TAURI__?.event?.emit("github:auth-state", { phase, error });
+  } catch {
+    // Non-fatal — auth UI panel may already be closed
+  }
+}
+
+/**
+ * Generate HTML for the auth UI panel displayed during device flow
+ */
+export function createAuthUiHtml(userCode: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorize moss on GitHub</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-hover: #21262d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --success: #3fb950;
+      --error: #f85149;
+      --border: #30363d;
+      --link: #58a6ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 24px;
+    }
+
+    .container { width: 100%; max-width: 400px; text-align: center; }
+
+    .icon { width: 48px; height: 48px; margin-bottom: 16px; }
+
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    .code-display {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 32px;
+      letter-spacing: 0.15em;
+      font-weight: 700;
+      color: var(--text);
+      padding: 20px 24px;
+      background: var(--surface);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
+      user-select: all;
+    }
+
+    .copy-area { margin-bottom: 32px; }
+
+    .btn-copy {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+
+    .btn-copy:hover { background: var(--surface-hover); }
+    .btn-copy.copied { color: var(--success); border-color: var(--success); }
+
+    .status-area {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 24px;
+      min-height: 24px;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--link);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #status-text { color: var(--text-muted); font-size: 14px; }
+    #status-text.success { color: var(--success); }
+    #status-text.error { color: var(--error); }
+
+    .btn-cancel {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+
+    .btn-cancel:hover { background: var(--surface-hover); }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C6.475 2 2 6.475 2 12c0 4.42 2.865 8.17 6.84 9.49.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48C19.14 20.17 22 16.42 22 12c0-5.525-4.475-10-10-10z" fill="#8b949e"/>
+    </svg>
+
+    <h1>Authorize moss on GitHub</h1>
+    <p class="subtitle">Enter this code in your browser</p>
+
+    <div class="code-display" id="user-code">${userCode}</div>
+
+    <div class="copy-area">
+      <button class="btn-copy" id="copy-btn">Copy code</button>
+    </div>
+
+    <div class="status-area">
+      <div class="spinner" id="spinner"></div>
+      <span id="status-text">Waiting for authorization...</span>
+    </div>
+
+    <button class="btn-cancel" id="cancel-btn">Cancel</button>
+  </div>
+
+  <script>
+    const copyBtn = document.getElementById('copy-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
+    const spinner = document.getElementById('spinner');
+    const statusText = document.getElementById('status-text');
+    const userCode = ${JSON.stringify(userCode)};
+
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(userCode);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = userCode;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      copyBtn.textContent = 'Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.textContent = 'Copy code';
+        copyBtn.classList.remove('copied');
+      }, 2000);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      mossApi.emit('github:auth-cancel', {});
+      mossApi.close();
+    });
+
+    const { event } = window.__TAURI__;
+    event.listen('github:auth-state', (e) => {
+      const { phase, error } = e.payload;
+      if (phase === 'success') {
+        spinner.classList.add('hidden');
+        statusText.textContent = 'Authenticated!';
+        statusText.className = 'success';
+        cancelBtn.classList.add('hidden');
+      } else if (phase === 'error') {
+        spinner.classList.add('hidden');
+        statusText.textContent = error || 'Authorization failed';
+        statusText.className = 'error';
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Poll for access token until authorization is complete, cancelled, or timeout
  */
 async function waitForToken(
   deviceCode: string,
   initialInterval: number,
-  maxWaitMs: number
+  maxWaitMs: number,
+  isCancelled: () => boolean = () => false
 ): Promise<string | null> {
   const startTime = Date.now();
   let interval = initialInterval;
 
   while (Date.now() - startTime < Math.min(maxWaitMs, MAX_POLL_TIME_MS)) {
+    if (isCancelled()) return null;
+
     // Wait for the specified interval
     await sleep(interval * 1000);
+
+    if (isCancelled()) return null;
 
     try {
       const response = await pollForToken(deviceCode, interval);

@@ -28,6 +28,7 @@ export const defaultDeviceCodeResponse: DeviceCodeResponse = {
   device_code: "test-device-code-123",
   user_code: "ABCD-1234",
   verification_uri: "https://github.com/login/device",
+  verification_uri_complete: "https://github.com/login/device?user_code=ABCD-1234",
   expires_in: 900,
   interval: 5,
 };

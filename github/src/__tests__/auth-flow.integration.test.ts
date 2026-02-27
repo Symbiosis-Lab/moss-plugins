@@ -482,13 +482,13 @@ describe("GitHub OAuth Device Flow", () => {
       expect(result).toBe(false);
     });
 
-    it("opens system browser with verification URI", async () => {
-      // Setup GitHub API mocks using ctx.urlConfig (for httpPost)
+    it("opens system browser with verification_uri_complete when present", async () => {
       setupGitHubApiMocks(ctx, {
         deviceCodeResponse: {
           device_code: "test-device-code",
           user_code: "TEST-CODE",
           verification_uri: "https://github.com/login/device",
+          verification_uri_complete: "https://github.com/login/device?user_code=TEST-CODE",
           expires_in: 900,
           interval: 1,
         },
@@ -500,9 +500,10 @@ describe("GitHub OAuth Device Flow", () => {
 
       await promptLogin();
 
-      // Now uses system browser instead of plugin browser (Bug 9 fix)
       expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(1);
-      expect(ctx.browserTracker.systemBrowserUrls[0]).toBe("https://github.com/login/device");
+      expect(ctx.browserTracker.systemBrowserUrls[0]).toBe(
+        "https://github.com/login/device?user_code=TEST-CODE"
+      );
     });
 
     // Requires moss-api >= 0.5.4 with browser tracking setters
@@ -545,15 +546,13 @@ describe("GitHub OAuth Device Flow", () => {
       expect(result).toBe(false);
     });
 
-    // Note: Test removed since we now use system browser (Bug 9 fix)
-    // System browser manages itself - plugin doesn't need to close it
-    it("system browser does not require manual close", async () => {
-      // Setup GitHub API mocks using ctx.urlConfig (for httpPost)
+    it("opens auth UI panel with the user code", async () => {
       setupGitHubApiMocks(ctx, {
         deviceCodeResponse: {
           device_code: "test-device-code",
           user_code: "ABCD-1234",
           verification_uri: "https://github.com/login/device",
+          verification_uri_complete: "https://github.com/login/device?user_code=ABCD-1234",
           expires_in: 900,
           interval: 1,
         },
@@ -565,12 +564,87 @@ describe("GitHub OAuth Device Flow", () => {
 
       await promptLogin();
 
-      // System browser was opened (Bug 9 fix)
+      // Auth UI panel was opened via openBrowserWithHtml
+      expect(ctx.browserTracker.htmlContent).toHaveLength(1);
+      const html = ctx.browserTracker.htmlContent[0];
+      expect(html).toContain("ABCD-1234"); // User code displayed
+      expect(html).toContain("Authorize moss on GitHub");
+      expect(html).toContain("Copy code");
+      expect(html).toContain("github:auth-cancel");
+      expect(html).toContain("github:auth-state");
+    });
+
+    it("prefers verification_uri_complete for system browser URL", async () => {
+      setupGitHubApiMocks(ctx, {
+        deviceCodeResponse: {
+          device_code: "test-device-code",
+          user_code: "TEST-CODE",
+          verification_uri: "https://github.com/login/device",
+          verification_uri_complete: "https://github.com/login/device?user_code=TEST-CODE",
+          expires_in: 900,
+          interval: 1,
+        },
+        tokenResponse: {
+          access_token: "gho_newtoken",
+          scope: "repo,workflow",
+        },
+      });
+
+      await promptLogin();
+
       expect(ctx.browserTracker.systemBrowserUrls).toHaveLength(1);
-      // Plugin browser was NOT used
-      expect(ctx.browserTracker.openedUrls).toHaveLength(0);
-      // closeBrowser was NOT called (system browser manages itself)
-      expect(ctx.browserTracker.closeCount).toBe(0);
+      expect(ctx.browserTracker.systemBrowserUrls[0]).toBe(
+        "https://github.com/login/device?user_code=TEST-CODE"
+      );
+    });
+
+    it("falls back to verification_uri when complete is absent", async () => {
+      ctx.urlConfig.setResponse("https://github.com/login/device/code", {
+        status: 200,
+        ok: true,
+        bodyBase64: btoa(JSON.stringify({
+          device_code: "test-device-code",
+          user_code: "TEST-CODE",
+          verification_uri: "https://github.com/login/device",
+          // verification_uri_complete intentionally absent
+          expires_in: 900,
+          interval: 1,
+        })),
+      });
+      ctx.urlConfig.setResponse("https://github.com/login/oauth/access_token", {
+        status: 200,
+        ok: true,
+        bodyBase64: btoa(JSON.stringify({
+          access_token: "gho_newtoken",
+          scope: "repo,workflow",
+        })),
+      });
+
+      await promptLogin();
+
+      expect(ctx.browserTracker.systemBrowserUrls[0]).toBe("https://github.com/login/device");
+    });
+
+    it("closes auth UI panel on success", async () => {
+      setupGitHubApiMocks(ctx, {
+        deviceCodeResponse: {
+          device_code: "test-device-code",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          verification_uri_complete: "https://github.com/login/device?user_code=ABCD-1234",
+          expires_in: 900,
+          interval: 1,
+        },
+        tokenResponse: {
+          access_token: "gho_token",
+          scope: "repo,workflow",
+        },
+      });
+
+      await promptLogin();
+
+      // Auth UI panel should be closed after successful auth
+      expect(ctx.browserTracker.closeCount).toBeGreaterThanOrEqual(1);
     });
 
   });

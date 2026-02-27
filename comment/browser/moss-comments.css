@@ -46,6 +46,8 @@
 .comments-toggle::after {
   content: "▸";
   margin-left: auto;
+  font-size: 1.25rem;
+  color: var(--moss-text-secondary, #5d5853);
   transition: transform 0.15s ease;
 }
 
@@ -120,6 +122,10 @@ a.comment-author:hover {
   margin-bottom: 0;
 }
 
+.comment-body blockquote {
+  font-size: inherit;
+}
+
 .comment-body a {
   color: var(--moss-text-primary, #2c2825);
   text-decoration: underline;
@@ -137,7 +143,7 @@ a.comment-author:hover {
   list-style: none;
   padding: 0 0 0 var(--moss-space-sm, 1rem);
   margin: 0 0 0 var(--moss-space-xs, 0.5rem);
-  border-left: 1px dashed var(--moss-border-medium, #d1cdc4);
+  border-left: 2px solid var(--moss-border-medium, #d1cdc4);
 }
 
 .comment-replies .comment-item {
@@ -149,6 +155,9 @@ a.comment-author:hover {
    ========================================================================== */
 
 .comment-form {
+  background: var(--moss-background-alt, #f4f1ec);
+  border-radius: 8px;
+  padding: 1.25rem;
   margin-top: var(--moss-space-lg, 2rem);
 }
 
@@ -157,7 +166,7 @@ a.comment-author:hover {
   display: block;
   width: 100%;
   min-height: 3rem;
-  padding: 0.5rem 0;
+  padding: 0.25rem 0;
   border: none;
   border-bottom: 1px solid var(--moss-border-medium, #d1cdc4);
   font-family: inherit;
@@ -166,7 +175,7 @@ a.comment-author:hover {
   color: var(--moss-text-primary, #2c2825);
   background: transparent;
   resize: none;
-  overflow-y: auto;
+  overflow: hidden;
   box-sizing: border-box;
   transition: border-color 0.15s ease;
 }
@@ -216,26 +225,27 @@ a.comment-author:hover {
 }
 
 /* ==========================================================================
-   Submit Button — Icon-only (paper plane)
+   Submit Button — Filled Tonal Style
    ========================================================================== */
 
 .comment-form-submit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  background: transparent;
+  padding: 0.5rem 1.25rem;
+  background: rgba(45, 90, 45, 0.08);
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
-  color: var(--moss-text-muted, #8a8580);
-  transition: color 0.15s ease;
+  color: var(--moss-accent, #2d5a2d);
+  font-family: inherit;
+  font-size: var(--moss-font-sm, 1rem);
+  font-weight: 480;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .comment-form-submit:hover {
-  color: var(--moss-accent, #2d5a2d);
+  background: rgba(45, 90, 45, 0.15);
 }
 
 .comment-form-submit:focus {

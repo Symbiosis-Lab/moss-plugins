@@ -41,10 +41,11 @@ function makeEnhanceContext(
 }
 
 // Minimal HTML template with <article> and </article> tags
-function makeArticleHtml(title: string = "Test", dataComments?: "true" | "false"): string {
+function makeArticleHtml(title: string = "Test", dataComments?: "true" | "false", lang?: string): string {
   const articleAttr = dataComments ? ` data-comments="${dataComments}"` : "";
+  const langAttr = lang ? ` lang="${lang}"` : "";
   return `<!DOCTYPE html>
-<html>
+<html${langAttr}>
 <head><title>${title}</title></head>
 <body>
 <article${articleAttr}>
@@ -641,5 +642,170 @@ describe("enhance hook default_comments config", () => {
         typeof call[0] === "string" && call[0].endsWith("index.html")
     );
     expect(htmlWriteCalls.length).toBe(0);
+  });
+});
+
+describe("enhance hook i18n lang detection", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockReadPluginFile.mockReset();
+    mockHttpGet.mockReset();
+    clearDetectionCache();
+    mockReadPluginFile.mockResolvedValue("/* comments css */");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    (globalThis as any).__MOSS_INTERNAL_CONTEXT__ = {
+      project_path: "/Users/test/site",
+    };
+  });
+
+  it('uses Chinese summary text when HTML has lang="zh-hans"', async () => {
+    const ctx = makeEnhanceContext({});
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1.0.0",
+      articles: {
+        "uid-hello": {
+          comments: [
+            {
+              id: "c1",
+              content: "<p>Great post!</p>",
+              createdAt: "2025-06-15T10:00:00.000Z",
+              author: { displayName: "Alice", name: "Alice" },
+            },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello", undefined, "zh-hans"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    // Summary should use Chinese text for 1 comment
+    expect(htmlCall![1]).toContain("1条评论");
+    expect(htmlCall![1]).not.toContain("1 comment");
+  });
+
+  it('uses Chinese placeholder when HTML has lang="zh-hans" and server_url is set', async () => {
+    // Detection probe: non-200 → waline
+    mockHttpGet.mockResolvedValue({ ok: false, status: 404, text: () => "Not Found" });
+
+    const ctx = makeEnhanceContext({
+      server_url: "https://waline.example.com",
+    });
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello", undefined, "zh-hans"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    // Form placeholder should be Chinese
+    expect(htmlCall![1]).toContain('placeholder="留下你的想法"');
+    // Summary should be Chinese (0 comments = "留下你的想法")
+    expect(htmlCall![1]).toContain("留下你的想法");
+  });
+
+  it("defaults to English when HTML has no lang attribute", async () => {
+    const ctx = makeEnhanceContext({});
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1.0.0",
+      articles: {
+        "uid-hello": {
+          comments: [
+            {
+              id: "c1",
+              content: "<p>Great post!</p>",
+              createdAt: "2025-06-15T10:00:00.000Z",
+              author: { displayName: "Alice", name: "Alice" },
+            },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        // No lang attribute
+        return Promise.resolve(makeArticleHtml("Hello"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    // Should use English
+    expect(htmlCall![1]).toContain("1 comment");
   });
 });

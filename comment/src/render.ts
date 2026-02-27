@@ -8,6 +8,7 @@
  */
 
 import type { NormalizedComment } from "./types";
+import { translations, type Lang } from "./i18n";
 import sanitizeHtmlLib from 'sanitize-html';
 
 // ============================================================================
@@ -150,18 +151,20 @@ function renderCommentList(comments: NormalizedComment[]): string {
 /**
  * Generate the summary text for the collapsible comment section.
  */
-function renderSummaryText(commentCount: number): string {
+function renderSummaryText(commentCount: number, lang: Lang = "en"): string {
+  const t = translations[lang];
   if (commentCount === 0) {
-    return "Leave your thoughts / 留下你的想法";
+    return t.comment_count_zero;
   }
-  return commentCount === 1 ? "1 comment" : `${commentCount} comments`;
+  if (commentCount === 1) {
+    return t.comment_count_one;
+  }
+  return t.comment_count_many.replace("{n}", String(commentCount));
 }
 
 // ============================================================================
 // Comment Form
 // ============================================================================
-
-const PLACEHOLDER = "Leave your thoughts / 留下你的想法";
 
 /**
  * Render the comment form.
@@ -170,18 +173,20 @@ const PLACEHOLDER = "Leave your thoughts / 留下你的想法";
  * For "artalk": includes name, email, and website fields in a single row.
  *
  * Uses paper-plane (send) icon for submit button.
+ * Field labels and placeholder text are localized via the i18n module.
  */
-function renderCommentForm(pagePath: string, provider: string = "waline"): string {
+function renderCommentForm(pagePath: string, provider: string = "waline", lang: Lang = "en"): string {
+  const t = translations[lang];
   const submitButton = `<button type="submit" class="comment-form-submit">${ICON_SEND}<span class="visually-hidden">Submit comment</span></button>`;
   const statusDiv = `<div class="comment-form-status" id="moss-comment-status"></div>`;
 
   if (provider === "artalk") {
     return `<form class="comment-form" id="moss-comment-form">
-  <textarea id="moss-comment-text" name="content" required rows="2" placeholder="${PLACEHOLDER}"></textarea>
+  <textarea id="moss-comment-text" name="content" required rows="2" placeholder="${t.placeholder}"></textarea>
   <div class="comment-form-meta">
-    <input type="text" name="name" class="comment-field" placeholder="Name" required>
-    <input type="email" name="email" class="comment-field" placeholder="Email" required>
-    <input type="url" name="link" class="comment-field" placeholder="Website (optional)">
+    <input type="text" name="name" class="comment-field" placeholder="${t.name}" required>
+    <input type="email" name="email" class="comment-field" placeholder="${t.email_optional}">
+    <input type="url" name="link" class="comment-field" placeholder="${t.website_optional}">
     ${submitButton}
   </div>
   ${statusDiv}
@@ -190,7 +195,7 @@ function renderCommentForm(pagePath: string, provider: string = "waline"): strin
 
   // Default: Waline form
   return `<form class="comment-form" id="moss-comment-form">
-  <textarea id="moss-comment-text" name="comment" required rows="2" placeholder="${PLACEHOLDER}"></textarea>
+  <textarea id="moss-comment-text" name="comment" required rows="2" placeholder="${t.placeholder}"></textarea>
   ${submitButton}
   ${statusDiv}
 </form>`;
@@ -211,7 +216,8 @@ export function renderCommentSection(
   pagePath: string,
   serverUrl: string,
   submitScript: string,
-  provider: string = "waline"
+  provider: string = "waline",
+  lang: Lang = "en"
 ): string {
   const hasComments = comments.length > 0;
   const hasForm = !!serverUrl;
@@ -222,12 +228,12 @@ export function renderCommentSection(
     ? `<ol class="comment-list">${renderCommentList(comments)}</ol>`
     : "";
 
-  const formHtml = hasForm ? renderCommentForm(pagePath, provider) : "";
+  const formHtml = hasForm ? renderCommentForm(pagePath, provider, lang) : "";
   const scriptHtml = hasForm && submitScript
     ? `<script>${submitScript}</script>`
     : "";
 
-  const summaryText = renderSummaryText(comments.length);
+  const summaryText = renderSummaryText(comments.length, lang);
 
   return `<section class="moss-comments" id="moss-comments">
   <details>

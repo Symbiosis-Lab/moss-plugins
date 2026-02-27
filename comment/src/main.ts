@@ -21,6 +21,7 @@ import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectInlineStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
+import { parseLang } from "./i18n";
 import {
   loadCommentSocialData,
   saveCommentSocialData,
@@ -346,13 +347,17 @@ async function processHtmlFile(
       ? buildScript(serverUrl, "/" + urlPath, uid, siteName)
       : "";
 
+    // Detect language from the HTML file for i18n
+    const lang = parseLang(html);
+
     // Render the comment section
     const commentHtml = renderCommentSection(
       comments,
       urlPath,
       serverUrl,
       submitScript,
-      providerName
+      providerName,
+      lang
     );
 
     // renderCommentSection returns "" if nothing to render

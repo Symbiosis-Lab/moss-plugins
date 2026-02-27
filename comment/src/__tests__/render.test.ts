@@ -140,10 +140,9 @@ describe("form redesign with provider=artalk", () => {
     expect(linkMatch?.[0]).toContain("comment-field");
   });
 
-  it("has bilingual placeholder on textarea", () => {
+  it("has English placeholder on textarea by default", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
-    expect(html).toContain("Leave your thoughts");
-    expect(html).toContain("留下你的想法");
+    expect(html).toContain('placeholder="Leave your thoughts"');
   });
 
   it("submit button contains send SVG icon (paper plane)", () => {
@@ -187,10 +186,9 @@ describe("form redesign with provider=waline (backward compat)", () => {
     expect(html).not.toContain('type="hidden"');
   });
 
-  it("has bilingual placeholder on textarea", () => {
+  it("has English placeholder on textarea by default", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "waline");
-    expect(html).toContain("Leave your thoughts");
-    expect(html).toContain("留下你的想法");
+    expect(html).toContain('placeholder="Leave your thoughts"');
   });
 
   it("submit button contains send SVG icon", () => {

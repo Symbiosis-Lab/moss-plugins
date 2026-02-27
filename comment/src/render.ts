@@ -56,13 +56,20 @@ export function sanitizeHtml(html: string): string {
 // Comment Rendering
 // ============================================================================
 
+/** Map plugin Lang to BCP-47 locale for date formatting */
+const LANG_TO_LOCALE: Record<Lang, string> = {
+  "en": "en-US",
+  "zh-hans": "zh-CN",
+  "zh-hant": "zh-TW",
+};
+
 /**
- * Format an ISO date string for display.
+ * Format an ISO date string for display using the page language.
  */
-function formatDate(isoDate: string): string {
+function formatDate(isoDate: string, lang: Lang = "en"): string {
   const d = new Date(isoDate);
   if (isNaN(d.getTime())) return isoDate;
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleDateString(LANG_TO_LOCALE[lang], {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -73,13 +80,13 @@ function formatDate(isoDate: string): string {
  * Render a single comment as an <li> element.
  * Author name is a clickable link when URL is available.
  */
-function renderComment(comment: NormalizedComment): string {
+function renderComment(comment: NormalizedComment, lang: Lang = "en"): string {
   const authorName = escapeHtml(comment.author.name);
   const authorHtml = comment.author.url
     ? `<a href="${escapeHtml(comment.author.url)}" class="comment-author" rel="nofollow noopener" target="_blank">${authorName}</a>`
     : `<span class="comment-author">${authorName}</span>`;
 
-  const dateStr = formatDate(comment.date);
+  const dateStr = formatDate(comment.date, lang);
   const contentHtml = sanitizeHtml(comment.content_html);
 
   return `<li class="comment-item" id="comment-${escapeHtml(comment.id)}">
@@ -96,7 +103,7 @@ function renderComment(comment: NormalizedComment): string {
  * Top-level comments (no replyToId) go in the root list.
  * Replies are nested inside their parent's <li>.
  */
-function renderCommentList(comments: NormalizedComment[]): string {
+function renderCommentList(comments: NormalizedComment[], lang: Lang = "en"): string {
   // Separate top-level and replies
   const topLevel: NormalizedComment[] = [];
   const repliesByParent = new Map<string, NormalizedComment[]>();
@@ -112,7 +119,7 @@ function renderCommentList(comments: NormalizedComment[]): string {
   }
 
   function renderWithReplies(comment: NormalizedComment): string {
-    let html = renderComment(comment);
+    let html = renderComment(comment, lang);
     const replies = repliesByParent.get(comment.id);
     if (replies && replies.length > 0) {
       html += `\n  <ol class="comment-replies">`;
@@ -129,7 +136,7 @@ function renderCommentList(comments: NormalizedComment[]): string {
     // All comments are replies to something not in our set — render flat
     let html = "";
     for (const comment of comments) {
-      html += renderComment(comment) + "\n</li>";
+      html += renderComment(comment, lang) + "\n</li>";
     }
     return html;
   }
@@ -222,7 +229,7 @@ export function renderCommentSection(
   if (!hasComments && !hasForm) return "";
 
   const commentListHtml = hasComments
-    ? `<ol class="comment-list">${renderCommentList(comments)}</ol>`
+    ? `<ol class="comment-list">${renderCommentList(comments, lang)}</ol>`
     : "";
 
   const formHtml = hasForm ? renderCommentForm(pagePath, provider, lang) : "";

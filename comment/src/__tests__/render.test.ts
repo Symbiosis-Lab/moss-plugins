@@ -211,6 +211,33 @@ describe("form redesign with provider=waline (backward compat)", () => {
 });
 
 // ============================================================================
+// Date formatting locale
+// ============================================================================
+
+describe("date formatting uses page language", () => {
+  it("formats dates in English by default", () => {
+    const comments = [makeComment({ date: "2025-06-15T10:00:00.000Z" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    // en-US: "Jun 15, 2025"
+    expect(html).toContain("Jun 15, 2025");
+  });
+
+  it("formats dates in Chinese for zh-hans pages", () => {
+    const comments = [makeComment({ date: "2025-06-15T10:00:00.000Z" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk", "zh-hans");
+    // zh-Hans: "2025年6月15日"
+    expect(html).toContain("2025年6月15日");
+  });
+
+  it("formats dates in Traditional Chinese for zh-hant pages", () => {
+    const comments = [makeComment({ date: "2025-06-15T10:00:00.000Z" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk", "zh-hant");
+    // zh-Hant: "2025年6月15日"
+    expect(html).toContain("2025年6月15日");
+  });
+});
+
+// ============================================================================
 // Edge cases
 // ============================================================================
 

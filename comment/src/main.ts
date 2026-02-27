@@ -12,13 +12,13 @@
  *   2. Reads .moss/article-map.json for source->output path mapping
  *   3. Renders a minimal comment section (author, date, text)
  *   4. Injects the section before </article> in each page
- *   5. Copies CSS to the output directory
+ *   5. Inlines CSS as a <style> tag in each page's <head>
  */
 
 import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
 import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
-import { findInsertionPoint, injectCommentSection, injectCssLink } from "./inject";
+import { findInsertionPoint, injectCommentSection, injectInlineStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
 import {
@@ -204,24 +204,32 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     console.log("[info] Comment: No server_url configured, static comments only");
   }
 
-  // 1. Load existing comments from .moss/social/*.json files
+  // 1. Read CSS once for inline injection into each page
+  let commentsCss = "";
+  try {
+    commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
+  } catch {
+    console.log("[warn] Comment: Could not read CSS file, comments will be unstyled");
+  }
+
+  // 2. Load existing comments from .moss/social/*.json files
   //    Keys may be uids (new format) or source .md paths (legacy format)
   //    Include "comment" source since the process hook writes to comment.json
   const commentsByKey = await loadAllComments(["comment"]);
   console.log(`[info] Comment: Loaded comments for ${commentsByKey.size} articles`);
 
-  // 2. Build both uid-based and path-based mappings from article-map.json
+  // 3. Build both uid-based and path-based mappings from article-map.json
   const uidToUrl = await buildUidToUrlMap();
   const sourceToUrl = await buildSourceToUrlMap();
   console.log(`[info] Comment: Article map has ${sourceToUrl.size} source entries, ${uidToUrl.size} uid entries`);
 
-  // 3. Build reverse map: urlPath -> uid (for passing uid to client-side forms)
+  // 4. Build reverse map: urlPath -> uid (for passing uid to client-side forms)
   const urlToUid = new Map<string, string>();
   for (const [uid, urlPath] of uidToUrl) {
     urlToUid.set(urlPath, uid);
   }
 
-  // 4. Resolve comment keys (uid or path) -> output URL path
+  // 5. Resolve comment keys (uid or path) -> output URL path
   //    Try uid-based lookup first, then fall back to path-based
   const commentsByPage = new Map<string, NormalizedComment[]>();
   for (const [key, comments] of commentsByKey) {
@@ -235,10 +243,10 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   }
   console.log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
 
-  // 5. Derive output prefix for project-relative paths
+  // 6. Derive output prefix for project-relative paths
   const outputPrefix = getOutputPrefix(ctx);
 
-  // 6. Collect pages that need injection:
+  // 7. Collect pages that need injection:
   //    - Pages with comments always get a section
   //    - Pages without comments only get a section if there's a form (serverUrl set)
   const allUrlPaths: string[] = [];
@@ -274,7 +282,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         providerName,
         siteName,
         uid,
-        defaultComments
+        defaultComments,
+        commentsCss
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -282,9 +291,6 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
       console.log(`[warn] Comment: Error processing ${urlPath}: ${msg}`);
     }
   }
-
-  // 7. Copy CSS to output directory
-  await copyCss(outputPrefix);
 
   console.log(`[info] Comment: Injected comments into ${injectedCount} pages`);
   return {
@@ -308,7 +314,8 @@ async function processHtmlFile(
   providerName: string = "waline",
   siteName: string = "",
   uid: string = "",
-  defaultComments: boolean = true
+  defaultComments: boolean = true,
+  css: string = ""
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
@@ -355,12 +362,8 @@ async function processHtmlFile(
     const injected = injectCommentSection(html, commentHtml);
     if (!injected) return false;
 
-    // Inject CSS link in <head> (only if not already present)
-    if (!injected.includes(COMMENTS_CSS_FILENAME)) {
-      html = injectCssLink(injected, `/${COMMENTS_CSS_FILENAME}`);
-    } else {
-      html = injected;
-    }
+    // Inject inline CSS in <head> (idempotent - skips if already present)
+    html = injectInlineStyle(injected, css);
 
     await writeFile(htmlRelPath, html);
     console.log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);
@@ -371,15 +374,3 @@ async function processHtmlFile(
   }
 }
 
-/**
- * Copy the comment CSS to the output directory.
- * Reads from plugin's bundled assets via readPluginFile.
- */
-async function copyCss(outputPrefix: string): Promise<void> {
-  try {
-    const css = await readPluginFile(COMMENTS_CSS_FILENAME);
-    await writeFile(`${outputPrefix}/${COMMENTS_CSS_FILENAME}`, css);
-  } catch (e) {
-    console.log(`[warn] Comment: Failed to copy CSS: ${e}`);
-  }
-}

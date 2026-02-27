@@ -71,3 +71,24 @@ export function injectCssLink(html: string, cssPath: string): string {
   const link = `<link rel="stylesheet" href="${cssPath}">`;
   return html.slice(0, headEnd) + link + "\n" + html.slice(headEnd);
 }
+
+/**
+ * Inject CSS as an inline <style> tag into the <head> of the HTML.
+ *
+ * Uses a class attribute for idempotency detection — if the style tag
+ * is already present, the HTML is returned unchanged.
+ *
+ * @param html - HTML content
+ * @param css - CSS content to inline
+ * @returns Modified HTML with inline style, or original if already present or css is empty
+ */
+export function injectInlineStyle(html: string, css: string): string {
+  if (!css) return html;
+  if (html.includes('moss-comments-style')) return html;
+
+  const headEnd = lastIndexOfTag(html, "</head>");
+  if (headEnd === -1) return html;
+
+  const styleTag = `<style class="moss-comments-style">${css}</style>`;
+  return html.slice(0, headEnd) + styleTag + "\n" + html.slice(headEnd);
+}

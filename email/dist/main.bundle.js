@@ -214,7 +214,25 @@ var EmailNewsletter = (() => {
     data.articles[entry.url_path] = entry;
   }
 
+  // src/inject.ts
+  function lastIndexOfTag(html, tag) {
+    const lowerIndex = html.lastIndexOf(tag);
+    if (lowerIndex !== -1) return lowerIndex;
+    const upperIndex = html.lastIndexOf(tag.toUpperCase());
+    if (upperIndex !== -1) return upperIndex;
+    return -1;
+  }
+  function injectInlineStyle(html, css) {
+    if (!css) return html;
+    if (html.includes("moss-email-style")) return html;
+    const headEnd = lastIndexOfTag(html, "</head>");
+    if (headEnd === -1) return html;
+    const styleTag = `<style class="moss-email-style">${css}</style>`;
+    return html.slice(0, headEnd) + styleTag + "\n" + html.slice(headEnd);
+  }
+
   // src/enhance.ts
+  var CSS_FILENAME = "email-subscribe.css";
   async function enhance(ctx) {
     const config = ctx.config;
     if (!config.api_key) {
@@ -239,13 +257,19 @@ var EmailNewsletter = (() => {
     } catch (e) {
       return { success: false, message: `Failed to get newsletter info: ${e}` };
     }
+    let subscribeCss = "";
+    try {
+      subscribeCss = await readPluginFile(CSS_FILENAME);
+    } catch {
+    }
     const siteFiles = await listSiteFilesWithSizes();
     const htmlFiles = siteFiles.map((f) => f.path).filter((f) => f.endsWith(".html"));
     for (const sitePath of htmlFiles) {
       const projectPath = `.moss/site/${sitePath}`;
       try {
         const html = await readFile(projectPath);
-        const modified = injectSubscribeForm(html, username);
+        const withForm = injectSubscribeForm(html, username);
+        const modified = withForm !== html ? injectInlineStyle(withForm, subscribeCss) : html;
         if (modified !== html) {
           await writeFile(projectPath, modified);
         }

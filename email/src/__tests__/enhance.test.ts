@@ -454,6 +454,148 @@ describe("enhance hook", () => {
     });
   });
 
+  describe("enhance injects inline CSS into head", () => {
+    const sampleCss = ".footer-subscribe-form { display: flex; }";
+
+    const htmlWithHead = `<!DOCTYPE html>
+<html lang="en">
+<head><title>Test</title></head>
+<body>
+  <div class="footer-content">
+    <p class="footer-description">Subscribe</p>
+    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+  </div>
+</body>
+</html>`;
+
+    it("should inject <style class='moss-email-style'> into head", async () => {
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(htmlWithHead);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockImplementation((filename: string) => {
+        if (filename === "newsletter-info.json")
+          return Promise.resolve(JSON.stringify({ username: "testuser" }));
+        if (filename === "email-subscribe.css")
+          return Promise.resolve(sampleCss);
+        return Promise.reject(new Error("unknown file"));
+      });
+
+      const ctx = createEnhanceContext();
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenHtml).toContain('<style class="moss-email-style">');
+      expect(writtenHtml).toContain(sampleCss);
+    });
+
+    it("should not inject CSS when no footer-content div", async () => {
+      const noFooterHtml = `<!DOCTYPE html>
+<html><head><title>Test</title></head>
+<body><div class="main-content"><h1>Test</h1></div></body>
+</html>`;
+
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(noFooterHtml);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockImplementation((filename: string) => {
+        if (filename === "newsletter-info.json")
+          return Promise.resolve(JSON.stringify({ username: "testuser" }));
+        if (filename === "email-subscribe.css")
+          return Promise.resolve(sampleCss);
+        return Promise.reject(new Error("unknown file"));
+      });
+
+      const ctx = createEnhanceContext();
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      // No footer = no write = no CSS injection
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+
+    it("CSS injection should be idempotent", async () => {
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockImplementation((filename: string) => {
+        if (filename === "newsletter-info.json")
+          return Promise.resolve(JSON.stringify({ username: "testuser" }));
+        if (filename === "email-subscribe.css")
+          return Promise.resolve(sampleCss);
+        return Promise.reject(new Error("unknown file"));
+      });
+      mockWriteFile.mockResolvedValue(undefined);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(htmlWithHead);
+
+      const ctx = createEnhanceContext();
+      const { enhance } = await import("../enhance");
+      await enhance(ctx);
+
+      const firstRunOutput = mockWriteFile.mock.calls[0][1] as string;
+      // Confirm CSS was injected
+      expect(firstRunOutput).toContain("moss-email-style");
+
+      // Second run
+      vi.clearAllMocks();
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockImplementation((filename: string) => {
+        if (filename === "newsletter-info.json")
+          return Promise.resolve(JSON.stringify({ username: "testuser" }));
+        if (filename === "email-subscribe.css")
+          return Promise.resolve(sampleCss);
+        return Promise.reject(new Error("unknown file"));
+      });
+      mockWriteFile.mockResolvedValue(undefined);
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(firstRunOutput);
+
+      await enhance(ctx);
+
+      // Should not double-inject
+      if (mockWriteFile.mock.calls.length > 0) {
+        const secondRunOutput = mockWriteFile.mock.calls[0][1] as string;
+        const styleCount = (secondRunOutput.match(/moss-email-style/g) || []).length;
+        expect(styleCount).toBe(1);
+      }
+    });
+
+    it("should gracefully handle missing CSS file", async () => {
+      mockListSiteFilesWithSizes.mockResolvedValue([
+        { path: "test.html", size: 100 },
+      ]);
+      mockReadFile.mockResolvedValue(htmlWithHead);
+      mockWriteFile.mockResolvedValue(undefined);
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockImplementation((filename: string) => {
+        if (filename === "newsletter-info.json")
+          return Promise.resolve(JSON.stringify({ username: "testuser" }));
+        if (filename === "email-subscribe.css")
+          return Promise.reject(new Error("file not found"));
+        return Promise.reject(new Error("unknown file"));
+      });
+
+      const ctx = createEnhanceContext();
+      const { enhance } = await import("../enhance");
+      const result = await enhance(ctx);
+
+      // Should still succeed (form injected, just no CSS)
+      expect(result.success).toBe(true);
+      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenHtml).toContain("footer-subscribe-form");
+      expect(writtenHtml).not.toContain("moss-email-style");
+    });
+  });
+
   describe("enhance handles missing API key gracefully", () => {
     it("should return success:false when no API key configured", async () => {
       const ctx = createEnhanceContext({ api_key: undefined });

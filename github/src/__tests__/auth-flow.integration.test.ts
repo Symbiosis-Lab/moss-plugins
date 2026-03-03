@@ -428,7 +428,7 @@ describe("GitHub OAuth Device Flow", () => {
       const result = await promptLogin();
 
       expect(result).toBe(true);
-      // Now uses system browser instead of plugin browser (Bug 9 fix)
+      // Now uses system browser instead of action panel (Bug 9 fix)
       expect(ctx.browserTracker.systemBrowserUrls).toContain("https://github.com/login/device");
     });
 

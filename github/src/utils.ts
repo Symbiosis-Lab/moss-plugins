@@ -90,7 +90,7 @@ export async function dismissToast(id: string): Promise<void> {
 }
 
 /**
- * Close the plugin browser window
+ * Close the action panel
  */
 export async function closeBrowser(): Promise<void> {
   await sdkCloseBrowser();

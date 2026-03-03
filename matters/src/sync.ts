@@ -495,7 +495,6 @@ export async function syncToLocalFiles(
 
       const frontmatter = generateFrontmatter({
         title: collection.title,
-        is_collection: true,
         description: collection.description,
         cover: collection.cover,  // Keep remote URL, will be downloaded in phase 2
         order: orderField,

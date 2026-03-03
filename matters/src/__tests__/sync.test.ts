@@ -437,7 +437,6 @@ Old bio`;
     // Setup: Create existing collection with same content that sync would generate
     const existingCollection = `---
 title: "Test Collection"
-is_collection: true
 description: "Collection description"
 ---
 
@@ -469,7 +468,6 @@ Collection description`;
     // Setup: Create existing collection with DIFFERENT content
     const existingCollection = `---
 title: "Old Collection Name"
-is_collection: true
 ---
 
 Old description`;

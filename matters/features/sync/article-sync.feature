@@ -46,4 +46,4 @@ Feature: Article Sync from Matters
     When I sync to local files
     Then collection folders should be created
     And articles should be placed inside their collection folder
-    And collection index.md should have is_collection: true
+    And collection index.md should be created with title and description

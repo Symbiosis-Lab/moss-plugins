@@ -189,14 +189,6 @@ describe("generateFrontmatter", () => {
     expect(result).toContain('  - "https://example.com/article"');
   });
 
-  it("includes is_collection flag", () => {
-    const result = generateFrontmatter({
-      title: "Collection",
-      is_collection: true,
-    });
-    expect(result).toContain("is_collection: true");
-  });
-
   it("includes collections mapping", () => {
     const result = generateFrontmatter({
       title: "Test",
@@ -273,11 +265,6 @@ describe("regenerateFrontmatter", () => {
     const tagsIndex = lines.findIndex((l) => l === "tags:");
     expect(titleIndex).toBeLessThan(dateIndex);
     expect(dateIndex).toBeLessThan(tagsIndex);
-  });
-
-  it("handles boolean values", () => {
-    const result = regenerateFrontmatter({ is_collection: true });
-    expect(result).toContain("is_collection: true");
   });
 
   it("handles nested objects", () => {

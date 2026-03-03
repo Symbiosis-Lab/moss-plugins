@@ -166,6 +166,11 @@ a.comment-author:hover {
   margin-top: var(--moss-space-lg, 2rem);
 }
 
+/* Tighter form spacing when there are no existing comments */
+details:not(:has(.comment-list)) .comment-form {
+  margin-top: var(--moss-space-sm, 1rem);
+}
+
 /* Textarea — underline style */
 .comment-form textarea {
   display: block;

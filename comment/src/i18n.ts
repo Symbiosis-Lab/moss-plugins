@@ -32,7 +32,7 @@ export interface TranslationStrings {
 
 export const translations: Record<Lang, TranslationStrings> = {
   en: {
-    comment_count_zero: "Leave your thoughts",
+    comment_count_zero: "Comment",
     comment_count_one: "1 comment",
     comment_count_many: "{n} comments",
     placeholder: "Leave your thoughts",
@@ -45,7 +45,7 @@ export const translations: Record<Lang, TranslationStrings> = {
     network_error: "Network error. Please try again.",
   },
   "zh-hans": {
-    comment_count_zero: "留下你的想法",
+    comment_count_zero: "评论",
     comment_count_one: "1条评论",
     comment_count_many: "{n}条评论",
     placeholder: "留下你的想法",
@@ -58,7 +58,7 @@ export const translations: Record<Lang, TranslationStrings> = {
     network_error: "网络错误，请重试。",
   },
   "zh-hant": {
-    comment_count_zero: "留下你的想法",
+    comment_count_zero: "評論",
     comment_count_one: "1條評論",
     comment_count_many: "{n}條評論",
     placeholder: "留下你的想法",

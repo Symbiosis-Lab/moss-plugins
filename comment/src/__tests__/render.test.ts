@@ -61,9 +61,9 @@ describe("collapsible details/summary wrapper", () => {
     expect(html).not.toContain("1 comments");
   });
 
-  it('shows "Leave your thoughts" when there are 0 comments', () => {
+  it('shows "Comment" when there are 0 comments', () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
-    expect(html).toContain("Leave your thoughts");
+    expect(html).toContain("Comment");
   });
 
   it("includes message-circle SVG icon in summary", () => {

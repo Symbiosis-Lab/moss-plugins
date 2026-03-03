@@ -749,10 +749,10 @@ describe("enhance hook i18n lang detection", () => {
       (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
     );
     expect(htmlCall).toBeDefined();
-    // Form placeholder should be Chinese
+    // Form placeholder should be Chinese (placeholder stays "留下你的想法")
     expect(htmlCall![1]).toContain('placeholder="留下你的想法"');
-    // Summary should be Chinese (0 comments = "留下你的想法")
-    expect(htmlCall![1]).toContain("留下你的想法");
+    // Summary should be Chinese (0 comments = "评论")
+    expect(htmlCall![1]).toContain(">评论<");
   });
 
   it("defaults to English when HTML has no lang attribute", async () => {

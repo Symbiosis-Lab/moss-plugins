@@ -266,6 +266,8 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     if (!allUrlPaths.includes(urlPath)) allUrlPaths.push(urlPath);
   }
 
+  console.log(`[info] Comment: Processing ${allUrlPaths.length} pages (serverUrl: ${serverUrl ? 'yes' : 'no'})`);
+
   let injectedCount = 0;
 
   for (const urlPath of allUrlPaths) {
@@ -378,8 +380,9 @@ async function processHtmlFile(
     await writeFile(htmlRelPath, html);
     console.log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);
     return true;
-  } catch {
-    // File not found in output dir or other error -- skip silently
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[warn] Comment: Failed to process ${urlPath}: ${msg}`);
     return false;
   }
 }

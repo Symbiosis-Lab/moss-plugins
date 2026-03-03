@@ -10,7 +10,7 @@
  */
 
 import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
-import { getTauriCore } from "@symbiosis-lab/moss-api";
+import { getTauriCore, readFile } from "@symbiosis-lab/moss-api";
 import { reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
@@ -234,6 +234,16 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
       reportProgress("deploying", 5, 10, currentPhase);
     }, 30_000);
 
+    // Read custom domain from config so CNAME file is included in gh-pages
+    let domain: string | undefined;
+    try {
+      const configToml = await readFile(".moss/config.toml");
+      const match = configToml.match(/^\s*domain\s*=\s*"([^"]+)"/m);
+      if (match) domain = match[1];
+    } catch {
+      // No config or no domain — deploy without CNAME
+    }
+
     try {
       // Single deploy: commits source + .moss/site/, pushes to main,
       // then extracts .moss/site/ tree as orphan commit → gh-pages
@@ -242,6 +252,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         repo: repoName,
         token,
         gitPath,
+        domain,
         onProgress: (percent, message) => {
           currentPhase = message;
           // Map 0-100% to steps 5-9 of overall 10-step progress

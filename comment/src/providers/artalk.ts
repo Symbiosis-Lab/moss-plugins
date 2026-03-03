@@ -101,7 +101,7 @@ export function buildArtalkClientScript(
       if (!commentList) {
         commentList = document.createElement('ol');
         commentList.className = 'comment-list';
-        form.before(commentList);
+        form.after(commentList);
       }
 
       var li = document.createElement('li');

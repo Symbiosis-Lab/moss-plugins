@@ -72,14 +72,19 @@ describe("collapsible details/summary wrapper", () => {
     expect(html).toContain("M2.992 16.342");
   });
 
-  it("places comment list and form inside details (after summary)", () => {
+  it("includes chevron-down SVG icon in summary", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain("comments-chevron");
+  });
+
+  it("places form before comment list inside details (after summary)", () => {
     const comments = [makeComment()];
     const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
     const summaryEnd = html.indexOf("</summary>");
-    const commentList = html.indexOf("comment-list");
     const commentForm = html.indexOf("comment-form");
-    expect(summaryEnd).toBeLessThan(commentList);
+    const commentList = html.indexOf("comment-list");
     expect(summaryEnd).toBeLessThan(commentForm);
+    expect(commentForm).toBeLessThan(commentList);
   });
 });
 

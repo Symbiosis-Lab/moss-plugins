@@ -7,7 +7,6 @@
   "entry": "main.bundle.js",
   "capabilities": ["process", "enhance"],
   "global_name": "CommentPlugin",
-  "auto_install": true,
   "icon": "icon.svg",
   "config": {
     "server_url": "",

@@ -253,6 +253,10 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   const allUrlPaths: string[] = [];
   if (serverUrl) {
     // All articles get comment sections (with form)
+    // Use uidToUrl (preferred) first, then sourceToUrl as fallback for legacy data
+    for (const v of uidToUrl.values()) {
+      if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
+    }
     for (const v of sourceToUrl.values()) {
       if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
     }

@@ -10,6 +10,10 @@
   flex: 1;
 }
 
+.footer-subscribe-form .moss-btn {
+  font-size: inherit;
+}
+
 @media (max-width: 48rem) {
   .footer-subscribe-form .moss-input {
     width: 10ch;

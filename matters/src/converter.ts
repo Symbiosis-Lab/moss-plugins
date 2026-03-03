@@ -129,10 +129,6 @@ export function generateFrontmatter(data: FrontmatterData): string {
 
   lines.push(`title: "${escapeYaml(data.title)}"`);
 
-  if (data.is_collection) {
-    lines.push("is_collection: true");
-  }
-
   if (data.description) {
     lines.push(`description: "${escapeYaml(data.description)}"`);
   }
@@ -260,7 +256,7 @@ export function regenerateFrontmatter(frontmatter: Record<string, unknown>): str
     return String(value);
   };
 
-  const fieldOrder = ["title", "is_collection", "description", "date", "updated", "tags", "cover", "syndicated", "collections", "order"];
+  const fieldOrder = ["title", "description", "date", "updated", "tags", "cover", "syndicated", "collections", "order"];
 
   for (const key of fieldOrder) {
     if (!(key in frontmatter)) continue;

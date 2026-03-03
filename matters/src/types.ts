@@ -220,10 +220,9 @@ export interface FrontmatterData {
   tags?: string[];
   cover?: string;
   syndicated?: string[];
-  is_collection?: boolean;
   description?: string;
   collections?: Record<string, number> | string[];
-  order?: string[]; // For collections: ordered list of article filenames
+  order?: string[]; // For ordered folders: list of article filenames
 }
 
 // ============================================================================

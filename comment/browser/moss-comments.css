@@ -124,6 +124,11 @@ a.comment-author:hover {
 
 .comment-body blockquote {
   font-size: inherit;
+  font-style: normal;
+  border-left: 3px solid var(--moss-text-muted, #8a8580);
+  margin: var(--moss-space-xs, 0.5rem) 0 var(--moss-space-xs, 0.5rem) 1rem;
+  padding-left: var(--moss-space-sm, 1rem);
+  color: var(--moss-text-secondary, #5d5853);
 }
 
 .comment-body a {

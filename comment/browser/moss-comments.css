@@ -42,17 +42,17 @@
   color: var(--moss-text-primary, #2c2825);
 }
 
-/* Chevron indicator */
-.comments-toggle::after {
-  content: "▸";
+/* Chevron indicator (Lucide SVG) */
+.comments-toggle .comments-chevron {
   margin-left: auto;
-  font-size: 1.25rem;
+  flex-shrink: 0;
   color: var(--moss-text-secondary, #5d5853);
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease;
+  transform: rotate(-90deg);
 }
 
-details[open] > .comments-toggle::after {
-  content: "▾";
+details[open] > .comments-toggle .comments-chevron {
+  transform: rotate(0deg);
 }
 
 /* Space between summary and content when open */
@@ -124,6 +124,11 @@ a.comment-author:hover {
 
 .comment-body blockquote {
   font-size: inherit;
+  font-style: normal;
+  border-left: 3px solid var(--moss-text-muted, #8a8580);
+  margin: var(--moss-space-xs, 0.5rem) 0 var(--moss-space-xs, 0.5rem) 1rem;
+  padding-left: var(--moss-space-sm, 1rem);
+  color: var(--moss-text-secondary, #5d5853);
 }
 
 .comment-body a {
@@ -159,6 +164,11 @@ a.comment-author:hover {
   border-radius: 8px;
   padding: 1.25rem;
   margin-top: var(--moss-space-lg, 2rem);
+}
+
+/* Tighter form spacing when there are no existing comments */
+details:not(:has(.comment-list)) .comment-form {
+  margin-top: var(--moss-space-sm, 1rem);
 }
 
 /* Textarea — underline style */

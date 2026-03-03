@@ -53,7 +53,7 @@ describe("translation table", () => {
   // Spot-check specific translations
   it("returns correct English strings", () => {
     const en = translations["en"];
-    expect(en.comment_count_zero).toBe("Leave your thoughts");
+    expect(en.comment_count_zero).toBe("Comment");
     expect(en.comment_count_one).toBe("1 comment");
     expect(en.comment_count_many).toBe("{n} comments");
     expect(en.placeholder).toBe("Leave your thoughts");
@@ -68,7 +68,7 @@ describe("translation table", () => {
 
   it("returns correct Simplified Chinese strings", () => {
     const zhHans = translations["zh-hans"];
-    expect(zhHans.comment_count_zero).toBe("留下你的想法");
+    expect(zhHans.comment_count_zero).toBe("评论");
     expect(zhHans.comment_count_one).toBe("1条评论");
     expect(zhHans.comment_count_many).toBe("{n}条评论");
     expect(zhHans.placeholder).toBe("留下你的想法");
@@ -83,7 +83,7 @@ describe("translation table", () => {
 
   it("returns correct Traditional Chinese strings", () => {
     const zhHant = translations["zh-hant"];
-    expect(zhHant.comment_count_zero).toBe("留下你的想法");
+    expect(zhHant.comment_count_zero).toBe("評論");
     expect(zhHant.comment_count_one).toBe("1條評論");
     expect(zhHant.comment_count_many).toBe("{n}條評論");
     expect(zhHant.placeholder).toBe("留下你的想法");
@@ -180,18 +180,19 @@ describe("renderSummaryText i18n", () => {
 
   it("renders English summary for 0 comments", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "en");
-    expect(html).toContain("Leave your thoughts");
-    expect(html).not.toContain("留下你的想法");
+    expect(html).toContain(">Comment<");
+    // Should not contain Chinese zero-comment text
+    expect(html).not.toContain(">评论<");
   });
 
   it("renders Simplified Chinese summary for 0 comments", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "zh-hans");
-    expect(html).toContain("留下你的想法");
+    expect(html).toContain(">评论<");
   });
 
   it("renders Traditional Chinese summary for 0 comments", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "zh-hant");
-    expect(html).toContain("留下你的想法");
+    expect(html).toContain(">評論<");
   });
 
   it("renders English summary for 1 comment", () => {

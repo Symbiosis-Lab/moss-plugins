@@ -517,14 +517,14 @@ async function configure_domain(context: OnConfigureDomainContext): Promise<Hook
 /**
  * Plugin object exported as global for the moss plugin runtime
  */
-const GitHubDeployer = {
+const GithubPlugin = {
   deploy,
   configure_domain,
 };
 
 // Register plugin globally for the plugin runtime
-(window as unknown as { GitHubDeployer: typeof GitHubDeployer }).GitHubDeployer = GitHubDeployer;
+(window as unknown as { GithubPlugin: typeof GithubPlugin }).GithubPlugin = GithubPlugin;
 
 // Also export for module usage
 export { deploy, deploy as on_deploy, configure_domain, configure_domain as on_configure_domain };
-export default GitHubDeployer;
+export default GithubPlugin;

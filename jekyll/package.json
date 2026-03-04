@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",
     "dev": "npm run clean && npm run copy-assets && concurrently \"npm run bundle -- --watch\" \"npm run watch-assets\"",
-    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=Jekyll --outfile=dist/main.bundle.js",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=JekyllPlugin --outfile=dist/main.bundle.js",
     "clean": "rm -rf dist && mkdir -p dist",
     "copy-assets": "cp assets/* dist/",
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",

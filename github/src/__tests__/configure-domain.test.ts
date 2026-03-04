@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockGetPages, mockSetCustomDomain, mockEnforceHttps } = vi.hoisted(() => {
   // Provide `window` for main.ts module-scope plugin registration
-  // (main.ts line 486: window.GitHubDeployer = GitHubDeployer)
+  // (main.ts: window.GithubPlugin = GithubPlugin)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).window = globalThis;
 

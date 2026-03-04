@@ -1,9 +1,12 @@
 "use strict";
-var Astro = (() => {
+var AstroPlugin = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -18,6 +21,132 @@ var Astro = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // ../../packages/moss-api/dist/core-serM6jqp.mjs
+  var core_serM6jqp_exports = {};
+  __export(core_serM6jqp_exports, {
+    invoke: () => invoke,
+    transformCallback: () => transformCallback
+  });
+  function __classPrivateFieldGet(receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+  }
+  function __classPrivateFieldSet(receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value), value;
+  }
+  function transformCallback(callback, once = false) {
+    return window.__TAURI_INTERNALS__.transformCallback(callback, once);
+  }
+  async function invoke(cmd, args = {}, options) {
+    return window.__TAURI_INTERNALS__.invoke(cmd, args, options);
+  }
+  var _Channel_onmessage, _Channel_nextMessageIndex, _Channel_pendingMessages, _Channel_messageEndIndex, _Resource_rid, SERIALIZE_TO_IPC_FN, Channel;
+  var init_core_serM6jqp = __esm({
+    "../../packages/moss-api/dist/core-serM6jqp.mjs"() {
+      "use strict";
+      SERIALIZE_TO_IPC_FN = "__TAURI_TO_IPC_KEY__";
+      Channel = class {
+        constructor(onmessage) {
+          _Channel_onmessage.set(this, void 0);
+          _Channel_nextMessageIndex.set(this, 0);
+          _Channel_pendingMessages.set(this, []);
+          _Channel_messageEndIndex.set(this, void 0);
+          __classPrivateFieldSet(this, _Channel_onmessage, onmessage || (() => {
+          }), "f");
+          this.id = transformCallback((rawMessage) => {
+            const index = rawMessage.index;
+            if ("end" in rawMessage) {
+              if (index == __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")) this.cleanupCallback();
+              else __classPrivateFieldSet(this, _Channel_messageEndIndex, index, "f");
+              return;
+            }
+            const message = rawMessage.message;
+            if (index == __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")) {
+              __classPrivateFieldGet(this, _Channel_onmessage, "f").call(this, message);
+              __classPrivateFieldSet(this, _Channel_nextMessageIndex, __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") + 1, "f");
+              while (__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") in __classPrivateFieldGet(this, _Channel_pendingMessages, "f")) {
+                const message$1 = __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")];
+                __classPrivateFieldGet(this, _Channel_onmessage, "f").call(this, message$1);
+                delete __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")];
+                __classPrivateFieldSet(this, _Channel_nextMessageIndex, __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") + 1, "f");
+              }
+              if (__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") === __classPrivateFieldGet(this, _Channel_messageEndIndex, "f")) this.cleanupCallback();
+            } else __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[index] = message;
+          });
+        }
+        cleanupCallback() {
+          window.__TAURI_INTERNALS__.unregisterCallback(this.id);
+        }
+        set onmessage(handler) {
+          __classPrivateFieldSet(this, _Channel_onmessage, handler, "f");
+        }
+        get onmessage() {
+          return __classPrivateFieldGet(this, _Channel_onmessage, "f");
+        }
+        [(_Channel_onmessage = /* @__PURE__ */ new WeakMap(), _Channel_nextMessageIndex = /* @__PURE__ */ new WeakMap(), _Channel_pendingMessages = /* @__PURE__ */ new WeakMap(), _Channel_messageEndIndex = /* @__PURE__ */ new WeakMap(), SERIALIZE_TO_IPC_FN)]() {
+          return `__CHANNEL__:${this.id}`;
+        }
+        toJSON() {
+          return this[SERIALIZE_TO_IPC_FN]();
+        }
+      };
+      _Resource_rid = /* @__PURE__ */ new WeakMap();
+    }
+  });
+
+  // ../../packages/moss-api/dist/event-BovtnpSn.mjs
+  var event_BovtnpSn_exports = {};
+  __export(event_BovtnpSn_exports, {
+    listen: () => listen
+  });
+  async function _unlisten(event, eventId) {
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener(event, eventId);
+    await invoke("plugin:event|unlisten", {
+      event,
+      eventId
+    });
+  }
+  async function listen(event, handler, options) {
+    var _a;
+    return invoke("plugin:event|listen", {
+      event,
+      target: typeof (options === null || options === void 0 ? void 0 : options.target) === "string" ? {
+        kind: "AnyLabel",
+        label: options.target
+      } : (_a = options === null || options === void 0 ? void 0 : options.target) !== null && _a !== void 0 ? _a : { kind: "Any" },
+      handler: transformCallback(handler)
+    }).then((eventId) => {
+      return async () => _unlisten(event, eventId);
+    });
+  }
+  var TauriEvent;
+  var init_event_BovtnpSn = __esm({
+    "../../packages/moss-api/dist/event-BovtnpSn.mjs"() {
+      "use strict";
+      init_core_serM6jqp();
+      (function(TauriEvent$1) {
+        TauriEvent$1["WINDOW_RESIZED"] = "tauri://resize";
+        TauriEvent$1["WINDOW_MOVED"] = "tauri://move";
+        TauriEvent$1["WINDOW_CLOSE_REQUESTED"] = "tauri://close-requested";
+        TauriEvent$1["WINDOW_DESTROYED"] = "tauri://destroyed";
+        TauriEvent$1["WINDOW_FOCUS"] = "tauri://focus";
+        TauriEvent$1["WINDOW_BLUR"] = "tauri://blur";
+        TauriEvent$1["WINDOW_SCALE_FACTOR_CHANGED"] = "tauri://scale-change";
+        TauriEvent$1["WINDOW_THEME_CHANGED"] = "tauri://theme-changed";
+        TauriEvent$1["WINDOW_CREATED"] = "tauri://window-created";
+        TauriEvent$1["WEBVIEW_CREATED"] = "tauri://webview-created";
+        TauriEvent$1["DRAG_ENTER"] = "tauri://drag-enter";
+        TauriEvent$1["DRAG_OVER"] = "tauri://drag-over";
+        TauriEvent$1["DRAG_DROP"] = "tauri://drag-drop";
+        TauriEvent$1["DRAG_LEAVE"] = "tauri://drag-leave";
+      })(TauriEvent || (TauriEvent = {}));
+    }
+  });
+
   // src/main.ts
   var main_exports = {};
   __export(main_exports, {
@@ -25,7 +154,7 @@ var Astro = (() => {
     on_build: () => on_build
   });
 
-  // node_modules/@symbiosis-lab/moss-api/dist/index.mjs
+  // ../../packages/moss-api/dist/index.mjs
   function getTauriCore() {
     const w = window;
     if (!w.__TAURI__?.core) throw new Error("Tauri core not available");
@@ -34,7 +163,7 @@ var Astro = (() => {
   function isTauriAvailable() {
     return !!window.__TAURI__?.core;
   }
-  function getTauriEvent() {
+  function getTauriEvent$1() {
     const w = window;
     if (!w.__TAURI__?.event) throw new Error("Tauri event API not available");
     return w.__TAURI__.event;
@@ -43,7 +172,12 @@ var Astro = (() => {
     return !!window.__TAURI__?.event;
   }
   async function emitEvent(event, payload) {
-    await getTauriEvent().emit(event, payload);
+    await getTauriEvent$1().emit(event, payload);
+  }
+  async function onEvent(event, handler) {
+    return await getTauriEvent$1().listen(event, (e) => {
+      handler(e.payload);
+    });
   }
   var currentPluginName = "";
   var currentHookName = "";
@@ -67,8 +201,8 @@ var Astro = (() => {
         hookName: currentHookName,
         message
       });
-    } catch (error$1) {
-      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error$1);
+    } catch (error) {
+      console.error("\u274C [SDK] Failed to send message:", message.type, "\u2013", error);
     }
   }
   async function reportProgress(phase, current, total, message) {
@@ -121,235 +255,34 @@ var Astro = (() => {
       linkPath
     });
   }
-  async function readPluginFile(relativePath) {
-    const ctx = getInternalContext();
-    return getTauriCore().invoke("read_plugin_file", {
-      pluginName: ctx.plugin_name,
-      projectPath: ctx.project_path,
-      relativePath
-    });
-  }
-  async function writePluginFile(relativePath, content) {
-    const ctx = getInternalContext();
-    await getTauriCore().invoke("write_plugin_file", {
-      pluginName: ctx.plugin_name,
-      projectPath: ctx.project_path,
-      relativePath,
-      content
-    });
-  }
-  async function pluginFileExists(relativePath) {
-    const ctx = getInternalContext();
-    return getTauriCore().invoke("plugin_file_exists", {
-      pluginName: ctx.plugin_name,
-      projectPath: ctx.project_path,
-      relativePath
-    });
-  }
-  async function fetchUrl(url, options = {}) {
-    const { timeoutMs = 3e4 } = options;
-    const result = await getTauriCore().invoke("fetch_url", {
-      url,
-      timeoutMs
-    });
-    const binaryString = atob(result.body_base64);
-    const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
-    return {
-      status: result.status,
-      ok: result.ok,
-      contentType: result.content_type,
-      body: bytes,
-      text() {
-        return new TextDecoder().decode(bytes);
-      }
-    };
-  }
   async function executeBinary(options) {
     const ctx = getInternalContext();
-    const { binaryPath, args, timeoutMs = 6e4, env, stdin } = options;
-    const result = await getTauriCore().invoke("execute_binary", {
-      binaryPath,
-      args,
-      workingDir: ctx.project_path,
-      timeoutMs,
-      env,
-      stdinData: stdin
+    const { binaryPath, args, timeoutMs = 6e4, env, stdin, workingDir, onStderr } = options;
+    const resolvedWorkingDir = workingDir ? `${ctx.project_path}/${workingDir}` : ctx.project_path;
+    const streamId = onStderr ? crypto.randomUUID() : void 0;
+    let unlisten;
+    if (onStderr && streamId) unlisten = await onEvent("binary-output", (payload) => {
+      if (payload.streamId === streamId) onStderr(payload.line);
     });
-    return {
-      success: result.success,
-      exitCode: result.exit_code,
-      stdout: result.stdout,
-      stderr: result.stderr
-    };
-  }
-  var cachedPlatform = null;
-  async function getPlatformInfo() {
-    if (cachedPlatform) return cachedPlatform;
-    const os = await detectOS();
-    const arch = await detectArch(os);
-    const platformKey = `${os}-${arch}`;
-    const supportedPlatforms = [
-      "darwin-arm64",
-      "darwin-x64",
-      "linux-x64",
-      "windows-x64"
-    ];
-    if (!supportedPlatforms.includes(platformKey)) throw new Error(`Unsupported platform: ${platformKey}. Supported platforms: ${supportedPlatforms.join(", ")}`);
-    cachedPlatform = {
-      os,
-      arch,
-      platformKey
-    };
-    return cachedPlatform;
-  }
-  async function detectOS() {
     try {
-      const result = await executeBinary({
-        binaryPath: "uname",
-        args: ["-s"],
-        timeoutMs: 5e3
+      const result = await getTauriCore().invoke("execute_binary", {
+        binaryPath,
+        args,
+        workingDir: resolvedWorkingDir,
+        timeoutMs,
+        env,
+        stdinData: stdin,
+        streamId
       });
-      if (result.success) {
-        const osName = result.stdout.trim().toLowerCase();
-        if (osName === "darwin") return "darwin";
-        if (osName === "linux") return "linux";
-      }
-    } catch {
-    }
-    try {
-      const result = await executeBinary({
-        binaryPath: "cmd",
-        args: ["/c", "ver"],
-        timeoutMs: 5e3
-      });
-      if (result.success && result.stdout.toLowerCase().includes("windows")) return "windows";
-    } catch {
-    }
-    throw new Error("Unable to detect operating system. Supported systems: macOS (Darwin), Linux, Windows");
-  }
-  async function detectArch(os) {
-    if (os === "windows") try {
-      const result = await executeBinary({
-        binaryPath: "cmd",
-        args: [
-          "/c",
-          "echo",
-          "%PROCESSOR_ARCHITECTURE%"
-        ],
-        timeoutMs: 5e3
-      });
-      if (result.success) {
-        if (result.stdout.trim().toLowerCase() === "arm64") return "arm64";
-        return "x64";
-      }
-    } catch {
-      return "x64";
-    }
-    try {
-      const result = await executeBinary({
-        binaryPath: "uname",
-        args: ["-m"],
-        timeoutMs: 5e3
-      });
-      if (result.success) {
-        const machine = result.stdout.trim().toLowerCase();
-        if (machine === "arm64" || machine === "aarch64") return "arm64";
-        if (machine === "x86_64" || machine === "amd64") return "x64";
-        if (machine.includes("arm")) return "arm64";
-        return "x64";
-      }
-    } catch {
-    }
-    return "x64";
-  }
-  async function extractArchive(options) {
-    const { archivePath, destDir, timeoutMs = 6e4 } = options;
-    const format = options.format ?? detectFormat(archivePath);
-    if (!format) return {
-      success: false,
-      error: `Unable to detect archive format for: ${archivePath}. Supported formats: .tar.gz, .zip`
-    };
-    const platform = await getPlatformInfo();
-    try {
-      if (format === "tar.gz") return await extractTarGz(archivePath, destDir, timeoutMs);
-      else if (platform.os === "windows") return await extractZipWindows(archivePath, destDir, timeoutMs);
-      else return await extractZipUnix(archivePath, destDir, timeoutMs);
-    } catch (error$1) {
       return {
-        success: false,
-        error: error$1 instanceof Error ? error$1.message : String(error$1)
+        success: result.success,
+        exitCode: result.exit_code,
+        stdout: result.stdout,
+        stderr: result.stderr
       };
+    } finally {
+      if (unlisten) unlisten();
     }
-  }
-  async function makeExecutable(filePath) {
-    if ((await getPlatformInfo()).os === "windows") return true;
-    try {
-      return (await executeBinary({
-        binaryPath: "chmod",
-        args: ["+x", filePath],
-        timeoutMs: 5e3
-      })).success;
-    } catch {
-      return false;
-    }
-  }
-  function detectFormat(archivePath) {
-    const lowerPath = archivePath.toLowerCase();
-    if (lowerPath.endsWith(".tar.gz") || lowerPath.endsWith(".tgz")) return "tar.gz";
-    if (lowerPath.endsWith(".zip")) return "zip";
-    return null;
-  }
-  async function extractTarGz(archivePath, destDir, timeoutMs) {
-    const result = await executeBinary({
-      binaryPath: "tar",
-      args: [
-        "-xzf",
-        archivePath,
-        "-C",
-        destDir
-      ],
-      timeoutMs
-    });
-    if (!result.success) return {
-      success: false,
-      error: result.stderr || `tar extraction failed with exit code ${result.exitCode}`
-    };
-    return { success: true };
-  }
-  async function extractZipUnix(archivePath, destDir, timeoutMs) {
-    const result = await executeBinary({
-      binaryPath: "unzip",
-      args: [
-        "-o",
-        "-q",
-        archivePath,
-        "-d",
-        destDir
-      ],
-      timeoutMs
-    });
-    if (!result.success) return {
-      success: false,
-      error: result.stderr || `unzip extraction failed with exit code ${result.exitCode}`
-    };
-    return { success: true };
-  }
-  async function extractZipWindows(archivePath, destDir, timeoutMs) {
-    const result = await executeBinary({
-      binaryPath: "powershell",
-      args: [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`
-      ],
-      timeoutMs
-    });
-    if (!result.success) return {
-      success: false,
-      error: result.stderr || `PowerShell extraction failed with exit code ${result.exitCode}`
-    };
-    return { success: true };
   }
   var BinaryResolutionError = class extends Error {
     constructor(message, phase, cause) {
@@ -361,224 +294,27 @@ var Astro = (() => {
   };
   async function resolveBinary(config, options = {}) {
     const { configuredPath, autoDownload = true, onProgress } = options;
-    const progress = (phase, message) => {
-      onProgress?.(phase, message);
-    };
-    if (configuredPath) {
-      progress("detection", `Checking configured path: ${configuredPath}`);
-      const result = await checkBinary(configuredPath, config);
-      if (result) return {
-        path: configuredPath,
-        version: result.version,
-        source: "config"
-      };
-    }
-    progress("detection", `Checking system PATH for ${config.name}`);
-    const pathResult = await checkBinary(config.name, config);
-    if (pathResult) return {
-      path: config.name,
-      version: pathResult.version,
-      source: "path"
-    };
-    const pluginBinPath = await getPluginBinPath(config);
-    progress("detection", `Checking plugin storage: ${pluginBinPath}`);
-    if (await binaryExistsInPluginStorage(config)) {
-      const storedResult = await checkBinary(pluginBinPath, config);
-      if (storedResult) return {
-        path: pluginBinPath,
-        version: storedResult.version,
-        source: "plugin-storage"
-      };
-    }
-    if (!autoDownload) throw new BinaryResolutionError(`${config.name} not found. Please install it manually or set the path in plugin configuration.
-
-Installation options:
-- Install via package manager (brew, apt, etc.)
-- Download from the official website
-- Set ${config.name}_path in .moss/config.toml`, "detection");
-    progress("download", `Downloading ${config.name}...`);
-    const downloadedPath = await downloadBinary(config, progress);
-    const downloadedResult = await checkBinary(downloadedPath, config);
-    if (!downloadedResult) throw new BinaryResolutionError(`Downloaded ${config.name} binary failed verification. The binary may be corrupted or incompatible with your system.`, "validation");
-    return {
-      path: downloadedPath,
-      version: downloadedResult.version,
-      source: "downloaded"
-    };
-  }
-  async function checkBinary(binaryPath, config) {
-    try {
-      const [cmd, ...args] = parseCommand(config.versionCommand ?? `${config.name} version`, binaryPath, config.name);
-      const result = await executeBinary({
-        binaryPath: cmd,
-        args,
-        timeoutMs: 1e4
-      });
-      if (!result.success) return null;
-      let version;
-      if (config.versionPattern) {
-        const match = (result.stdout + result.stderr).match(config.versionPattern);
-        if (match && match[1]) version = match[1];
-      }
-      return { version };
-    } catch {
-      return null;
-    }
-  }
-  function parseCommand(template, binaryPath, name) {
-    const resolved = template.replace(/{name}/g, binaryPath);
-    if (resolved.startsWith(binaryPath)) return [binaryPath, ...resolved.slice(binaryPath.length).trim().split(/\s+/).filter(Boolean)];
-    return resolved.split(/\s+/).filter(Boolean);
-  }
-  async function getPluginBinPath(config) {
-    const ctx = getInternalContext();
-    const binaryName = getBinaryFilename(config, (await getPlatformInfo()).os === "windows");
-    return `${ctx.moss_dir}/plugins/${ctx.plugin_name}/bin/${binaryName}`;
-  }
-  function getBinaryFilename(config, isWindows) {
-    const baseName = config.binaryName ?? config.name;
-    return isWindows ? `${baseName}.exe` : baseName;
-  }
-  async function binaryExistsInPluginStorage(config) {
-    return pluginFileExists(`bin/${getBinaryFilename(config, (await getPlatformInfo()).os === "windows")}`);
-  }
-  async function downloadBinary(config, progress) {
-    const platform = await getPlatformInfo();
-    const source = config.sources[platform.platformKey];
-    if (!source) throw new BinaryResolutionError(`No download source configured for platform: ${platform.platformKey}`, "download");
-    let version;
-    let downloadUrl;
-    if (source.github) {
-      progress("download", "Fetching latest release info from GitHub...");
-      version = (await getLatestRelease(source.github.owner, source.github.repo)).version;
-      const assetName = resolveAssetPattern(source.github.assetPattern, version, platform);
-      downloadUrl = `https://github.com/${source.github.owner}/${source.github.repo}/releases/download/v${version}/${assetName}`;
-    } else if (source.directUrl) {
-      downloadUrl = source.directUrl;
-      const versionMatch = downloadUrl.match(/[/v_](\d+\.\d+\.\d+)[/_]/);
-      version = versionMatch ? versionMatch[1] : "unknown";
-      progress("download", `Using direct download URL (v${version})...`);
-    } else throw new BinaryResolutionError(`No download source configured for ${config.name}`, "download");
-    progress("download", `Downloading ${config.name} v${version}...`);
-    const ctx = getInternalContext();
-    const archiveFilename = downloadUrl.split("/").pop() ?? "archive";
-    const archivePath = `${ctx.moss_dir}/plugins/${ctx.plugin_name}/.tmp/${archiveFilename}`;
-    await downloadToPluginStorage(downloadUrl, `.tmp/${archiveFilename}`);
-    progress("extraction", "Extracting archive...");
-    const binDir = `${ctx.moss_dir}/plugins/${ctx.plugin_name}/bin`;
-    await writePluginFile("bin/.gitkeep", "");
-    const extractResult = await extractArchive({
-      archivePath,
-      destDir: binDir
-    });
-    if (!extractResult.success) throw new BinaryResolutionError(`Failed to extract archive: ${extractResult.error}`, "extraction");
-    const binaryPath = await getPluginBinPath(config);
-    await makeExecutable(binaryPath);
-    progress("complete", `${config.name} v${version} installed successfully`);
-    await cacheReleaseInfo(config.name, version);
-    return binaryPath;
-  }
-  async function getLatestRelease(owner, repo) {
-    const cacheKey = `${owner}/${repo}`;
-    try {
-      const response = await fetchUrl(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { timeoutMs: 1e4 });
-      if (!response.ok) {
-        if (response.status === 403 || response.status === 429) {
-          const cached = await getCachedRelease(cacheKey);
-          if (cached) return cached;
-          throw new BinaryResolutionError("GitHub API rate limit exceeded. Please try again later or install the binary manually.", "download");
+    let unlisten;
+    if (onProgress) {
+      const { listen: listen2 } = await Promise.resolve().then(() => (init_event_BovtnpSn(), event_BovtnpSn_exports));
+      unlisten = await listen2("download-progress", (event) => {
+        if (event.payload.binary === config.name) {
+          const { bytes_downloaded, total_bytes } = event.payload;
+          onProgress(config.name, bytes_downloaded, total_bytes ?? void 0);
         }
-        throw new BinaryResolutionError(`Failed to fetch release info: HTTP ${response.status}`, "download");
-      }
-      const tag = JSON.parse(response.text()).tag_name;
-      return {
-        version: tag.replace(/^v/, ""),
-        tag
-      };
-    } catch (error$1) {
-      if (error$1 instanceof BinaryResolutionError) throw error$1;
-      const cached = await getCachedRelease(cacheKey);
-      if (cached) return cached;
-      throw new BinaryResolutionError(`Failed to fetch release info: ${error$1 instanceof Error ? error$1.message : String(error$1)}`, "download", error$1 instanceof Error ? error$1 : void 0);
+      });
     }
-  }
-  function resolveAssetPattern(pattern, version, platform) {
-    return pattern.replace(/{version}/g, version).replace(/{os}/g, platform.os).replace(/{arch}/g, {
-      x64: "amd64",
-      arm64: "arm64"
-    }[platform.arch] ?? platform.arch);
-  }
-  async function downloadToPluginStorage(url, relativePath) {
-    const ctx = getInternalContext();
-    const platform = await getPlatformInfo();
-    const targetPath = `${ctx.moss_dir}/plugins/${ctx.plugin_name}/${relativePath}`;
-    const parentDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
-    if (platform.os === "windows") {
-      await executeBinary({
-        binaryPath: "powershell",
-        args: [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `New-Item -ItemType Directory -Force -Path '${parentDir}'`
-        ],
-        timeoutMs: 5e3
-      });
-      const result = await executeBinary({
-        binaryPath: "powershell",
-        args: [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `Invoke-WebRequest -Uri '${url}' -OutFile '${targetPath}'`
-        ],
-        timeoutMs: 3e5
-      });
-      if (!result.success) throw new BinaryResolutionError(`Download failed: ${result.stderr || result.stdout}`, "download");
-    } else {
-      await executeBinary({
-        binaryPath: "mkdir",
-        args: ["-p", parentDir],
-        timeoutMs: 5e3
-      });
-      const result = await executeBinary({
-        binaryPath: "curl",
-        args: [
-          "-fsSL",
-          "--create-dirs",
-          "-o",
-          targetPath,
-          url
-        ],
-        timeoutMs: 3e5
-      });
-      if (!result.success) throw new BinaryResolutionError(`Download failed: ${result.stderr || `curl exited with code ${result.exitCode}`}`, "download");
-    }
-  }
-  async function cacheReleaseInfo(name, version) {
     try {
-      const cached = {
-        version,
-        tag: `v${version}`,
-        cachedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await writePluginFile(`cache/${name}-release.json`, JSON.stringify(cached, null, 2));
-    } catch {
-    }
-  }
-  async function getCachedRelease(cacheKey) {
-    try {
-      const name = cacheKey.split("/")[1];
-      if (!name) return null;
-      if (!await pluginFileExists(`cache/${name}-release.json`)) return null;
-      const content = await readPluginFile(`cache/${name}-release.json`);
-      const cached = JSON.parse(content);
-      return {
-        version: cached.version,
-        tag: cached.tag
-      };
-    } catch {
-      return null;
+      const { invoke: invoke2 } = await Promise.resolve().then(() => (init_core_serM6jqp(), core_serM6jqp_exports));
+      return await invoke2("resolve_binary_command", {
+        config,
+        configuredPath: configuredPath ?? null,
+        autoDownload
+      });
+    } catch (error) {
+      throw new BinaryResolutionError(error instanceof Error ? error.message : String(error), "detection");
+    } finally {
+      unlisten?.();
     }
   }
 
@@ -785,10 +521,12 @@ const { title } = Astro.props;
   // src/astro-config.ts
   var ASTRO_BINARY_CONFIG = {
     name: "npx",
-    versionCommand: "{name} --version",
-    versionPattern: /(\d+\.\d+\.\d+)/,
-    sources: {},
-    binaryName: "npx"
+    binary_name: "npx",
+    version_check: {
+      args: ["--version"],
+      pattern: "(\\d+\\.\\d+\\.\\d+)"
+    },
+    sources: {}
   };
 
   // src/main.ts
@@ -801,8 +539,9 @@ const { title } = Astro.props;
       try {
         const npxResolution = await resolveBinary(ASTRO_BINARY_CONFIG, {
           autoDownload: false,
-          onProgress: (phase, message) => {
-            reportProgress(phase, 0, 4, message);
+          onProgress: (binary, bytesDownloaded, totalBytes) => {
+            const total = totalBytes ? `/${totalBytes}` : "";
+            reportProgress("setup", 0, 4, `Downloading ${binary}: ${bytesDownloaded}${total} bytes`);
           }
         });
         npxPath = npxResolution.path;

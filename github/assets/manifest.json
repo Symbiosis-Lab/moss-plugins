@@ -6,7 +6,7 @@
   "entry": "main.bundle.js",
   "capabilities": ["deploy"],
   "domain": "github.com",
-  "global_name": "GitHubDeployer",
+  "global_name": "GithubPlugin",
   "icon": "icon.svg",
   "config": {
     "auto_commit": true,

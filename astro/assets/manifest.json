@@ -5,7 +5,7 @@
   "author": "Symbiosis Lab",
   "entry": "main.bundle.js",
   "category": "generator",
-  "global_name": "Astro",
+  "global_name": "AstroPlugin",
   "config": {
     "build_args": []
   },

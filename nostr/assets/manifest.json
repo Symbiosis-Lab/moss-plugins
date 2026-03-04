@@ -5,6 +5,7 @@
   "author": "moss team",
   "entry": "main.bundle.js",
   "capabilities": ["process", "enhance", "syndicate"],
+  "global_name": "NostrPlugin",
   "icon": "icon.svg",
   "config": {
     "relays": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.nostr.band"],

@@ -1,5 +1,5 @@
 "use strict";
-var EmailNewsletter = (() => {
+var EmailPlugin = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -47,7 +47,7 @@ var EmailNewsletter = (() => {
     return w.__TAURI__.event;
   }
   async function openBrowser(url) {
-    await getTauriCore().invoke("open_plugin_browser", { url });
+    await getTauriCore().invoke("open_action_panel", { url });
     const closed = new Promise((resolve) => {
       const { listen } = getTauriEvent();
       listen("browser-closed", (event) => {
@@ -423,11 +423,11 @@ var EmailNewsletter = (() => {
       };
     }
   }
-  var EmailNewsletter = {
+  var EmailPlugin = {
     enhance,
     syndicate
   };
-  window.EmailNewsletter = EmailNewsletter;
-  var main_default = EmailNewsletter;
+  window.EmailPlugin = EmailPlugin;
+  var main_default = EmailPlugin;
   return __toCommonJS(main_exports);
 })();

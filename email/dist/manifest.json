@@ -7,7 +7,7 @@
   "author": "moss team",
   "entry": "main.bundle.js",
   "capabilities": ["enhance", "syndicate"],
-  "global_name": "EmailNewsletter",
+  "global_name": "EmailPlugin",
   "domain": "buttondown.com",
   "config": {},
   "config_schema": {

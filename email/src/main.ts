@@ -186,16 +186,16 @@ import { enhance } from "./enhance";
 /**
  * Plugin object exported as global for the moss plugin runtime
  */
-const EmailNewsletter = {
+const EmailPlugin = {
   enhance,
   syndicate,
 };
 
 // Register plugin globally for the plugin runtime
-(window as unknown as { EmailNewsletter: typeof EmailNewsletter }).EmailNewsletter =
-  EmailNewsletter;
+(window as unknown as { EmailPlugin: typeof EmailPlugin }).EmailPlugin =
+  EmailPlugin;
 
 // Also export for module usage
 export { enhance };
 export { syndicate as after_deploy };
-export default EmailNewsletter;
+export default EmailPlugin;

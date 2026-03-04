@@ -5,7 +5,7 @@
   "author": "Symbiosis Lab",
   "entry": "main.bundle.js",
   "category": "generator",
-  "global_name": "Jekyll",
+  "global_name": "JekyllPlugin",
   "config": {
     "jekyll_path": "jekyll",
     "build_args": []

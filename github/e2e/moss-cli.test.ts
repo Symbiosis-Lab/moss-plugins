@@ -307,7 +307,7 @@ describe("moss CLI E2E Tests", () => {
       expect(manifest.name).toBe("github");
       expect(manifest.capabilities).toContain("deploy");
       expect(manifest.entry).toBe("main.bundle.js");
-      expect(manifest.global_name).toBe("GitHubDeployer");
+      expect(manifest.global_name).toBe("GithubPlugin");
     });
   });
 

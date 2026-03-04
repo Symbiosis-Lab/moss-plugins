@@ -5,6 +5,7 @@
   "author": "moss team",
   "entry": "main.bundle.js",
   "capabilities": ["process", "syndicate"],
+  "global_name": "MattersPlugin",
   "domain": "matters.town",
   "icon": "icon.svg",
   "config": {

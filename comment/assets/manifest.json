@@ -30,5 +30,11 @@
   "config_placeholders": {
     "server_url": "https://comment.example.com",
     "site_name": "example.com"
+  },
+  "config_verify": {
+    "server_url": {
+      "probe": "{value}/api/v2/conf",
+      "expect": "ok"
+    }
   }
 }

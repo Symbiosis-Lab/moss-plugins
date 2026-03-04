@@ -102,7 +102,10 @@ export async function fetchWalineComments(
       return [];
     }
 
-    const body = JSON.parse(response.text());
+    const text = response.text();
+    if (!text) return [];
+
+    const body = JSON.parse(text);
     const data: WalineComment[] = body.data;
 
     if (!data || !Array.isArray(data)) {
@@ -144,8 +147,26 @@ interface ArtalkComment {
   email?: string;
   link?: string;
   rid: number;
+  page_key?: string;
   is_collapsed?: boolean;
   is_pending?: boolean;
+}
+
+/**
+ * Normalize a single Artalk comment to GenericSocialComment format.
+ */
+function normalizeArtalkComment(c: ArtalkComment): GenericSocialComment {
+  return {
+    id: String(c.id),
+    content: c.content,
+    createdAt: c.date,
+    author: {
+      displayName: c.nick,
+      name: c.nick,
+    },
+    // Artalk uses rid=0 for top-level comments
+    replyToId: c.rid > 0 ? String(c.rid) : undefined,
+  };
 }
 
 /**
@@ -175,30 +196,83 @@ export async function fetchArtalkComments(
       return [];
     }
 
-    const body = JSON.parse(response.text());
+    const text = response.text();
+    if (!text) return [];
+
+    const body = JSON.parse(text);
     const comments: ArtalkComment[] = body.data?.comments;
 
     if (!comments || !Array.isArray(comments)) {
       return [];
     }
 
-    return comments.map(
-      (c): GenericSocialComment => ({
-        id: String(c.id),
-        content: c.content,
-        createdAt: c.date,
-        author: {
-          displayName: c.nick,
-          name: c.nick,
-        },
-        // Artalk uses rid=0 for top-level comments
-        replyToId: c.rid > 0 ? String(c.rid) : undefined,
-      })
-    );
+    return comments.map(normalizeArtalkComment);
   } catch (error) {
     console.log(
       `[warn] Comment: Failed to fetch Artalk comments for ${uid}: ${error}`
     );
     return [];
   }
+}
+
+/**
+ * Fetch ALL comments for a site from Artalk in paginated batches.
+ *
+ * Uses flat_mode=true to get all comments (including replies) in a flat list.
+ * Groups results by page_key so callers can look up comments per page.
+ *
+ * @param serverUrl - Base URL of the Artalk server
+ * @param siteName - The Artalk site name
+ * @returns Map of page_key → normalized comments
+ */
+export async function fetchAllArtalkComments(
+  serverUrl: string,
+  siteName: string
+): Promise<Map<string, GenericSocialComment[]>> {
+  const LIMIT = 100;
+  const result = new Map<string, GenericSocialComment[]>();
+
+  try {
+    const encodedSiteName = encodeURIComponent(siteName);
+    let offset = 0;
+
+    while (true) {
+      const url = `${serverUrl}/api/v2/comments?site_name=${encodedSiteName}&limit=${LIMIT}&offset=${offset}&flat_mode=true`;
+      const response = await httpGet(url);
+
+      if (!response.ok) {
+        console.log(
+          `[warn] Comment: Artalk batch fetch failed: HTTP ${response.status}`
+        );
+        break;
+      }
+
+      const text = response.text();
+      if (!text) break;
+
+      const body = JSON.parse(text);
+      const comments: ArtalkComment[] = body.data?.comments;
+
+      if (!comments || !Array.isArray(comments)) break;
+
+      for (const c of comments) {
+        const pageKey = c.page_key ?? "";
+        const existing = result.get(pageKey) ?? [];
+        existing.push(normalizeArtalkComment(c));
+        result.set(pageKey, existing);
+      }
+
+      // If we got fewer than LIMIT, we've fetched everything
+      const count = body.data?.count ?? comments.length;
+      if (count < LIMIT) break;
+
+      offset += LIMIT;
+    }
+  } catch (error) {
+    console.log(
+      `[warn] Comment: Failed to fetch all Artalk comments: ${error}`
+    );
+  }
+
+  return result;
 }

@@ -20,7 +20,7 @@ import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectInlineStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
-import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
+import { fetchWalineComments, fetchAllArtalkComments, detectProvider } from "./fetcher";
 import { parseLang, type Lang } from "./i18n";
 import {
   loadCommentSocialData,
@@ -136,26 +136,35 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
   // 4. Load existing social data
   const socialData = await loadCommentSocialData();
 
-  // 5. Fetch comments for each page and merge
+  // 5. Fetch comments and merge
   let totalComments = 0;
 
-  for (const { uid } of pagesWithUids) {
-    try {
-      let comments;
-      if (providerName === "artalk") {
-        comments = await fetchArtalkComments(serverUrl, uid, siteName);
-      } else {
-        comments = await fetchWalineComments(serverUrl, uid);
-      }
+  if (providerName === "artalk") {
+    // Artalk: batch fetch all comments for the site in one go
+    console.log(`[info] Comment: Fetching all comments for site "${siteName}"...`);
+    const allComments = await fetchAllArtalkComments(serverUrl, siteName);
 
+    for (const { uid } of pagesWithUids) {
+      const comments = allComments.get(uid) || [];
       if (comments.length > 0) {
         mergeCommentSocialData(socialData, uid, comments);
         totalComments += comments.length;
       }
-    } catch (error) {
-      console.log(
-        `[warn] Comment: Failed to fetch comments for uid=${uid}: ${error}`
-      );
+    }
+  } else {
+    // Waline: fetch per page (no batch API)
+    for (const { uid } of pagesWithUids) {
+      try {
+        const comments = await fetchWalineComments(serverUrl, uid);
+        if (comments.length > 0) {
+          mergeCommentSocialData(socialData, uid, comments);
+          totalComments += comments.length;
+        }
+      } catch (error) {
+        console.log(
+          `[warn] Comment: Failed to fetch comments for uid=${uid}: ${error}`
+        );
+      }
     }
   }
 
@@ -271,9 +280,17 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   let injectedCount = 0;
 
   for (const urlPath of allUrlPaths) {
-    const htmlRelPath = urlPath.endsWith("/")
-      ? `${outputPrefix}/${urlPath}index.html`
-      : `${outputPrefix}/${urlPath}/index.html`;
+    // Determine the HTML file path from the URL path:
+    // - "articles/foo/" → ".moss/site/articles/foo/index.html"
+    // - "articles/foo/index-2" → ".moss/site/articles/foo/index-2.html" (paginated)
+    let htmlRelPath: string;
+    if (urlPath.endsWith("/")) {
+      htmlRelPath = `${outputPrefix}/${urlPath}index.html`;
+    } else if (/\/index-\d+$/.test(urlPath)) {
+      htmlRelPath = `${outputPrefix}/${urlPath}.html`;
+    } else {
+      htmlRelPath = `${outputPrefix}/${urlPath}/index.html`;
+    }
 
     const comments = commentsByPage.get(urlPath) || [];
     // Look up uid for this page, fall back to urlPath if not available

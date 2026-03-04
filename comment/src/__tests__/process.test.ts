@@ -208,7 +208,7 @@ describe("process hook", () => {
     expect(parsed.articles["abc123"].comments[0].id).toBe("w1");
   });
 
-  it("fetches Artalk comments when server is auto-detected as artalk", async () => {
+  it("fetches Artalk comments in batch when server is auto-detected as artalk", async () => {
     const ctx = makeContext(
       { server_url: "https://artalk.example.com" },
       { site_name: "My Blog" }
@@ -233,7 +233,7 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    // Mock httpGet: detection probe returns 200 (Artalk), comment fetch returns data
+    // Mock httpGet: detection probe returns 200 (Artalk), batch fetch returns data
     mockHttpGet.mockImplementation((url: string) => {
       if (url.endsWith("/api/v2/conf")) {
         return Promise.resolve({
@@ -242,7 +242,7 @@ describe("process hook", () => {
           text: () => JSON.stringify({ app_name: "Artalk" }),
         });
       }
-      // Artalk comments endpoint
+      // Batch Artalk comments endpoint (flat_mode=true)
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -258,10 +258,12 @@ describe("process hook", () => {
                   email: "",
                   link: "",
                   rid: 0,
+                  page_key: "abc123",
                   is_collapsed: false,
                   is_pending: false,
                 },
               ],
+              count: 1,
             },
           }),
       });
@@ -276,9 +278,12 @@ describe("process hook", () => {
       "https://artalk.example.com/api/v2/conf"
     );
 
-    // Should have used Artalk API format
+    // Should have used batch Artalk API format (flat_mode=true, no page_key filter)
     expect(mockHttpGet).toHaveBeenCalledWith(
-      "https://artalk.example.com/api/v2/comments?page_key=abc123&site_name=My%20Blog&limit=100"
+      expect.stringContaining("flat_mode=true")
+    );
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      expect.stringContaining("site_name=My%20Blog")
     );
 
     // Should have written social data
@@ -380,7 +385,7 @@ describe("process hook", () => {
     expect(ids).toContain("w-new");
   });
 
-  it("uses config.site_name over project_info.site_name for Artalk", async () => {
+  it("uses config.site_name over project_info.site_name for Artalk batch", async () => {
     const ctx = makeContext(
       { server_url: "https://artalk.example.com", site_name: "config-site" },
       { site_name: "project-site" }
@@ -416,7 +421,7 @@ describe("process hook", () => {
       return Promise.resolve({
         ok: true,
         status: 200,
-        text: () => JSON.stringify({ data: { comments: [] } }),
+        text: () => JSON.stringify({ data: { comments: [], count: 0 } }),
       });
     });
 
@@ -424,7 +429,7 @@ describe("process hook", () => {
 
     // Should use config.site_name ("config-site"), NOT project_info.site_name ("project-site")
     expect(mockHttpGet).toHaveBeenCalledWith(
-      "https://artalk.example.com/api/v2/comments?page_key=abc123&site_name=config-site&limit=100"
+      expect.stringContaining("site_name=config-site")
     );
   });
 
@@ -464,7 +469,7 @@ describe("process hook", () => {
       return Promise.resolve({
         ok: true,
         status: 200,
-        text: () => JSON.stringify({ data: { comments: [] } }),
+        text: () => JSON.stringify({ data: { comments: [], count: 0 } }),
       });
     });
 
@@ -472,7 +477,7 @@ describe("process hook", () => {
 
     // Should fall back to project_info.site_name
     expect(mockHttpGet).toHaveBeenCalledWith(
-      "https://artalk.example.com/api/v2/comments?page_key=abc123&site_name=project-site&limit=100"
+      expect.stringContaining("site_name=project-site")
     );
   });
 

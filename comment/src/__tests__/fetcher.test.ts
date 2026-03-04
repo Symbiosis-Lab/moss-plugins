@@ -15,7 +15,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   httpGet: mockHttpGet,
 }));
 
-import { fetchWalineComments, fetchArtalkComments, detectProvider, clearDetectionCache } from "../fetcher";
+import { fetchWalineComments, fetchArtalkComments, fetchAllArtalkComments, detectProvider, clearDetectionCache } from "../fetcher";
 
 describe("fetchWalineComments", () => {
   beforeEach(() => {
@@ -382,6 +382,219 @@ describe("fetchArtalkComments", () => {
     expect(mockHttpGet).toHaveBeenCalledWith(
       "https://artalk.example.com/api/v2/comments?page_key=posts/hello/&site_name=My%20Site%20Name&limit=100"
     );
+  });
+});
+
+describe("fetchAllArtalkComments", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+  });
+
+  it("fetches all comments in one paginated batch and groups by page_key", async () => {
+    // Single page of results (count < limit means no more pages)
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        JSON.stringify({
+          data: {
+            comments: [
+              {
+                id: 1,
+                content: "<p>Hello</p>",
+                date: "2025-06-15T10:00:00Z",
+                nick: "Alice",
+                rid: 0,
+                page_key: "/posts/hello/",
+              },
+              {
+                id: 2,
+                content: "<p>World</p>",
+                date: "2025-06-15T11:00:00Z",
+                nick: "Bob",
+                rid: 0,
+                page_key: "/posts/world/",
+              },
+              {
+                id: 3,
+                content: "<p>Reply</p>",
+                date: "2025-06-15T12:00:00Z",
+                nick: "Charlie",
+                rid: 1,
+                page_key: "/posts/hello/",
+              },
+            ],
+            count: 3,
+          },
+        }),
+    });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    // Should have made one request with flat_mode=true
+    expect(mockHttpGet).toHaveBeenCalledTimes(1);
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      expect.stringContaining("flat_mode=true")
+    );
+    expect(mockHttpGet).toHaveBeenCalledWith(
+      expect.stringContaining("offset=0")
+    );
+
+    // Grouped by page_key
+    expect(result.size).toBe(2);
+    expect(result.get("/posts/hello/")).toHaveLength(2);
+    expect(result.get("/posts/world/")).toHaveLength(1);
+
+    // Normalized correctly
+    const helloComments = result.get("/posts/hello/")!;
+    expect(helloComments[0]).toEqual({
+      id: "1",
+      content: "<p>Hello</p>",
+      createdAt: "2025-06-15T10:00:00Z",
+      author: { displayName: "Alice", name: "Alice" },
+      replyToId: undefined,
+    });
+    expect(helloComments[1].replyToId).toBe("1");
+  });
+
+  it("paginates when count equals limit", async () => {
+    // First page: 100 comments (count === limit → fetch next page)
+    const page1Comments = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      content: `<p>Comment ${i + 1}</p>`,
+      date: "2025-06-15T10:00:00Z",
+      nick: "User",
+      rid: 0,
+      page_key: "/posts/hello/",
+    }));
+
+    // Second page: 5 comments (count < limit → done)
+    const page2Comments = Array.from({ length: 5 }, (_, i) => ({
+      id: 101 + i,
+      content: `<p>Comment ${101 + i}</p>`,
+      date: "2025-06-15T11:00:00Z",
+      nick: "User",
+      rid: 0,
+      page_key: "/posts/hello/",
+    }));
+
+    mockHttpGet
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            data: { comments: page1Comments, count: 100 },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            data: { comments: page2Comments, count: 5 },
+          }),
+      });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(mockHttpGet).toHaveBeenCalledTimes(2);
+    // Second call should have offset=100
+    expect(mockHttpGet).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("offset=100")
+    );
+    expect(result.get("/posts/hello/")).toHaveLength(105);
+  });
+
+  it("returns empty map on HTTP error", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => "Internal Server Error",
+    });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(result.size).toBe(0);
+  });
+
+  it("returns empty map on network error", async () => {
+    mockHttpGet.mockRejectedValue(new Error("Connection refused"));
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(result.size).toBe(0);
+  });
+
+  it("handles empty response body gracefully", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => "",
+    });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(result.size).toBe(0);
+  });
+});
+
+describe("fetchArtalkComments — empty response guard", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+  });
+
+  it("returns empty array when response body is empty string", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => "",
+    });
+
+    const comments = await fetchArtalkComments(
+      "https://artalk.example.com",
+      "posts/hello/",
+      "My Site"
+    );
+
+    expect(comments).toEqual([]);
+  });
+});
+
+describe("fetchWalineComments — empty response guard", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+  });
+
+  it("returns empty array when response body is empty string", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => "",
+    });
+
+    const comments = await fetchWalineComments(
+      "https://waline.example.com",
+      "posts/hello/"
+    );
+
+    expect(comments).toEqual([]);
   });
 });
 

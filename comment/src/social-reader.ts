@@ -143,9 +143,10 @@ function normalizeComments(
             c.author.name ||
             c.author.userName ||
             "Anonymous",
-          url: (source === "matters" && c.author.userName)
-            ? `https://matters.town/@${c.author.userName}`
-            : undefined,
+          url: c.author.url
+            || (source === "matters" && c.author.userName
+              ? `https://matters.town/@${c.author.userName}`
+              : undefined),
         },
         content_html: c.content,
         date: c.createdAt,

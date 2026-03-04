@@ -42,17 +42,14 @@
   color: var(--moss-text-primary, #2c2825);
 }
 
-/* Chevron indicator (Lucide SVG) */
+/* Chevron indicator — points right when collapsed, down when expanded */
 .comments-toggle .comments-chevron {
-  margin-left: auto;
   flex-shrink: 0;
-  color: var(--moss-text-secondary, #5d5853);
   transition: transform 0.2s ease;
-  transform: rotate(-90deg);
 }
 
 details[open] > .comments-toggle .comments-chevron {
-  transform: rotate(0deg);
+  transform: rotate(90deg);
 }
 
 /* Space between summary and content when open */
@@ -164,6 +161,7 @@ a.comment-author:hover {
   border-radius: 8px;
   padding: 1.25rem;
   margin-top: var(--moss-space-lg, 2rem);
+  margin-bottom: var(--moss-space-lg, 2rem);
 }
 
 /* Tighter form spacing when there are no existing comments */

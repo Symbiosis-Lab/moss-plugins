@@ -18,8 +18,8 @@ import sanitizeHtmlLib from 'sanitize-html';
 /** Lucide message-circle icon (24x24, stroke) — used in <summary> toggle */
 const ICON_MESSAGE_CIRCLE = `<svg class="comments-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>`;
 
-/** Lucide chevron-down icon (20x20, stroke) — used for expand/collapse indicator */
-const ICON_CHEVRON_DOWN = `<svg class="comments-chevron" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
+/** Lucide chevron-right icon (16x16, stroke) — rotates to point down when expanded */
+const ICON_CHEVRON = `<svg class="comments-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
 
 // ============================================================================
 // HTML Sanitization
@@ -244,7 +244,7 @@ export function renderCommentSection(
 
   return `<section class="moss-comments" id="moss-comments">
   <details>
-    <summary class="comments-toggle">${ICON_MESSAGE_CIRCLE}<span>${summaryText}</span>${ICON_CHEVRON_DOWN}</summary>
+    <summary class="comments-toggle">${ICON_MESSAGE_CIRCLE}<span>${summaryText}</span>${ICON_CHEVRON}</summary>
     ${formHtml}
     ${commentListHtml}
     ${scriptHtml}

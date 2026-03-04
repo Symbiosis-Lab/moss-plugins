@@ -72,7 +72,7 @@ describe("collapsible details/summary wrapper", () => {
     expect(html).toContain("M2.992 16.342");
   });
 
-  it("includes chevron-down SVG icon in summary", () => {
+  it("includes chevron SVG icon in summary", () => {
     const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
     expect(html).toContain("comments-chevron");
   });

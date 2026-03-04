@@ -24,7 +24,7 @@ export interface GenericSocialComment {
   id: string;
   content: string;
   createdAt: string;
-  author: { displayName?: string; userName?: string; name?: string; avatar?: string };
+  author: { displayName?: string; userName?: string; name?: string; avatar?: string; url?: string };
   state?: string;
   replyToId?: string;
   upvotes?: number;

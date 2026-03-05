@@ -203,8 +203,7 @@ a.comment-author:hover {
 
 .comment-form {
   padding: var(--moss-space-md, 1.5rem) 0;
-  border-bottom: 1px solid var(--moss-border-light, #e6e2db);
-  margin: 0;
+  margin: 0 0 var(--moss-space-sm, 1rem) 0;
 }
 
 /* Textarea — underline style */

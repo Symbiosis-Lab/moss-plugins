@@ -40,10 +40,16 @@ describe("Comment form flattening", () => {
     expect(formRule).not.toMatch(/border-radius\s*:/);
   });
 
-  it("uses border-bottom as a flat separator on .comment-form", () => {
+  it("does NOT use border-bottom on .comment-form (field underlines provide separation)", () => {
     const formRule = extractTopLevelRule(css, ".comment-form");
     expect(formRule).toBeDefined();
-    expect(formRule).toMatch(/border-bottom\s*:/);
+    expect(formRule).not.toMatch(/border-bottom\s*:/);
+  });
+
+  it("uses margin-bottom for breathing room before the first comment", () => {
+    const formRule = extractTopLevelRule(css, ".comment-form");
+    expect(formRule).toBeDefined();
+    expect(formRule).toMatch(/margin.*0\s+0\s+var\(--moss-space-/);
   });
 
   it("removes the special-case margin rule for no-comment-list state", () => {

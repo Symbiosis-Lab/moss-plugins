@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findInsertionPoint, injectCommentSection, injectCssStyle, rootRelativePrefix } from "../inject";
+import { findInsertionPoint, injectCommentSection, injectCssStyle } from "../inject";
 
 // ============================================================================
 // Existing tests for findInsertionPoint and injectCommentSection
@@ -70,40 +70,19 @@ describe("injectCssStyle", () => {
     const html = "<body>no head</body>";
     expect(injectCssStyle(html, ".test { color: red; }")).toBe(html);
   });
-});
 
-// The injectInlineStyle tests above (in "injectCssStyle") cover all
-// the inline style functionality. The old injectInlineStyle block has
-// been consolidated into the injectCssStyle describe block.
-
-// ============================================================================
-// rootRelativePrefix
-// ============================================================================
-
-describe("rootRelativePrefix", () => {
-  it("returns empty string for root path", () => {
-    expect(rootRelativePrefix("")).toBe("");
-    expect(rootRelativePrefix("/")).toBe("");
+  it("handles uppercase </HEAD> tag", () => {
+    const html = "<html><head><title>Test</title></HEAD><body></body></html>";
+    const css = ".test { color: red; }";
+    const result = injectCssStyle(html, css);
+    expect(result).toContain(`<style>${css}</style>`);
   });
 
-  it("returns ../ for depth-1 paths", () => {
-    expect(rootRelativePrefix("posts/")).toBe("../");
-  });
-
-  it("returns ../../ for depth-2 paths", () => {
-    expect(rootRelativePrefix("posts/hello/")).toBe("../../");
-  });
-
-  it("returns ../../../ for depth-3 paths", () => {
-    expect(rootRelativePrefix("articles/2024/post/")).toBe("../../../");
-  });
-
-  it("handles paths without trailing slash", () => {
-    expect(rootRelativePrefix("posts/hello")).toBe("../../");
-  });
-
-  it("handles leading slash", () => {
-    expect(rootRelativePrefix("/posts/hello/")).toBe("../../");
+  it("handles multiline CSS content", () => {
+    const html = "<html><head></head><body></body></html>";
+    const css = `.moss-comments {\n  margin-top: 3rem;\n}\n.comment-item {\n  padding: 1.5rem 0;\n}`;
+    const result = injectCssStyle(html, css);
+    expect(result).toContain(`<style>${css}</style>`);
   });
 });
 

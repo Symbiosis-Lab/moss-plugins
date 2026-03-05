@@ -17,20 +17,6 @@ function lastIndexOfTag(html: string, tag: string): number {
 }
 
 /**
- * Compute a relative path prefix from a URL path back to the site root.
- *
- * E.g., "posts/hello/" has depth 2, so prefix is "../../".
- * Root-level pages (depth 0) return "".
- */
-export function rootRelativePrefix(urlPath: string): string {
-  // Count path segments (each "/" except trailing adds depth)
-  const trimmed = urlPath.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!trimmed) return "";
-  const depth = trimmed.split("/").length;
-  return "../".repeat(depth);
-}
-
-/**
  * Find the best insertion point for the comment section.
  *
  * Priority:
@@ -82,5 +68,5 @@ export function injectCssStyle(html: string, css: string): string {
   if (!css) return html;
 
   const style = `<style>${css}</style>`;
-  return html.replace("</head>", style + "\n</head>");
+  return html.replace(/<\/head>/i, style + "\n</head>");
 }

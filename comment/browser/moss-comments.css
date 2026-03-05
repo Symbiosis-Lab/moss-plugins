@@ -24,7 +24,7 @@
   cursor: pointer;
   list-style: none;
   font-size: var(--moss-font-sm, 1rem);
-  color: var(--moss-text-muted, #8a8580);
+  color: var(--moss-color-muted, #8a8580);
   user-select: none;
   padding: 0;
 }
@@ -39,7 +39,7 @@
 }
 
 .comments-toggle:hover {
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
 }
 
 /* Chevron indicator — points right when collapsed, down when expanded */
@@ -91,24 +91,24 @@ details[open] > .comments-toggle {
 .comment-author {
   font-weight: 480;
   font-size: var(--moss-font-sm, 1rem);
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
   text-decoration: none;
 }
 
 a.comment-author:hover {
-  color: var(--moss-accent, #2d5a2d);
+  color: var(--moss-color-accent, #2d5a2d);
 }
 
 .comment-date {
   font-size: 0.875rem;
-  color: var(--moss-text-muted, #8a8580);
+  color: var(--moss-color-muted, #8a8580);
 }
 
 /* Comment Body */
 .comment-body {
-  font-size: var(--moss-font-base, 1.125rem);
+  font-size: var(--moss-font-size, 1.125rem);
   line-height: 1.7;
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
 }
 
 .comment-body p {
@@ -122,19 +122,19 @@ a.comment-author:hover {
 .comment-body blockquote {
   font-size: inherit;
   font-style: normal;
-  border-left: 3px solid var(--moss-text-muted, #8a8580);
+  border-left: 3px solid var(--moss-color-muted, #8a8580);
   margin: var(--moss-space-xs, 0.5rem) 0 var(--moss-space-xs, 0.5rem) 1rem;
   padding-left: var(--moss-space-sm, 1rem);
   color: var(--moss-text-secondary, #5d5853);
 }
 
 .comment-body a {
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
   text-decoration: underline;
 }
 
 .comment-body a:hover {
-  color: var(--moss-accent, #2d5a2d);
+  color: var(--moss-color-accent, #2d5a2d);
 }
 
 /* ==========================================================================
@@ -157,7 +157,7 @@ a.comment-author:hover {
    ========================================================================== */
 
 .comment-form {
-  background: var(--moss-background-alt, #f4f1ec);
+  background: var(--moss-color-surface, #f4f1ec);
   border-radius: 8px;
   padding: 1.25rem;
   margin-top: var(--moss-space-lg, 2rem);
@@ -178,9 +178,9 @@ details:not(:has(.comment-list)) .comment-form {
   border: none;
   border-bottom: 1px solid var(--moss-border-medium, #d1cdc4);
   font-family: inherit;
-  font-size: var(--moss-font-base, 1.125rem);
+  font-size: var(--moss-font-size, 1.125rem);
   line-height: 1.7;
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
   background: transparent;
   resize: none;
   overflow: hidden;
@@ -190,11 +190,11 @@ details:not(:has(.comment-list)) .comment-form {
 
 .comment-form textarea:focus {
   outline: none;
-  border-bottom: 2px solid var(--moss-accent, #2d5a2d);
+  border-bottom: 2px solid var(--moss-color-accent, #2d5a2d);
 }
 
 .comment-form textarea::placeholder {
-  color: var(--moss-text-muted, #8a8580);
+  color: var(--moss-color-muted, #8a8580);
 }
 
 /* ==========================================================================
@@ -217,7 +217,7 @@ details:not(:has(.comment-list)) .comment-form {
   padding: 0.5rem 0;
   font-family: inherit;
   font-size: var(--moss-font-sm, 1rem);
-  color: var(--moss-text-primary, #2c2825);
+  color: var(--moss-color-text, #2c2825);
   box-sizing: border-box;
   transition: border-color 0.15s ease;
   min-width: 0;
@@ -225,11 +225,11 @@ details:not(:has(.comment-list)) .comment-form {
 
 .comment-field:focus {
   outline: none;
-  border-bottom: 2px solid var(--moss-accent, #2d5a2d);
+  border-bottom: 2px solid var(--moss-color-accent, #2d5a2d);
 }
 
 .comment-field::placeholder {
-  color: var(--moss-text-muted, #8a8580);
+  color: var(--moss-color-muted, #8a8580);
 }
 
 /* ==========================================================================
@@ -241,11 +241,11 @@ details:not(:has(.comment-list)) .comment-form {
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1.25rem;
-  background: color-mix(in srgb, var(--moss-accent, #2d5a2d) 8%, transparent);
+  background: color-mix(in srgb, var(--moss-color-accent, #2d5a2d) 8%, transparent);
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--moss-accent, #2d5a2d);
+  color: var(--moss-color-accent, #2d5a2d);
   font-family: inherit;
   font-size: var(--moss-font-sm, 1rem);
   font-weight: 480;
@@ -253,11 +253,11 @@ details:not(:has(.comment-list)) .comment-form {
 }
 
 .comment-form-submit:hover {
-  background: color-mix(in srgb, var(--moss-accent, #2d5a2d) 15%, transparent);
+  background: color-mix(in srgb, var(--moss-color-accent, #2d5a2d) 15%, transparent);
 }
 
 .comment-form-submit:focus {
-  outline: 2px solid var(--moss-accent, #2d5a2d);
+  outline: 2px solid var(--moss-color-accent, #2d5a2d);
   outline-offset: 2px;
 }
 
@@ -300,7 +300,7 @@ details:not(:has(.comment-list)) .comment-form {
 }
 
 .comment-form-status--success {
-  color: var(--moss-accent, #2d5a2d);
+  color: var(--moss-color-accent, #2d5a2d);
 }
 
 /* ==========================================================================

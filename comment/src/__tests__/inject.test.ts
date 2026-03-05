@@ -145,3 +145,45 @@ describe("injectInlineStyle", () => {
     expect(result).toContain('class="moss-comments-style"');
   });
 });
+
+// ============================================================================
+// CSS Design System Compliance
+// ============================================================================
+
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
+describe("moss-comments.css design system compliance", () => {
+  const cssPath = resolve(__dirname, "../../browser/moss-comments.css");
+  const css = readFileSync(cssPath, "utf-8");
+
+  const deprecatedVars = [
+    "--moss-background-alt",
+    "--moss-text-primary",
+    "--moss-text-muted",
+    "--moss-accent",
+    "--moss-font-base",
+  ];
+
+  for (const v of deprecatedVars) {
+    it(`does not use deprecated variable ${v}`, () => {
+      // Match the variable name but not as a substring of a longer name
+      const pattern = new RegExp(`var\\(\\s*${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s,)]`);
+      expect(css).not.toMatch(pattern);
+    });
+  }
+
+  const requiredVars = [
+    "--moss-color-surface",
+    "--moss-color-text",
+    "--moss-color-muted",
+    "--moss-color-accent",
+    "--moss-font-size",
+  ];
+
+  for (const v of requiredVars) {
+    it(`uses design system variable ${v}`, () => {
+      expect(css).toContain(v);
+    });
+  }
+});

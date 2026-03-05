@@ -31,6 +31,8 @@ import type {
   ProcessContext,
   EnhanceContext,
   HookResult,
+  EnhanceResult,
+  ModifiedFile,
   NormalizedComment,
   ArticleMap,
 } from "./types";
@@ -193,9 +195,108 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
 // ============================================================================
 
 /**
- * Enhance hook - inject comment sections into generated HTML pages.
+ * Convert a site-relative file path to a URL path.
+ *
+ * "articles/foo/index.html"   → "articles/foo/"
+ * "articles/foo/index-2.html" → "articles/foo/index-2"
+ * "index.html"                → ""
  */
-export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
+export function filePathToUrlPath(filePath: string): string {
+  // Remove .html extension
+  let p = filePath.replace(/\.html$/, "");
+  // If ends with /index or is exactly "index", it's a directory index → trailing slash
+  if (p.endsWith("/index") || p === "index") {
+    p = p.replace(/\/?index$/, "");
+    return p ? p + "/" : "";
+  }
+  // Otherwise it's a non-index page (like index-2)
+  return p;
+}
+
+/**
+ * Transform a single HTML string: inject comments if applicable.
+ * Pure function — no I/O.
+ *
+ * Returns the modified HTML string, or null if no changes were made.
+ */
+function transformHtml(
+  html: string,
+  urlPath: string,
+  comments: NormalizedComment[],
+  serverUrl: string,
+  buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang) => string) | null,
+  providerName: string,
+  siteName: string,
+  uid: string,
+  defaultComments: boolean,
+  hasCss: boolean
+): string | null {
+  // Check explicit opt-in/opt-out attributes
+  const hasExplicitTrue = html.includes('data-comments="true"');
+  const hasExplicitFalse = html.includes('data-comments="false"');
+
+  // Explicit opt-out always wins
+  if (hasExplicitFalse) return null;
+
+  // If default is off and no explicit opt-in, skip
+  if (!defaultComments && !hasExplicitTrue) return null;
+
+  // Skip if already injected (idempotent on re-compile)
+  if (html.includes('class="moss-comments"')) {
+    return null;
+  }
+
+  // Check if this page has an article structure
+  if (findInsertionPoint(html) === -1) {
+    return null;
+  }
+
+  // Detect language from the HTML file for i18n
+  const lang = parseLang(html);
+
+  // Build the submit script if we have a server
+  // Pass uid so the client-side form uses it as the page key
+  // Pass lang so the client-side JS uses i18n strings
+  const submitScript = (buildScript && serverUrl)
+    ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang)
+    : "";
+
+  // Render the comment section
+  const commentHtml = renderCommentSection(
+    comments,
+    urlPath,
+    serverUrl,
+    submitScript,
+    providerName,
+    lang
+  );
+
+  // renderCommentSection returns "" if nothing to render
+  if (!commentHtml) return null;
+
+  // Inject before </article>
+  const injected = injectCommentSection(html, commentHtml);
+  if (!injected) return null;
+
+  // Inject depth-relative CSS link in <head>
+  let result: string;
+  if (hasCss) {
+    const cssHref = rootRelativePrefix(urlPath) + COMMENTS_CSS_FILENAME;
+    result = injectCssLink(injected, cssHref);
+  } else {
+    result = injected;
+  }
+
+  return result;
+}
+
+/**
+ * Enhance hook - inject comment sections into generated HTML pages.
+ *
+ * Pure transformer: operates on ctx.files, returns modified HTML.
+ * No file I/O for site HTML — the pipeline handles reading/writing.
+ */
+export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   console.log("[info] Comment: Starting enhance hook...");
 
   const config = ctx.config || {};
@@ -215,6 +316,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   }
 
   // 1. Read CSS and write to output directory as external file
+  //    (CSS is a non-HTML asset; still written via writeFile)
   const outputPrefix = getOutputPrefix(ctx);
   let hasCss = false;
   try {
@@ -258,156 +360,49 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   }
   console.log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
 
-  // 6. Collect pages that need injection:
-  //    - Pages with comments always get a section
-  //    - Pages without comments only get a section if there's a form (serverUrl set)
-  const allUrlPaths: string[] = [];
+  // 6. Build set of urlPaths that should receive comment sections
+  //    (when serverUrl is set, all known article pages get sections)
+  const pagesWithForms = new Set<string>();
   if (serverUrl) {
-    // All articles get comment sections (with form)
-    // Use uidToUrl (preferred) first, then sourceToUrl as fallback for legacy data
-    for (const v of uidToUrl.values()) {
-      if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
-    }
-    for (const v of sourceToUrl.values()) {
-      if (!allUrlPaths.includes(v)) allUrlPaths.push(v);
-    }
-  }
-  // Always include pages that have comments
-  for (const urlPath of commentsByPage.keys()) {
-    if (!allUrlPaths.includes(urlPath)) allUrlPaths.push(urlPath);
+    for (const v of uidToUrl.values()) pagesWithForms.add(v);
+    for (const v of sourceToUrl.values()) pagesWithForms.add(v);
   }
 
-  console.log(`[info] Comment: Processing ${allUrlPaths.length} pages (serverUrl: ${serverUrl ? 'yes' : 'no'})`);
+  // 7. Iterate ctx.files and transform
+  const modified: ModifiedFile[] = [];
 
-  let injectedCount = 0;
-
-  for (const urlPath of allUrlPaths) {
-    // Determine the HTML file path from the URL path:
-    // - "articles/foo/" → ".moss/site/articles/foo/index.html"
-    // - "articles/foo/index-2" → ".moss/site/articles/foo/index-2.html" (paginated)
-    let htmlRelPath: string;
-    if (urlPath.endsWith("/")) {
-      htmlRelPath = `${outputPrefix}/${urlPath}index.html`;
-    } else if (/\/index-\d+$/.test(urlPath)) {
-      htmlRelPath = `${outputPrefix}/${urlPath}.html`;
-    } else {
-      htmlRelPath = `${outputPrefix}/${urlPath}/index.html`;
-    }
+  for (const file of ctx.files) {
+    const urlPath = filePathToUrlPath(file.path);
 
     const comments = commentsByPage.get(urlPath) || [];
-    // Look up uid for this page, fall back to urlPath if not available
     const uid = urlToUid.get(urlPath) || "";
 
-    try {
-      const result = await processHtmlFile(
-        htmlRelPath,
-        urlPath,
-        comments,
-        serverUrl,
-        buildScript,
-        providerName,
-        siteName,
-        uid,
-        defaultComments,
-        hasCss
-      );
-      if (result) injectedCount++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[warn] Comment: Error processing ${urlPath}: ${msg}`);
-    }
-  }
+    // Skip if no comments AND this page isn't in the set of pages that need forms
+    if (comments.length === 0 && !pagesWithForms.has(urlPath)) continue;
 
-  console.log(`[info] Comment: Injected comments into ${injectedCount} pages`);
-  return {
-    success: true,
-    message: `Injected comment sections into ${injectedCount} pages`,
-  };
-}
-
-/**
- * Process a single HTML file: read it, inject comments, write it back.
- *
- * @param uid - Content uid for the page, used as page key in client-side forms.
- *              Falls back to urlPath if empty.
- */
-async function processHtmlFile(
-  htmlRelPath: string,
-  urlPath: string,
-  comments: NormalizedComment[],
-  serverUrl: string,
-  buildScript: ((serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang) => string) | null,
-  providerName: string = "waline",
-  siteName: string = "",
-  uid: string = "",
-  defaultComments: boolean = true,
-  hasCss: boolean = false
-): Promise<boolean> {
-  try {
-    let html = await readFile(htmlRelPath);
-
-    // Check explicit opt-in/opt-out attributes
-    const hasExplicitTrue = html.includes('data-comments="true"');
-    const hasExplicitFalse = html.includes('data-comments="false"');
-
-    // Explicit opt-out always wins
-    if (hasExplicitFalse) return false;
-
-    // If default is off and no explicit opt-in, skip
-    if (!defaultComments && !hasExplicitTrue) return false;
-
-    // Skip if already injected (idempotent on re-compile)
-    if (html.includes('class="moss-comments"')) {
-      return false;
-    }
-
-    // Check if this page has an article structure
-    if (findInsertionPoint(html) === -1) {
-      return false;
-    }
-
-    // Detect language from the HTML file for i18n
-    const lang = parseLang(html);
-
-    // Build the submit script if we have a server
-    // Pass uid so the client-side form uses it as the page key
-    // Pass lang so the client-side JS uses i18n strings
-    const submitScript = (buildScript && serverUrl)
-      ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang)
-      : "";
-
-    // Render the comment section
-    const commentHtml = renderCommentSection(
-      comments,
+    const result = transformHtml(
+      file.html,
       urlPath,
+      comments,
       serverUrl,
-      submitScript,
+      buildScript,
       providerName,
-      lang
+      siteName,
+      uid,
+      defaultComments,
+      hasCss
     );
 
-    // renderCommentSection returns "" if nothing to render
-    if (!commentHtml) return false;
-
-    // Inject before </article>
-    const injected = injectCommentSection(html, commentHtml);
-    if (!injected) return false;
-
-    // Inject depth-relative CSS link in <head>
-    if (hasCss) {
-      const cssHref = rootRelativePrefix(urlPath) + COMMENTS_CSS_FILENAME;
-      html = injectCssLink(injected, cssHref);
-    } else {
-      html = injected;
+    if (result) {
+      modified.push({ path: file.path, html: result });
     }
-
-    await writeFile(htmlRelPath, html);
-    console.log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);
-    return true;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log(`[warn] Comment: Failed to process ${urlPath}: ${msg}`);
-    return false;
   }
+
+  console.log(`[info] Comment: Injected comments into ${modified.length} pages`);
+  return {
+    success: true,
+    message: `Injected comment sections into ${modified.length} pages`,
+    modified,
+  };
 }
 

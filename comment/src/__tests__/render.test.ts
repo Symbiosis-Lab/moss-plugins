@@ -243,6 +243,52 @@ describe("date formatting uses page language", () => {
 });
 
 // ============================================================================
+// data-built-at attribute (build timestamp for client-side hydration)
+// ============================================================================
+
+describe("data-built-at attribute", () => {
+  it("includes data-built-at attribute on the section element", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toMatch(/data-built-at="/);
+  });
+
+  it("contains a valid ISO 8601 timestamp", () => {
+    const before = new Date().toISOString();
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    const after = new Date().toISOString();
+
+    const match = html.match(/data-built-at="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const timestamp = match![1];
+
+    // Must be a valid ISO 8601 date
+    const parsed = new Date(timestamp);
+    expect(parsed.toISOString()).toBe(timestamp);
+
+    // Must be between before and after (generated at render time)
+    expect(timestamp >= before).toBe(true);
+    expect(timestamp <= after).toBe(true);
+  });
+
+  it("is present when there are comments", () => {
+    const comments = [makeComment({ id: "c1" }), makeComment({ id: "c2" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toMatch(/data-built-at="/);
+  });
+
+  it("is present in form-only case (no comments, has server URL)", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toMatch(/data-built-at="/);
+  });
+
+  it("is on the section.moss-comments element", () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    // The attribute should be on the <section> tag itself
+    expect(html).toMatch(/<section class="moss-comments"[^>]*data-built-at="/);
+  });
+});
+
+// ============================================================================
 // Edge cases
 // ============================================================================
 

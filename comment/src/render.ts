@@ -242,7 +242,15 @@ export function renderCommentSection(
 
   const summaryText = renderSummaryText(comments.length, lang);
 
-  return `<section class="moss-comments" id="moss-comments">
+  // data-built-at records when this HTML was generated (ISO 8601).
+  // Client-side JS uses this as the boundary for "stale-while-revalidate"
+  // comment loading: on page open, it fetches comments from the Artalk server
+  // sorted by date descending and stops when it hits a comment older than
+  // this timestamp. Comments newer than data-built-at were posted after the
+  // last static build and need to be injected into the DOM dynamically.
+  const builtAt = new Date().toISOString();
+
+  return `<section class="moss-comments" id="moss-comments" data-built-at="${builtAt}">
   <details>
     <summary class="comments-toggle">${ICON_MESSAGE_CIRCLE}<span>${summaryText}</span>${ICON_CHEVRON}</summary>
     ${formHtml}

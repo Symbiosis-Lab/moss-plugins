@@ -100,4 +100,118 @@ describe("buildArtalkClientScript", () => {
     // The < should be escaped to \u003c
     expect(script).toContain("\\u003c/script>");
   });
+
+  // ==========================================================================
+  // Form submission ID fix
+  // ==========================================================================
+
+  describe("form submission ID fix", () => {
+    it("sets li.id = 'comment-' + data.id in submit handler", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("li.id = 'comment-' + data.id");
+    });
+  });
+
+  // ==========================================================================
+  // Fetch-on-open hydration
+  // ==========================================================================
+
+  describe("fetch-on-open hydration", () => {
+    it("reads data-built-at attribute from moss-comments section", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("data-built-at");
+    });
+
+    it("parses builtAtMs from the data-built-at timestamp", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("builtAtMs");
+    });
+
+    it("fetches with sort_by=date_desc and flat_mode=true", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("sort_by=date_desc");
+      expect(script).toContain("flat_mode=true");
+    });
+
+    it("contains date comparison for filtering (builtAtMs boundary)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The script should compare comment dates against builtAtMs
+      expect(script).toMatch(/new Date\(c\.created_at\)\.getTime\(\)\s*<=\s*builtAtMs/);
+    });
+
+    it("contains ID guard using document.getElementById", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("document.getElementById('comment-' + c.id)");
+    });
+
+    it("uses correct locale for en (en-US)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName, "en");
+      expect(script).toContain("toLocaleDateString('en-US'");
+    });
+
+    it("uses correct locale for zh-hans (zh-CN)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName, "zh-hans");
+      expect(script).toContain("toLocaleDateString('zh-CN'");
+    });
+
+    it("uses correct locale for zh-hant (zh-TW)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName, "zh-hant");
+      expect(script).toContain("toLocaleDateString('zh-TW'");
+    });
+
+    it("contains i18n count update strings for en", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName, "en");
+      expect(script).toContain("1 comment");
+      expect(script).toContain("comments");
+    });
+
+    it("contains i18n count update strings for zh-hans", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName, "zh-hans");
+      expect(script).toContain("1条评论");
+    });
+
+    it("listens for toggle event on details element", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("addEventListener('toggle'");
+    });
+
+    it("removes toggle listener after first fire (fire once)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("removeEventListener('toggle'");
+    });
+
+    it("constructs fetch URL with page_key and site_name params", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("page_key=");
+      expect(script).toContain("site_name=");
+    });
+
+    it("uses uid as page_key when provided", () => {
+      const uid = "abc-123";
+      const script = buildArtalkClientScript(serverUrl, pagePath, uid, siteName);
+      expect(script).toContain("page_key=abc-123");
+    });
+
+    it("creates comment elements with correct structure", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("comment-item");
+      expect(script).toContain("comment-header");
+      expect(script).toContain("comment-author");
+      expect(script).toContain("comment-date");
+      expect(script).toContain("comment-body");
+    });
+
+    it("escapes author name with HTML entities", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The hydration code should escape author names to prevent XSS
+      expect(script).toMatch(/c\.nick[\s\S]*replace[\s\S]*&amp;/);
+    });
+
+    it("catches fetch errors silently", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // Should have a .catch block for the hydration fetch
+      // The hydration fetch should have its own catch
+      expect(script).toMatch(/\.catch\(function/);
+    });
+  });
 });

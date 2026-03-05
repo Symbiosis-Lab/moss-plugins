@@ -1,48 +1,37 @@
 /**
  * Unit tests for enhance hook functionality
+ *
+ * Tests the pure transformer pattern: ctx.files in, modified[] out.
+ * No file I/O mocks for site HTML (readFile/writeFile/listSiteFilesWithSizes).
+ * Plugin-private storage (readPluginFile, writePluginFile, pluginFileExists) is still mocked.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { HookResult } from "@symbiosis-lab/moss-api";
 
-// Mock the moss-api
-const mockReadFile = vi.fn();
-const mockWriteFile = vi.fn();
-const mockListSiteFilesWithSizes = vi.fn();
+// Mock the moss-api — only plugin-private storage and httpGet
 const mockReadPluginFile = vi.fn();
 const mockWritePluginFile = vi.fn();
 const mockPluginFileExists = vi.fn();
 const mockHttpGet = vi.fn();
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
-  readFile: (...args: unknown[]) => mockReadFile(...args),
-  writeFile: (...args: unknown[]) => mockWriteFile(...args),
-  listSiteFilesWithSizes: (...args: unknown[]) =>
-    mockListSiteFilesWithSizes(...args),
   readPluginFile: (...args: unknown[]) => mockReadPluginFile(...args),
   writePluginFile: (...args: unknown[]) => mockWritePluginFile(...args),
   pluginFileExists: (...args: unknown[]) => mockPluginFileExists(...args),
   httpGet: (...args: unknown[]) => mockHttpGet(...args),
 }));
 
+import type { EnhanceContext, EnhanceResult } from "../enhance";
+
 describe("enhance hook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListSiteFilesWithSizes.mockResolvedValue([]);
     mockPluginFileExists.mockResolvedValue(false);
   });
 
-  interface EnhanceContext {
-    project_path: string;
-    moss_dir: string;
-    output_dir: string;
-    project_info: { project_path: string; moss_dir: string; output_dir: string };
-    config: Record<string, unknown>;
-    interactions: unknown[];
-  }
-
   const createEnhanceContext = (
-    config: Record<string, unknown> = { api_key: "test-key" }
+    config: Record<string, unknown> = { api_key: "test-key" },
+    files: Array<{ path: string; html: string }> = []
   ): EnhanceContext => ({
     project_path: "/test/project",
     moss_dir: "/test/.moss",
@@ -54,6 +43,7 @@ describe("enhance hook", () => {
     },
     config,
     interactions: [],
+    files,
   });
 
   describe("enhance injects subscribe form into footer HTML", () => {
@@ -68,31 +58,28 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      const result: HookResult = await enhance(ctx);
+      const result: EnhanceResult = await enhance(ctx);
 
       expect(result.success).toBe(true);
-      expect(mockReadFile).toHaveBeenCalledWith(".moss/site/test.html");
-      expect(mockWriteFile).toHaveBeenCalled();
-      expect(mockWriteFile.mock.calls[0][0]).toBe(".moss/site/test.html");
+      expect(result.modified).toBeDefined();
+      expect(result.modified!.length).toBe(1);
+      expect(result.modified![0].path).toBe("test.html");
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('<form action="https://buttondown.com/api/emails/embed-subscribe/testuser"');
-      expect(writtenHtml).toContain('method="post"');
-      expect(writtenHtml).toContain('type="email"');
-      expect(writtenHtml).toContain('name="email"');
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('<form action="https://buttondown.com/api/emails/embed-subscribe/testuser"');
+      expect(modifiedHtml).toContain('method="post"');
+      expect(modifiedHtml).toContain('type="email"');
+      expect(modifiedHtml).toContain('name="email"');
     });
   });
 
@@ -108,23 +95,20 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('<a href="/feed.xml" class="footer-link" data-external>RSS</a>');
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('<a href="/feed.xml" class="footer-link" data-external>RSS</a>');
     });
   });
 
@@ -139,23 +123,20 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      // writeFile should not be called for files without footer
-      expect(mockWriteFile).not.toHaveBeenCalled();
+      // No files modified — no footer-content div
+      expect(result.modified).toEqual([]);
     });
   });
 
@@ -171,27 +152,24 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "cached-user" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
       // Should not call httpGet when cache exists
       expect(mockHttpGet).not.toHaveBeenCalled();
 
       // Should use cached username
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain("embed-subscribe/cached-user");
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain("embed-subscribe/cached-user");
     });
 
     it("should call API when cache does not exist", async () => {
@@ -205,11 +183,6 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(false);
       mockHttpGet.mockResolvedValue({
         ok: true,
@@ -219,7 +192,9 @@ describe("enhance hook", () => {
         text: () => JSON.stringify({ username: "api-user" }),
       });
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
       await enhance(ctx);
@@ -256,41 +231,31 @@ describe("enhance hook", () => {
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
-      mockWriteFile.mockResolvedValue(undefined);
 
       // First run: inject into original HTML
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
+      const ctx1 = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: originalHtml },
       ]);
-      mockReadFile.mockResolvedValue(originalHtml);
 
-      const ctx = createEnhanceContext();
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result1 = await enhance(ctx1);
 
-      const firstRunOutput = mockWriteFile.mock.calls[0][1] as string;
+      expect(result1.modified!.length).toBe(1);
+      const firstRunOutput = result1.modified![0].html;
 
       // Second run: inject into already-enhanced HTML
-      vi.clearAllMocks();
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue(
-        JSON.stringify({ username: "testuser" })
-      );
-      mockWriteFile.mockResolvedValue(undefined);
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
+      const ctx2 = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: firstRunOutput },
       ]);
-      mockReadFile.mockResolvedValue(firstRunOutput);
 
-      await enhance(ctx);
+      const result2 = await enhance(ctx2);
 
-      // If idempotent, writeFile should NOT be called (modified === html)
-      // OR if called, the output should be identical
-      if (mockWriteFile.mock.calls.length > 0) {
-        const secondRunOutput = mockWriteFile.mock.calls[0][1] as string;
-        expect(secondRunOutput).toBe(firstRunOutput);
+      // If idempotent, modified should be empty (no changes needed)
+      // OR if modified, the output should be identical
+      if (result2.modified!.length > 0) {
+        expect(result2.modified![0].html).toBe(firstRunOutput);
       }
-      // If writeFile wasn't called, that means modified === html, which is perfect
+      // If modified is empty, that means result === input, which is perfect
     });
   });
 
@@ -306,24 +271,21 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      const modifiedHtml = result.modified![0].html;
       // No label element — use placeholder instead
-      expect(writtenHtml).not.toContain('<label');
+      expect(modifiedHtml).not.toContain('<label');
     });
 
     it("should use placeholder text for email input", async () => {
@@ -337,23 +299,20 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('placeholder="email"');
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('placeholder="email"');
     });
 
     it("should use Chinese placeholder for zh-lang pages", async () => {
@@ -367,23 +326,20 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('placeholder="邮箱"');
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('placeholder="邮箱"');
     });
 
     it("should use Subscribe/订阅 as button text", async () => {
@@ -397,23 +353,20 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('>订阅</button>');
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('>订阅</button>');
     });
   });
 
@@ -430,27 +383,24 @@ describe("enhance hook", () => {
 </body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(html);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockResolvedValue(
         JSON.stringify({ username: "testuser" })
       );
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
+      const modifiedHtml = result.modified![0].html;
       // Footer-description should be removed (button already says Subscribe)
-      expect(writtenHtml).not.toContain("footer-description");
+      expect(modifiedHtml).not.toContain("footer-description");
       // Form and RSS link should still be present
-      expect(writtenHtml).toContain("footer-subscribe-form");
-      expect(writtenHtml).toContain("footer-link");
+      expect(modifiedHtml).toContain("footer-subscribe-form");
+      expect(modifiedHtml).toContain("footer-link");
     });
   });
 
@@ -469,11 +419,6 @@ describe("enhance hook", () => {
 </html>`;
 
     it("should inject <style class='moss-email-style'> into head", async () => {
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(htmlWithHead);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockImplementation((filename: string) => {
         if (filename === "newsletter-info.json")
@@ -483,13 +428,15 @@ describe("enhance hook", () => {
         return Promise.reject(new Error("unknown file"));
       });
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: htmlWithHead },
+      ]);
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain('<style class="moss-email-style">');
-      expect(writtenHtml).toContain(sampleCss);
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain('<style class="moss-email-style">');
+      expect(modifiedHtml).toContain(sampleCss);
     });
 
     it("should not inject CSS when no footer-content div", async () => {
@@ -498,11 +445,6 @@ describe("enhance hook", () => {
 <body><div class="main-content"><h1>Test</h1></div></body>
 </html>`;
 
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(noFooterHtml);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockImplementation((filename: string) => {
         if (filename === "newsletter-info.json")
@@ -512,12 +454,14 @@ describe("enhance hook", () => {
         return Promise.reject(new Error("unknown file"));
       });
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: noFooterHtml },
+      ]);
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      // No footer = no write = no CSS injection
-      expect(mockWriteFile).not.toHaveBeenCalled();
+      // No footer = no modification = empty modified array
+      expect(result.modified).toEqual([]);
     });
 
     it("CSS injection should be idempotent", async () => {
@@ -529,52 +473,33 @@ describe("enhance hook", () => {
           return Promise.resolve(sampleCss);
         return Promise.reject(new Error("unknown file"));
       });
-      mockWriteFile.mockResolvedValue(undefined);
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
+
+      const ctx1 = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: htmlWithHead },
       ]);
-      mockReadFile.mockResolvedValue(htmlWithHead);
-
-      const ctx = createEnhanceContext();
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result1 = await enhance(ctx1);
 
-      const firstRunOutput = mockWriteFile.mock.calls[0][1] as string;
+      const firstRunOutput = result1.modified![0].html;
       // Confirm CSS was injected
       expect(firstRunOutput).toContain("moss-email-style");
 
-      // Second run
-      vi.clearAllMocks();
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockImplementation((filename: string) => {
-        if (filename === "newsletter-info.json")
-          return Promise.resolve(JSON.stringify({ username: "testuser" }));
-        if (filename === "email-subscribe.css")
-          return Promise.resolve(sampleCss);
-        return Promise.reject(new Error("unknown file"));
-      });
-      mockWriteFile.mockResolvedValue(undefined);
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
+      // Second run with already-enhanced HTML
+      const ctx2 = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: firstRunOutput },
       ]);
-      mockReadFile.mockResolvedValue(firstRunOutput);
 
-      await enhance(ctx);
+      const result2 = await enhance(ctx2);
 
       // Should not double-inject
-      if (mockWriteFile.mock.calls.length > 0) {
-        const secondRunOutput = mockWriteFile.mock.calls[0][1] as string;
+      if (result2.modified!.length > 0) {
+        const secondRunOutput = result2.modified![0].html;
         const styleCount = (secondRunOutput.match(/moss-email-style/g) || []).length;
         expect(styleCount).toBe(1);
       }
     });
 
     it("should gracefully handle missing CSS file", async () => {
-      mockListSiteFilesWithSizes.mockResolvedValue([
-        { path: "test.html", size: 100 },
-      ]);
-      mockReadFile.mockResolvedValue(htmlWithHead);
-      mockWriteFile.mockResolvedValue(undefined);
       mockPluginFileExists.mockResolvedValue(true);
       mockReadPluginFile.mockImplementation((filename: string) => {
         if (filename === "newsletter-info.json")
@@ -584,15 +509,17 @@ describe("enhance hook", () => {
         return Promise.reject(new Error("unknown file"));
       });
 
-      const ctx = createEnhanceContext();
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html: htmlWithHead },
+      ]);
       const { enhance } = await import("../enhance");
       const result = await enhance(ctx);
 
       // Should still succeed (form injected, just no CSS)
       expect(result.success).toBe(true);
-      const writtenHtml = mockWriteFile.mock.calls[0][1] as string;
-      expect(writtenHtml).toContain("footer-subscribe-form");
-      expect(writtenHtml).not.toContain("moss-email-style");
+      const modifiedHtml = result.modified![0].html;
+      expect(modifiedHtml).toContain("footer-subscribe-form");
+      expect(modifiedHtml).not.toContain("moss-email-style");
     });
   });
 
@@ -601,21 +528,22 @@ describe("enhance hook", () => {
       const ctx = createEnhanceContext({ api_key: undefined });
 
       const { enhance } = await import("../enhance");
-      const result: HookResult = await enhance(ctx);
+      const result: EnhanceResult = await enhance(ctx);
 
       expect(result.success).toBe(false);
       expect(result.message).toContain("No API key configured");
     });
 
     it("should not attempt to process files when no API key", async () => {
-      const ctx = createEnhanceContext({ api_key: "" });
+      const ctx = createEnhanceContext({ api_key: "" }, [
+        { path: "test.html", html: "<html></html>" },
+      ]);
 
       const { enhance } = await import("../enhance");
-      await enhance(ctx);
+      const result = await enhance(ctx);
 
-      expect(mockListSiteFilesWithSizes).not.toHaveBeenCalled();
-      expect(mockReadFile).not.toHaveBeenCalled();
-      expect(mockWriteFile).not.toHaveBeenCalled();
+      // No modified files — early return before processing
+      expect(result.modified).toBeUndefined();
     });
   });
 });

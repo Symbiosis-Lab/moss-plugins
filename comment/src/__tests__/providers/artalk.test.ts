@@ -225,5 +225,23 @@ describe("buildArtalkClientScript", () => {
       // The hydration fetch should check res.ok to avoid parsing error pages
       expect(script).toContain("res.ok");
     });
+
+    it("prepends hydrated comments for newest-first order (insertBefore, not appendChild)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // Hydrated comments should be inserted at the top of the list
+      // to maintain newest-first order (matching build-time sort in social-reader.ts)
+      expect(script).toContain("insertBefore");
+      expect(script).not.toMatch(/commentList\.appendChild\(li\)/);
+    });
+  });
+
+  describe("form submission newest-first", () => {
+    it("prepends newly submitted comment at the top of the list", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // After form submission, the new comment (newest) should go to the top
+      // Both insertion points should use insertBefore, not appendChild
+      const appendCount = (script.match(/\.appendChild\(li\)/g) || []).length;
+      expect(appendCount).toBe(0);
+    });
   });
 });

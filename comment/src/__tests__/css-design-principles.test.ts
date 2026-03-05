@@ -46,10 +46,10 @@ describe("Comment form flattening", () => {
     expect(formRule).not.toMatch(/border-bottom\s*:/);
   });
 
-  it("uses margin-bottom for breathing room before the first comment", () => {
+  it("uses margin-bottom (--moss-space-md) for breathing room before the first comment", () => {
     const formRule = extractTopLevelRule(css, ".comment-form");
     expect(formRule).toBeDefined();
-    expect(formRule).toMatch(/margin.*0\s+0\s+var\(--moss-space-/);
+    expect(formRule).toMatch(/margin.*0\s+0\s+var\(--moss-space-md/);
   });
 
   it("removes the special-case margin rule for no-comment-list state", () => {

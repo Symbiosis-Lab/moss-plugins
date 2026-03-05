@@ -124,7 +124,8 @@ export function buildArtalkClientScript(
         + '<time class="comment-date">' + now + '</time>'
         + '</div>'
         + '<div class="comment-body"><p>' + body.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
-      commentList.appendChild(li);
+      // Newest first: prepend so the just-submitted comment appears at the top
+      commentList.insertBefore(li, commentList.firstChild);
 
       form.elements['content'].value = '';
       if (textarea) { textarea.style.height = 'auto'; }
@@ -180,6 +181,9 @@ export function buildArtalkClientScript(
           if (!json) return;
           var list = (json.data && json.data.comments) || [];
           var added = 0;
+          // Anchor = first build-time comment. Hydrated comments go before it
+          // to maintain newest-first order (API returns date_desc).
+          var anchor = commentList ? commentList.firstChild : null;
           for (var i = 0; i < list.length; i++) {
             var c = list[i];
             if (new Date(c.created_at).getTime() <= builtAtMs) break;
@@ -201,8 +205,10 @@ export function buildArtalkClientScript(
               commentList.className = 'comment-list';
               var formEl = document.getElementById('moss-comment-form');
               if (formEl) formEl.after(commentList);
+              anchor = null;
             }
-            commentList.appendChild(li);
+            // Newest first: insert before the anchor (first build-time comment)
+            commentList.insertBefore(li, anchor);
             added++;
           }
 

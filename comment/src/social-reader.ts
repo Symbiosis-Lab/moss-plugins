@@ -163,7 +163,10 @@ function normalizeComments(
  * plus any additional sources passed as parameter.
  *
  * Returns a Map keyed by article key (source .md path) with
- * NormalizedComment[] sorted by date ascending.
+ * NormalizedComment[] sorted by date descending (newest first).
+ *
+ * Sort order convention: newest-first everywhere.
+ * Build-time: this comparator. Client-side: Artalk API `sort_by=date_desc`.
  */
 export async function loadAllComments(
   extraSources?: string[]
@@ -202,10 +205,11 @@ export async function loadAllComments(
     }
   }
 
-  // Sort each page's comments by date ascending
+  // Sort each page's comments by date descending (newest first).
+  // Client-side hydration (Artalk) uses sort_by=date_desc to match.
   for (const [_key, comments] of result) {
     comments.sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
   }
 

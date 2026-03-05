@@ -14,7 +14,11 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   readFile: mockReadFile,
 }));
 
-import { buildUidToUrlMap, buildSourceToUrlMap } from "../social-reader";
+import {
+  buildUidToUrlMap,
+  buildSourceToUrlMap,
+  loadAllComments,
+} from "../social-reader";
 
 describe("buildUidToUrlMap", () => {
   beforeEach(() => {
@@ -140,5 +144,40 @@ describe("buildSourceToUrlMap still works (backward compatibility)", () => {
 
     expect(map.size).toBe(1);
     expect(map.get("posts/hello.md")).toBe("posts/hello/");
+  });
+});
+
+describe("loadAllComments sort order", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+  });
+
+  it("sorts comments newest-first (descending by date)", async () => {
+    const socialData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "old", content: "old", createdAt: "2023-01-01T00:00:00Z", author: { name: "A" } },
+            { id: "new", content: "new", createdAt: "2024-06-15T00:00:00Z", author: { name: "B" } },
+            { id: "mid", content: "mid", createdAt: "2023-07-01T00:00:00Z", author: { name: "C" } },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.includes("comment.json")) return JSON.stringify(socialData);
+      throw new Error("not found");
+    });
+
+    const result = await loadAllComments(["comment"]);
+    const comments = result.get("posts/hello.md");
+
+    expect(comments).toBeDefined();
+    expect(comments!.length).toBe(3);
+    // Newest first
+    expect(comments![0].id).toBe("new");
+    expect(comments![1].id).toBe("mid");
+    expect(comments![2].id).toBe("old");
   });
 });

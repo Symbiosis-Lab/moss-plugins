@@ -1,13 +1,13 @@
 /**
  * Enhance hook for Email Newsletter plugin
  *
- * Injects subscribe forms into HTML footer sections
+ * Injects subscribe forms into HTML footer sections.
+ *
+ * Pure transformer: operates on ctx.files, returns modified HTML.
+ * No file I/O for site HTML — the pipeline handles reading/writing.
  */
 
 import {
-  readFile,
-  writeFile,
-  listSiteFilesWithSizes,
   readPluginFile,
   writePluginFile,
   pluginFileExists,
@@ -20,6 +20,30 @@ import type { PluginConfig } from "./types";
 const CSS_FILENAME = "email-subscribe.css";
 
 /**
+ * A file passed into the enhance hook by the pipeline.
+ */
+export interface EnhanceFile {
+  path: string;
+  html: string;
+}
+
+/**
+ * A file modified by the enhance hook, returned to the pipeline.
+ */
+export interface ModifiedFile {
+  path: string;
+  html: string;
+}
+
+/**
+ * Result returned from the enhance hook.
+ * Extends HookResult with an array of modified files.
+ */
+export interface EnhanceResult extends HookResult {
+  modified?: ModifiedFile[];
+}
+
+/**
  * Context passed to enhance hook
  */
 export interface EnhanceContext {
@@ -29,12 +53,16 @@ export interface EnhanceContext {
   project_info: { project_path: string; moss_dir: string; output_dir: string };
   config: Record<string, unknown>;
   interactions: unknown[];
+  files: EnhanceFile[];
 }
 
 /**
- * Enhance hook - injects subscribe forms into HTML files
+ * Enhance hook - injects subscribe forms into HTML files.
+ *
+ * Pure transformer: reads from ctx.files, returns modified files.
+ * The pipeline is responsible for writing modified files back to disk.
  */
-export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
+export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const config = ctx.config as PluginConfig;
 
   if (!config.api_key) {
@@ -70,31 +98,25 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     // CSS file not found — form will be unstyled
   }
 
-  // List HTML files in the compiled site output and inject form
-  const siteFiles = await listSiteFilesWithSizes();
-  const htmlFiles = siteFiles
-    .map((f) => f.path)
-    .filter((f) => f.endsWith(".html"));
+  // Iterate ctx.files (all HTML from the pipeline) and transform
+  const modified: ModifiedFile[] = [];
 
-  for (const sitePath of htmlFiles) {
-    // readFile/writeFile operate on the project root, so prefix with .moss/site/
-    const projectPath = `.moss/site/${sitePath}`;
+  for (const file of ctx.files) {
     try {
-      const html = await readFile(projectPath);
-      const withForm = injectSubscribeForm(html, username);
+      const withForm = injectSubscribeForm(file.html, username);
       // Only inject CSS if the form was actually injected
-      const modified = withForm !== html
+      const result = withForm !== file.html
         ? injectInlineStyle(withForm, subscribeCss)
-        : html;
-      if (modified !== html) {
-        await writeFile(projectPath, modified);
+        : file.html;
+      if (result !== file.html) {
+        modified.push({ path: file.path, html: result });
       }
     } catch (e) {
-      console.warn(`Failed to process ${sitePath}: ${e}`);
+      console.warn(`Failed to process ${file.path}: ${e}`);
     }
   }
 
-  return { success: true };
+  return { success: true, modified };
 }
 
 /**

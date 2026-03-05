@@ -6,6 +6,9 @@
  * - Falls back to path-based keys for backward compatibility
  * - Passes uid to client-side scripts
  * - Builds urlPath -> uid reverse map for form generation
+ *
+ * Pure transformer pattern: HTML is passed via ctx.files and
+ * modified HTML is returned via result.modified (no HTML file I/O).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -22,7 +25,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   httpGet: mockHttpGet,
 }));
 
-import { enhance } from "../main";
+import { enhance, filePathToUrlPath } from "../main";
 import { clearDetectionCache } from "../fetcher";
 import type { EnhanceContext, ArticleMap } from "../types";
 
@@ -37,6 +40,7 @@ function makeEnhanceContext(
     project_info: { total_files: 5, homepage_file: "index.md", ...projectInfoOverrides },
     config,
     interactions: [],
+    files: [],
   };
 }
 
@@ -74,6 +78,9 @@ describe("enhance hook uid resolution", () => {
 
   it("resolves uid-based social data keys to url paths", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -109,35 +116,30 @@ describe("enhance hook uid resolution", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
 
     expect(result.success).toBe(true);
+    expect(result.modified).toBeDefined();
+    expect(result.modified!.length).toBeGreaterThan(0);
 
-    // The HTML should have been written with injected comments
-    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
-      (call: any[]) =>
-        typeof call[0] === "string" && call[0].endsWith("index.html")
+    // Find the modified HTML for the hello page
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlWriteCalls.length).toBeGreaterThan(0);
-
-    // Find the written HTML for the hello page
-    const helloHtml = htmlWriteCalls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
-    );
-    expect(helloHtml).toBeDefined();
+    expect(helloFile).toBeDefined();
     // Check that the comment was injected
-    expect(helloHtml![1]).toContain("Great post!");
-    expect(helloHtml![1]).toContain("Alice");
+    expect(helloFile!.html).toContain("Great post!");
+    expect(helloFile!.html).toContain("Alice");
   });
 
   it("falls back to path-based keys for backward compatibility", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/legacy/index.html", html: makeArticleHtml("Legacy") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -173,9 +175,6 @@ describe("enhance hook uid resolution", () => {
       if (path.includes(".moss/social/matters.json")) {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/legacy/index.html") {
-        return Promise.resolve(makeArticleHtml("Legacy"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
@@ -184,15 +183,18 @@ describe("enhance hook uid resolution", () => {
     expect(result.success).toBe(true);
 
     // The legacy path-based comment should still be resolved
-    const helloHtml = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/legacy/index.html"
+    const legacyFile = result.modified!.find(
+      (f) => f.path === "posts/legacy/index.html"
     );
-    expect(helloHtml).toBeDefined();
-    expect(helloHtml![1]).toContain("Old-style comment");
+    expect(legacyFile).toBeDefined();
+    expect(legacyFile!.html).toContain("Old-style comment");
   });
 
   it("prefers uid-based lookup over path-based when both exist", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/both/index.html", html: makeArticleHtml("Both") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -248,9 +250,6 @@ describe("enhance hook uid resolution", () => {
       if (path === ".moss/social/matters.json") {
         return Promise.resolve(JSON.stringify(mattersData));
       }
-      if (path === ".moss/site/posts/both/index.html") {
-        return Promise.resolve(makeArticleHtml("Both"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
@@ -258,14 +257,14 @@ describe("enhance hook uid resolution", () => {
     expect(result.success).toBe(true);
 
     // Both comments should be present (they have different keys in social data)
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/both/index.html"
+    const bothFile = result.modified!.find(
+      (f) => f.path === "posts/both/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(bothFile).toBeDefined();
     // The uid-based comment should be present
-    expect(htmlCall![1]).toContain("UID-based comment");
+    expect(bothFile!.html).toContain("UID-based comment");
     // The path-based comment should also be present (merged from matters.json)
-    expect(htmlCall![1]).toContain("Path-based comment");
+    expect(bothFile!.html).toContain("Path-based comment");
   });
 
   it("passes uid to client-side submit script (Waline)", async () => {
@@ -275,6 +274,9 @@ describe("enhance hook uid resolution", () => {
     const ctx = makeEnhanceContext({
       server_url: "https://waline.example.com",
     });
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -290,21 +292,18 @@ describe("enhance hook uid resolution", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // The script should use uid as the url field, not the URL path
-    expect(htmlCall![1]).toContain("uid-hello-123");
+    expect(helloFile!.html).toContain("uid-hello-123");
   });
 
   it("passes uid to client-side submit script (Artalk)", async () => {
@@ -319,6 +318,9 @@ describe("enhance hook uid resolution", () => {
       { server_url: "https://artalk.example.com" },
       { site_name: "Test Site" }
     );
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -334,21 +336,18 @@ describe("enhance hook uid resolution", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // The script should use uid as page_key, not the URL path
-    expect(htmlCall![1]).toContain("uid-artalk-456");
+    expect(helloFile!.html).toContain("uid-artalk-456");
   });
 
   it("falls back to urlPath when uid is not available", async () => {
@@ -358,6 +357,9 @@ describe("enhance hook uid resolution", () => {
     const ctx = makeEnhanceContext({
       server_url: "https://waline.example.com",
     });
+    ctx.files = [
+      { path: "posts/no-uid/index.html", html: makeArticleHtml("No UID") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -373,21 +375,18 @@ describe("enhance hook uid resolution", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/no-uid/index.html") {
-        return Promise.resolve(makeArticleHtml("No UID"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/no-uid/index.html"
+    const noUidFile = result.modified!.find(
+      (f) => f.path === "posts/no-uid/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(noUidFile).toBeDefined();
     // Should fall back to URL path since there's no uid
-    expect(htmlCall![1]).toContain("/posts/no-uid/");
+    expect(noUidFile!.html).toContain("/posts/no-uid/");
   });
 });
 
@@ -418,6 +417,9 @@ describe("enhance hook config.site_name override", () => {
       { server_url: "https://artalk.example.com", site_name: "config-site" },
       { site_name: "project-site" }
     );
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -433,22 +435,19 @@ describe("enhance hook config.site_name override", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // The injected script should use "config-site", NOT "project-site"
-    expect(htmlCall![1]).toContain("config-site");
-    expect(htmlCall![1]).not.toContain("project-site");
+    expect(helloFile!.html).toContain("config-site");
+    expect(helloFile!.html).not.toContain("project-site");
   });
 
   it("falls back to project_info.site_name when config.site_name is empty", async () => {
@@ -463,6 +462,9 @@ describe("enhance hook config.site_name override", () => {
       { server_url: "https://artalk.example.com", site_name: "" },
       { site_name: "project-site" }
     );
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -478,21 +480,18 @@ describe("enhance hook config.site_name override", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // Should fall back to project_info.site_name
-    expect(htmlCall![1]).toContain("project-site");
+    expect(helloFile!.html).toContain("project-site");
   });
 });
 
@@ -514,9 +513,9 @@ describe("enhance hook default_comments config", () => {
   /**
    * Helper: set up a single-article scenario for default_comments tests.
    * The article map has one page; social data has one comment keyed by uid.
-   * The HTML can optionally include a data-comments attribute on the <article> tag.
+   * Sets ctx.files with the article HTML.
    */
-  function setupSingleArticle(dataComments?: "true" | "false") {
+  function setupSingleArticle(ctx: EnhanceContext, dataComments?: "true" | "false") {
     const articleMap: ArticleMap = {
       articles: {
         "posts/hello/": {
@@ -543,6 +542,10 @@ describe("enhance hook default_comments config", () => {
       },
     };
 
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello", dataComments) },
+    ];
+
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
@@ -550,98 +553,83 @@ describe("enhance hook default_comments config", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello", dataComments));
-      }
       return Promise.reject(new Error("File not found"));
     });
   }
 
   it("default_comments: false + no data attribute -> skips injection", async () => {
     const ctx = makeEnhanceContext({ default_comments: false });
-    setupSingleArticle(); // no data-comments attribute
+    setupSingleArticle(ctx); // no data-comments attribute
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    // No HTML file should have been written (injection was skipped)
-    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
-      (call: any[]) =>
-        typeof call[0] === "string" && call[0].endsWith("index.html")
-    );
-    expect(htmlWriteCalls.length).toBe(0);
+    // No files should have been modified (injection was skipped)
+    expect(result.modified?.length ?? 0).toBe(0);
   });
 
   it('default_comments: false + data-comments="true" -> injects comments', async () => {
     const ctx = makeEnhanceContext({ default_comments: false });
-    setupSingleArticle("true"); // explicit opt-in
+    setupSingleArticle(ctx, "true"); // explicit opt-in
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
-    expect(htmlCall![1]).toContain("Nice article!");
-    expect(htmlCall![1]).toContain("Tester");
+    expect(helloFile).toBeDefined();
+    expect(helloFile!.html).toContain("Nice article!");
+    expect(helloFile!.html).toContain("Tester");
   });
 
   it("default_comments: true (explicit) -> injects comments (existing behavior)", async () => {
     const ctx = makeEnhanceContext({ default_comments: true });
-    setupSingleArticle(); // no data-comments attribute
+    setupSingleArticle(ctx); // no data-comments attribute
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
-    expect(htmlCall![1]).toContain("Nice article!");
+    expect(helloFile).toBeDefined();
+    expect(helloFile!.html).toContain("Nice article!");
   });
 
   it("default_comments: undefined (not set) -> injects comments (backward compat)", async () => {
     const ctx = makeEnhanceContext({}); // no default_comments key
-    setupSingleArticle();
+    setupSingleArticle(ctx);
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
-    expect(htmlCall![1]).toContain("Nice article!");
+    expect(helloFile).toBeDefined();
+    expect(helloFile!.html).toContain("Nice article!");
   });
 
   it('data-comments="false" -> always skips, regardless of default_comments: true', async () => {
     const ctx = makeEnhanceContext({ default_comments: true });
-    setupSingleArticle("false"); // explicit opt-out
+    setupSingleArticle(ctx, "false"); // explicit opt-out
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
     // Should NOT inject (explicit opt-out overrides default_comments: true)
-    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
-      (call: any[]) =>
-        typeof call[0] === "string" && call[0].endsWith("index.html")
-    );
-    expect(htmlWriteCalls.length).toBe(0);
+    expect(result.modified?.length ?? 0).toBe(0);
   });
 
   it('data-comments="false" -> always skips, regardless of default_comments: false', async () => {
     const ctx = makeEnhanceContext({ default_comments: false });
-    setupSingleArticle("false"); // explicit opt-out
+    setupSingleArticle(ctx, "false"); // explicit opt-out
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlWriteCalls = mockWriteFile.mock.calls.filter(
-      (call: any[]) =>
-        typeof call[0] === "string" && call[0].endsWith("index.html")
-    );
-    expect(htmlWriteCalls.length).toBe(0);
+    expect(result.modified?.length ?? 0).toBe(0);
   });
 });
 
@@ -662,6 +650,9 @@ describe("enhance hook i18n lang detection", () => {
 
   it('uses Chinese summary text when HTML has lang="zh-hans"', async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello", undefined, "zh-hans") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -696,22 +687,19 @@ describe("enhance hook i18n lang detection", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello", undefined, "zh-hans"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // Summary should use Chinese text for 1 comment
-    expect(htmlCall![1]).toContain("1条评论");
-    expect(htmlCall![1]).not.toContain("1 comment");
+    expect(helloFile!.html).toContain("1条评论");
+    expect(helloFile!.html).not.toContain("1 comment");
   });
 
   it('uses Chinese placeholder when HTML has lang="zh-hans" and server_url is set', async () => {
@@ -721,6 +709,9 @@ describe("enhance hook i18n lang detection", () => {
     const ctx = makeEnhanceContext({
       server_url: "https://waline.example.com",
     });
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello", undefined, "zh-hans") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -736,27 +727,27 @@ describe("enhance hook i18n lang detection", () => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify(articleMap));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello", undefined, "zh-hans"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // Form placeholder should be Chinese (placeholder stays "留下你的想法")
-    expect(htmlCall![1]).toContain('placeholder="留下你的想法"');
+    expect(helloFile!.html).toContain('placeholder="留下你的想法"');
     // Summary should be Chinese (0 comments = "评论")
-    expect(htmlCall![1]).toContain(">评论<");
+    expect(helloFile!.html).toContain(">评论<");
   });
 
   it("defaults to English when HTML has no lang attribute", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -791,22 +782,18 @@ describe("enhance hook i18n lang detection", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        // No lang attribute
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     const result = await enhance(ctx);
     expect(result.success).toBe(true);
 
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
+    expect(helloFile).toBeDefined();
     // Should use English
-    expect(htmlCall![1]).toContain("1 comment");
+    expect(helloFile!.html).toContain("1 comment");
   });
 });
 
@@ -827,6 +814,9 @@ describe("enhance hook CSS delivery", () => {
 
   it("writes CSS file to output directory once", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -860,15 +850,12 @@ describe("enhance hook CSS delivery", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     await enhance(ctx);
 
-    // CSS file should be written to output directory
+    // CSS file should be written to output directory (still uses writeFile for non-HTML assets)
     const cssWriteCall = mockWriteFile.mock.calls.find(
       (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
     );
@@ -879,6 +866,9 @@ describe("enhance hook CSS delivery", () => {
 
   it("injects <link> tag instead of inline <style>", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -912,20 +902,17 @@ describe("enhance hook CSS delivery", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path === ".moss/site/posts/hello/index.html") {
-        return Promise.resolve(makeArticleHtml("Hello"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
-    await enhance(ctx);
+    const result = await enhance(ctx);
 
-    // Find the written HTML
-    const htmlCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    // Find the modified HTML
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
     );
-    expect(htmlCall).toBeDefined();
-    const writtenHtml = htmlCall![1];
+    expect(helloFile).toBeDefined();
+    const writtenHtml = helloFile!.html;
 
     // Should have <link> to external CSS with depth-relative path
     // "posts/hello/" has depth 2, so prefix is "../../"
@@ -938,6 +925,10 @@ describe("enhance hook CSS delivery", () => {
 
   it("writes CSS file only once even with multiple pages", async () => {
     const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Test") },
+      { path: "posts/world/index.html", html: makeArticleHtml("Test") },
+    ];
 
     const articleMap: ArticleMap = {
       articles: {
@@ -984,18 +975,37 @@ describe("enhance hook CSS delivery", () => {
       if (path === ".moss/social/comment.json") {
         return Promise.resolve(JSON.stringify(socialData));
       }
-      if (path.endsWith("index.html")) {
-        return Promise.resolve(makeArticleHtml("Test"));
-      }
       return Promise.reject(new Error("File not found"));
     });
 
     await enhance(ctx);
 
-    // CSS file should be written exactly once
+    // CSS file should be written exactly once (still uses writeFile for non-HTML assets)
     const cssWriteCalls = mockWriteFile.mock.calls.filter(
       (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
     );
     expect(cssWriteCalls).toHaveLength(1);
+  });
+});
+
+describe("filePathToUrlPath", () => {
+  it("converts directory index to trailing slash", () => {
+    expect(filePathToUrlPath("posts/hello/index.html")).toBe("posts/hello/");
+  });
+
+  it("converts root index to empty string", () => {
+    expect(filePathToUrlPath("index.html")).toBe("");
+  });
+
+  it("converts paginated page to path without extension", () => {
+    expect(filePathToUrlPath("posts/hello/index-2.html")).toBe("posts/hello/index-2");
+  });
+
+  it("converts non-index page to path without extension", () => {
+    expect(filePathToUrlPath("about.html")).toBe("about");
+  });
+
+  it("handles deeply nested directory index", () => {
+    expect(filePathToUrlPath("a/b/c/index.html")).toBe("a/b/c/");
   });
 });

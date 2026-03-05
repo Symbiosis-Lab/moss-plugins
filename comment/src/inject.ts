@@ -2,7 +2,7 @@
  * HTML injection utilities
  *
  * Finds insertion points in generated HTML and injects the comment section.
- * Based on the pattern from the nostr plugin's widget/inject.ts.
+ * Based on the pattern from moss plugin inject utilities.
  */
 
 /**

@@ -205,7 +205,8 @@ describe("moss-comments.css design system compliance", () => {
   }
 
   const requiredVars = [
-    "--moss-color-surface",
+    // --moss-color-surface was removed: the flattened comment form shares
+    // the page background instead of using a separate surface color (P1).
     "--moss-color-text",
     "--moss-color-muted",
     "--moss-color-accent",

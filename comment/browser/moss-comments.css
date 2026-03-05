@@ -6,6 +6,51 @@
    Uses CSS custom properties from moss default.css.
    ========================================================================== */
 
+/* ==========================================================================
+   Design Decision Record: Flattened Comment Form
+   --------------------------------------------------------------------------
+
+   Research found that the best comment sections treat comments as editorial
+   content on the same surface as the article, not as a separate widget.
+
+   Six principles guide the comment form styling:
+
+   P1. One surface
+       Remove the tinted card background from .comment-form. Form and
+       comments share the page background. Modeled after NYT/Guardian
+       "Letters to the Editor" — comments as editorial content, same surface.
+
+   P2. Border language consistency
+       Comments use border-bottom: 1px solid. The form uses the same 1px
+       border as its boundary, not a background fill + border-radius.
+
+   P3. Typographic continuity
+       Placeholder text, field labels, comment body, author names — same
+       type family, proportional sizes. Follows iA design philosophy
+       (ia.net): "web design is 95% typography", content-first.
+
+   P4. The form is the first comment
+       Visually, the compose area reads like an empty comment slot. Same
+       padding rhythm, same width, same vertical spacing as comment items.
+       Inspired by CSS-Tricks threading (css-tricks.com) — forms inline in
+       thread, not separate cards.
+
+   P5. Distinguish through state, not surface
+       The textarea is interactive because of cursor/focus behavior, not
+       because it sits on a different background. Focus states (accent
+       underline) provide sufficient affordance.
+
+   P6. Density matching
+       Spacing between form elements echoes spacing between comment items.
+
+   References:
+   - NYT/Guardian "Letters to the Editor" model
+   - Ahmad Shadeed's comment component (ishadeed.com)
+   - CSS-Tricks threading (css-tricks.com)
+   - iA design philosophy (ia.net)
+   - ResultFirst 2026 trends — "stripping away non-essential frills"
+   ========================================================================== */
+
 /* Comment Section */
 .moss-comments {
   margin-top: var(--moss-space-xl, 3rem);
@@ -157,16 +202,9 @@ a.comment-author:hover {
    ========================================================================== */
 
 .comment-form {
-  background: var(--moss-color-surface, #f4f1ec);
-  border-radius: 8px;
-  padding: 1.25rem;
-  margin-top: var(--moss-space-lg, 2rem);
-  margin-bottom: var(--moss-space-lg, 2rem);
-}
-
-/* Tighter form spacing when there are no existing comments */
-details:not(:has(.comment-list)) .comment-form {
-  margin-top: var(--moss-space-sm, 1rem);
+  padding: var(--moss-space-md, 1.5rem) 0;
+  border-bottom: 1px solid var(--moss-border-light, #e6e2db);
+  margin: 0;
 }
 
 /* Textarea — underline style */

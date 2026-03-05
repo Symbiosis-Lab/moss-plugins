@@ -72,37 +72,15 @@ export function injectCommentSection(
 }
 
 /**
- * Inject a CSS <link> tag into the <head> of the HTML.
- *
- * @param html - HTML content
- * @param cssPath - Relative path to the CSS file
- * @returns Modified HTML with CSS link injected
- */
-export function injectCssLink(html: string, cssPath: string): string {
-  const headEnd = lastIndexOfTag(html, "</head>");
-  if (headEnd === -1) return html;
-
-  const link = `<link rel="stylesheet" href="${cssPath}">`;
-  return html.slice(0, headEnd) + link + "\n" + html.slice(headEnd);
-}
-
-/**
  * Inject CSS as an inline <style> tag into the <head> of the HTML.
- *
- * Uses a class attribute for idempotency detection — if the style tag
- * is already present, the HTML is returned unchanged.
  *
  * @param html - HTML content
  * @param css - CSS content to inline
- * @returns Modified HTML with inline style, or original if already present or css is empty
+ * @returns Modified HTML with inline style, or original if css is empty or no </head>
  */
-export function injectInlineStyle(html: string, css: string): string {
+export function injectCssStyle(html: string, css: string): string {
   if (!css) return html;
-  if (html.includes('moss-comments-style')) return html;
 
-  const headEnd = lastIndexOfTag(html, "</head>");
-  if (headEnd === -1) return html;
-
-  const styleTag = `<style class="moss-comments-style">${css}</style>`;
-  return html.slice(0, headEnd) + styleTag + "\n" + html.slice(headEnd);
+  const style = `<style>${css}</style>`;
+  return html.replace("</head>", style + "\n</head>");
 }

@@ -12,13 +12,13 @@
  *   2. Reads .moss/article-map.json for source->output path mapping
  *   3. Renders a minimal comment section (author, date, text)
  *   4. Injects the section before </article> in each page
- *   5. Copies CSS to output dir and links it via <link> in each page's <head>
+ *   5. Inlines CSS via <style> in each page's <head>
  */
 
-import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
+import { readFile, readPluginFile } from "@symbiosis-lab/moss-api";
 import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
-import { findInsertionPoint, injectCommentSection, injectCssLink, rootRelativePrefix } from "./inject";
+import { findInsertionPoint, injectCommentSection, injectCssStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchAllArtalkComments, detectProvider } from "./fetcher";
 import { parseLang, type Lang } from "./i18n";
@@ -38,25 +38,6 @@ import type {
 } from "./types";
 
 const COMMENTS_CSS_FILENAME = "moss-comments.css";
-
-/**
- * Derive the project-relative output directory prefix from context.
- * E.g., if output_dir is "/Users/.../guo-site/.moss/site"
- * and project_path is "/Users/.../guo-site",
- * returns ".moss/site"
- */
-function getOutputPrefix(ctx: EnhanceContext): string {
-  const outputDir = ctx.output_dir;
-  const projectPath = ctx.project_path;
-
-  if (outputDir && projectPath && outputDir.startsWith(projectPath)) {
-    let rel = outputDir.slice(projectPath.length);
-    rel = rel.replace(/^\//, "");
-    return rel;
-  }
-  // Fallback: standard location
-  return ".moss/site";
-}
 
 // ============================================================================
 // Process Hook
@@ -229,7 +210,7 @@ function transformHtml(
   siteName: string,
   uid: string,
   defaultComments: boolean,
-  hasCss: boolean
+  css: string
 ): string | null {
   // Check explicit opt-in/opt-out attributes
   const hasExplicitTrue = html.includes('data-comments="true"');
@@ -278,14 +259,8 @@ function transformHtml(
   const injected = injectCommentSection(html, commentHtml);
   if (!injected) return null;
 
-  // Inject depth-relative CSS link in <head>
-  let result: string;
-  if (hasCss) {
-    const cssHref = rootRelativePrefix(urlPath) + COMMENTS_CSS_FILENAME;
-    result = injectCssLink(injected, cssHref);
-  } else {
-    result = injected;
-  }
+  // Inject inline CSS in <head>
+  const result = css ? injectCssStyle(injected, css) : injected;
 
   return result;
 }
@@ -315,16 +290,10 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     console.log("[info] Comment: No server_url configured, static comments only");
   }
 
-  // 1. Read CSS and write to output directory as external file
-  //    (CSS is a non-HTML asset; still written via writeFile)
-  const outputPrefix = getOutputPrefix(ctx);
-  let hasCss = false;
+  // 1. Read CSS for inline injection into each page's <head>
+  let commentsCss = "";
   try {
-    const commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
-    if (commentsCss) {
-      await writeFile(`${outputPrefix}/${COMMENTS_CSS_FILENAME}`, commentsCss);
-      hasCss = true;
-    }
+    commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
   } catch {
     console.log("[warn] Comment: Could not read CSS file, comments will be unstyled");
   }
@@ -390,7 +359,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
       siteName,
       uid,
       defaultComments,
-      hasCss
+      commentsCss
     );
 
     if (result) {

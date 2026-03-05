@@ -812,59 +812,7 @@ describe("enhance hook CSS delivery", () => {
     };
   });
 
-  it("writes CSS file to output directory once", async () => {
-    const ctx = makeEnhanceContext({});
-    ctx.files = [
-      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
-    ];
-
-    const articleMap: ArticleMap = {
-      articles: {
-        "posts/hello/": {
-          source_path: "/Users/test/site/posts/hello.md",
-          url_path: "posts/hello/",
-          uid: "uid-hello",
-        },
-      },
-    };
-
-    const socialData = {
-      schemaVersion: "1",
-      updatedAt: new Date().toISOString(),
-      articles: {
-        "uid-hello": {
-          comments: [{
-            id: "c1",
-            content: "Nice!",
-            createdAt: "2024-01-01T00:00:00Z",
-            author: { displayName: "Alice" },
-          }],
-        },
-      },
-    };
-
-    mockReadFile.mockImplementation((path: string) => {
-      if (path === ".moss/article-map.json") {
-        return Promise.resolve(JSON.stringify(articleMap));
-      }
-      if (path === ".moss/social/comment.json") {
-        return Promise.resolve(JSON.stringify(socialData));
-      }
-      return Promise.reject(new Error("File not found"));
-    });
-
-    await enhance(ctx);
-
-    // CSS file should be written to output directory (still uses writeFile for non-HTML assets)
-    const cssWriteCall = mockWriteFile.mock.calls.find(
-      (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
-    );
-    expect(cssWriteCall).toBeDefined();
-    expect(cssWriteCall![0]).toBe(".moss/site/moss-comments.css");
-    expect(cssWriteCall![1]).toContain(".moss-comments");
-  });
-
-  it("injects <link> tag instead of inline <style>", async () => {
+  it("injects inline <style> tag with CSS content in each page's <head>", async () => {
     const ctx = makeEnhanceContext({});
     ctx.files = [
       { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
@@ -907,23 +855,31 @@ describe("enhance hook CSS delivery", () => {
 
     const result = await enhance(ctx);
 
-    // Find the modified HTML
     const helloFile = result.modified!.find(
       (f) => f.path === "posts/hello/index.html"
     );
     expect(helloFile).toBeDefined();
     const writtenHtml = helloFile!.html;
 
-    // Should have <link> to external CSS with depth-relative path
-    // "posts/hello/" has depth 2, so prefix is "../../"
-    expect(writtenHtml).toContain('<link rel="stylesheet" href="../../moss-comments.css">');
+    // Should have inline <style> tag with CSS content
+    expect(writtenHtml).toContain("<style>.moss-comments { color: red; }</style>");
 
-    // Should NOT have inline <style>
-    expect(writtenHtml).not.toContain("moss-comments-style");
-    expect(writtenHtml).not.toContain("<style");
+    // Style tag should appear before </head>
+    expect(writtenHtml.indexOf("<style>")).toBeLessThan(
+      writtenHtml.indexOf("</head>")
+    );
+
+    // Should NOT use external <link> tag
+    expect(writtenHtml).not.toContain('<link rel="stylesheet"');
+
+    // Should NOT write CSS to disk via writeFile
+    const cssWriteCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
+    );
+    expect(cssWriteCall).toBeUndefined();
   });
 
-  it("writes CSS file only once even with multiple pages", async () => {
+  it("injects inline <style> in each page when multiple pages exist", async () => {
     const ctx = makeEnhanceContext({});
     ctx.files = [
       { path: "posts/hello/index.html", html: makeArticleHtml("Test") },
@@ -978,13 +934,78 @@ describe("enhance hook CSS delivery", () => {
       return Promise.reject(new Error("File not found"));
     });
 
-    await enhance(ctx);
+    const result = await enhance(ctx);
 
-    // CSS file should be written exactly once (still uses writeFile for non-HTML assets)
+    // Both pages should have inline <style> tags
+    for (const pagePath of ["posts/hello/index.html", "posts/world/index.html"]) {
+      const file = result.modified!.find((f) => f.path === pagePath);
+      expect(file).toBeDefined();
+      expect(file!.html).toContain("<style>.moss-comments { color: red; }</style>");
+    }
+
+    // No CSS file should be written to disk
     const cssWriteCalls = mockWriteFile.mock.calls.filter(
       (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
     );
-    expect(cssWriteCalls).toHaveLength(1);
+    expect(cssWriteCalls).toHaveLength(0);
+  });
+
+  it("when readPluginFile throws, no <style> is injected but comments still render", async () => {
+    // Make CSS reading fail
+    mockReadPluginFile.mockRejectedValue(new Error("File not found"));
+
+    const ctx = makeEnhanceContext({});
+    ctx.files = [
+      { path: "posts/hello/index.html", html: makeArticleHtml("Hello") },
+    ];
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1",
+      updatedAt: new Date().toISOString(),
+      articles: {
+        "uid-hello": {
+          comments: [{
+            id: "c1",
+            content: "Nice!",
+            createdAt: "2024-01-01T00:00:00Z",
+            author: { displayName: "Alice" },
+          }],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    const result = await enhance(ctx);
+    expect(result.success).toBe(true);
+
+    const helloFile = result.modified!.find(
+      (f) => f.path === "posts/hello/index.html"
+    );
+    expect(helloFile).toBeDefined();
+    // Comments should still be injected
+    expect(helloFile!.html).toContain("Nice!");
+    expect(helloFile!.html).toContain("Alice");
+    // But no <style> tag (CSS failed to load)
+    expect(helloFile!.html).not.toContain("<style>");
   });
 });
 

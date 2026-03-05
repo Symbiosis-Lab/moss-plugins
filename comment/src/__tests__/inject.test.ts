@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findInsertionPoint, injectCommentSection, injectCssLink, injectInlineStyle, rootRelativePrefix } from "../inject";
+import { findInsertionPoint, injectCommentSection, injectCssStyle, rootRelativePrefix } from "../inject";
 
 // ============================================================================
 // Existing tests for findInsertionPoint and injectCommentSection
@@ -50,101 +50,31 @@ describe("injectCommentSection", () => {
   });
 });
 
-describe("injectCssLink", () => {
-  it("injects <link> before </head>", () => {
+describe("injectCssStyle", () => {
+  it("injects <style>CSS_CONTENT</style> before </head>", () => {
     const html = "<html><head><title>Test</title></head><body></body></html>";
-    const result = injectCssLink(html, "/moss-comments.css");
-    expect(result).toContain('<link rel="stylesheet" href="/moss-comments.css">');
-    expect(result.indexOf('<link rel="stylesheet"')).toBeLessThan(
+    const css = ".moss-comments { margin-top: 3rem; }";
+    const result = injectCssStyle(html, css);
+    expect(result).toContain(`<style>${css}</style>`);
+    expect(result.indexOf("<style>")).toBeLessThan(
       result.indexOf("</head>")
     );
   });
 
-  it("returns original HTML when no </head>", () => {
+  it("returns html unchanged when css is empty string", () => {
+    const html = "<html><head><title>Test</title></head><body></body></html>";
+    expect(injectCssStyle(html, "")).toBe(html);
+  });
+
+  it("returns html unchanged when no </head> tag", () => {
     const html = "<body>no head</body>";
-    expect(injectCssLink(html, "/style.css")).toBe(html);
+    expect(injectCssStyle(html, ".test { color: red; }")).toBe(html);
   });
 });
 
-// ============================================================================
-// Tests for injectInlineStyle (new function - TDD)
-// ============================================================================
-
-describe("injectInlineStyle", () => {
-  const sampleCss = ".moss-comments { margin-top: 3rem; }";
-
-  it("injects <style> before </head>", () => {
-    const html = "<html><head><title>Test</title></head><body></body></html>";
-    const result = injectInlineStyle(html, sampleCss);
-    expect(result).toContain(`<style class="moss-comments-style">${sampleCss}</style>`);
-    // Style should be before </head>
-    expect(result.indexOf('<style class="moss-comments-style">')).toBeLessThan(
-      result.indexOf("</head>")
-    );
-  });
-
-  it("is idempotent - does not inject twice", () => {
-    const html = "<html><head><title>Test</title></head><body></body></html>";
-    const first = injectInlineStyle(html, sampleCss);
-    const second = injectInlineStyle(first, sampleCss);
-    expect(second).toBe(first);
-    // Count occurrences of the style tag
-    const matches = second.match(/moss-comments-style/g);
-    expect(matches).toHaveLength(1);
-  });
-
-  it("returns original HTML when no </head>", () => {
-    const html = "<body>no head tag</body>";
-    const result = injectInlineStyle(html, sampleCss);
-    expect(result).toBe(html);
-  });
-
-  it("returns original HTML when css is empty", () => {
-    const html = "<html><head><title>Test</title></head><body></body></html>";
-    const result = injectInlineStyle(html, "");
-    expect(result).toBe(html);
-  });
-
-  it("handles uppercase </HEAD>", () => {
-    const html = "<html><HEAD><title>Test</title></HEAD><body></body></html>";
-    const result = injectInlineStyle(html, sampleCss);
-    expect(result).toContain(`<style class="moss-comments-style">${sampleCss}</style>`);
-  });
-
-  it("preserves rest of HTML intact", () => {
-    const html = `<!DOCTYPE html>
-<html>
-<head><title>My Page</title></head>
-<body>
-<article>
-<h1>Hello</h1>
-<p>Content here.</p>
-</article>
-</body>
-</html>`;
-    const result = injectInlineStyle(html, sampleCss);
-    // Original content still present
-    expect(result).toContain("<h1>Hello</h1>");
-    expect(result).toContain("<p>Content here.</p>");
-    expect(result).toContain("</article>");
-    // Style injected
-    expect(result).toContain(`<style class="moss-comments-style">${sampleCss}</style>`);
-  });
-
-  it("works with multiline CSS", () => {
-    const multilineCss = `.moss-comments {
-  margin-top: 3rem;
-  padding: 1rem;
-}
-.comment-item {
-  border-bottom: 1px solid #ccc;
-}`;
-    const html = "<html><head><title>Test</title></head><body></body></html>";
-    const result = injectInlineStyle(html, multilineCss);
-    expect(result).toContain(multilineCss);
-    expect(result).toContain('class="moss-comments-style"');
-  });
-});
+// The injectInlineStyle tests above (in "injectCssStyle") cover all
+// the inline style functionality. The old injectInlineStyle block has
+// been consolidated into the injectCssStyle describe block.
 
 // ============================================================================
 // rootRelativePrefix

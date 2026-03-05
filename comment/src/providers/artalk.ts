@@ -175,9 +175,10 @@ export function buildArtalkClientScript(
       details.removeEventListener('toggle', onToggle);
 
       fetch('${safeServerUrl}/api/v2/comments?page_key=${safePageKey}&site_name=${safeSiteName}&flat_mode=true&sort_by=date_desc&limit=100')
-        .then(function(res) { return res.json(); })
+        .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(json) {
-          var list = json.data || json.comments || [];
+          if (!json) return;
+          var list = (json.data && json.data.comments) || [];
           var added = 0;
           for (var i = 0; i < list.length; i++) {
             var c = list[i];

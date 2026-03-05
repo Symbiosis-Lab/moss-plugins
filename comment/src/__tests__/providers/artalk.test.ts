@@ -213,5 +213,17 @@ describe("buildArtalkClientScript", () => {
       // The hydration fetch should have its own catch
       expect(script).toMatch(/\.catch\(function/);
     });
+
+    it("parses Artalk v2 response as json.data.comments (not json.data)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // Must match the Artalk v2 API shape: { data: { comments: [...] } }
+      expect(script).toContain("json.data && json.data.comments");
+    });
+
+    it("checks res.ok before parsing JSON", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The hydration fetch should check res.ok to avoid parsing error pages
+      expect(script).toContain("res.ok");
+    });
   });
 });

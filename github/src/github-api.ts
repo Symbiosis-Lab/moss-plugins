@@ -57,6 +57,10 @@ export interface PagesStatus {
   status: "built" | "building" | "errored" | "unknown";
   /** The GitHub Pages URL for this repository */
   url: string;
+  /** The commit SHA this build corresponds to */
+  commit?: string;
+  /** Error message from the build, if any */
+  error?: string;
 }
 
 /**
@@ -300,6 +304,8 @@ export async function checkPagesStatus(
     return {
       status: status || "unknown",
       url,
+      commit: data.commit || undefined,
+      error: data.error?.message || undefined,
     };
   } catch {
     return { status: "unknown", url: "" };

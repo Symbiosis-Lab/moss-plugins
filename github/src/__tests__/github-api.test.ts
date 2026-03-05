@@ -407,6 +407,56 @@ describe("GitHub API", () => {
       // Project repo URL should include repo name as path
       expect(result.url).toBe("https://testuser.github.io/my-project");
     });
+
+    // Bug 2: commit field extraction
+    it("returns commit SHA from API response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "built", commit: "abc123def456" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.commit).toBe("abc123def456");
+    });
+
+    it("returns undefined commit when API response has no commit field", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "building" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.commit).toBeUndefined();
+    });
+
+    // Bug 3: error field extraction
+    it("returns error message from API response when build errored", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          status: "errored",
+          error: { message: "Build failed: invalid config" },
+        }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.status).toBe("errored");
+      expect(result.error).toBe("Build failed: invalid config");
+    });
+
+    it("returns undefined error when no error object in response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "built" }),
+      });
+
+      const result = await checkPagesStatus("testuser", "my-repo", "test-token");
+
+      expect(result.error).toBeUndefined();
+    });
   });
 
   // ============================================================================

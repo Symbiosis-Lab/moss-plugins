@@ -83,7 +83,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 
 // Mock the github-api module (checkPagesStatus used by waitForPagesLive)
 vi.mock("../github-api", () => ({
-  checkPagesStatus: vi.fn().mockResolvedValue({ status: "built" }),
+  checkPagesStatus: vi.fn().mockResolvedValue({ status: "built", url: "", commit: "orphan-sha-abc1234def5678" }),
   getAuthenticatedUser: vi.fn(),
   checkRepoExists: vi.fn(),
   createRepository: vi.fn(),
@@ -164,11 +164,15 @@ function setupDeployMocks(
     vi.mocked(getOriginOwnerRepo).mockResolvedValue({ owner, repo });
   }
 
-  // Deploy result
-  vi.mocked(deployViaGitPush).mockResolvedValue(hasChanges ? commitSha : "");
+  // Deploy result (now returns DeployResult object)
+  vi.mocked(deployViaGitPush).mockResolvedValue(
+    hasChanges
+      ? { commitSha: commitSha, orphanSha: "orphan-sha-" + commitSha }
+      : { commitSha: "", orphanSha: "" }
+  );
 
   // Pages status check
-  vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+  vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built", url: "", commit: "orphan-sha-" + commitSha });
 }
 
 describe("on_deploy integration", () => {
@@ -191,7 +195,7 @@ describe("on_deploy integration", () => {
       return `https://${owner}.github.io/${repo}`;
     });
     vi.mocked(getOriginOwnerRepo).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
-    vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+    vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built", url: "", commit: "orphan-sha-abc1234def5678" });
   });
 
   afterEach(() => {
@@ -355,7 +359,7 @@ describe("on_deploy integration", () => {
         .mockResolvedValueOnce(null) // Phase 1 check
         .mockResolvedValueOnce("new-token"); // after promptLogin
 
-      vi.mocked(deployViaGitPush).mockResolvedValue("");
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "", orphanSha: "" });
 
       const result = await on_deploy(createMockContext());
 
@@ -374,8 +378,8 @@ describe("on_deploy integration", () => {
       });
       vi.mocked(hasRequiredScopes).mockReturnValue(true);
 
-      vi.mocked(deployViaGitPush).mockResolvedValue("commit-sha");
-      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "commit-sha", orphanSha: "orphan-commit-sha" });
+      vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built", url: "", commit: "orphan-commit-sha" });
 
       const result = await on_deploy(createMockContext());
 
@@ -531,6 +535,121 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(false);
       expect(result.message).toContain("not found");
+    });
+  });
+
+  // ==========================================================================
+  // Bug 2: Stale build detection via orphanSha
+  // ==========================================================================
+  describe("Stale Build Detection", () => {
+    it("detects stale build when commit SHA does not match", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true, commitSha: "new-commit" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+
+      // checkPagesStatus returns "built" but with a DIFFERENT commit SHA (stale)
+      vi.mocked(checkPagesStatus)
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
+        .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      // isLive should be false due to stale build detection
+      expect(result.deployment?.metadata?.is_live).toBe("false");
+    });
+
+    it("recognizes fresh build when commit SHA matches orphanSha", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true, commitSha: "fresh-commit" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+
+      // checkPagesStatus returns "built" with the MATCHING orphan SHA
+      vi.mocked(checkPagesStatus).mockResolvedValue({
+        status: "built",
+        url: "",
+        commit: "orphan-sha-fresh-commit",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.metadata?.is_live).toBe("true");
+    });
+  });
+
+  // ==========================================================================
+  // Bug 3: Error/unknown status toast messaging
+  // ==========================================================================
+  describe("Error and Unknown Status Toast Messaging", () => {
+    it("shows warning toast with error message when build errors", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "my-repo", hasChanges: true, commitSha: "errored-commit" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+
+      // Build errors on GitHub
+      vi.mocked(checkPagesStatus).mockResolvedValue({
+        status: "errored",
+        url: "",
+        error: "Build failed: invalid config",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+
+      // Find the toast call for deploy status (the last showToast call)
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const lastToast = toastCalls[toastCalls.length - 1][0];
+      expect(lastToast).toMatchObject({
+        variant: "warning",
+      });
+      // Should have "View on GitHub" action pointing to settings/pages
+      expect(lastToast.actions).toBeDefined();
+      expect(lastToast.actions[0].url).toContain("settings/pages");
+    });
+
+    it("shows info toast when build status is unknown/timeout", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "my-repo", hasChanges: true, commitSha: "timeout-commit" });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+
+      // Pages returns "building" every time (simulates timeout)
+      vi.mocked(checkPagesStatus).mockResolvedValue({
+        status: "building",
+        url: "",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+
+      // Should show a toast about checking GitHub for status
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const lastToast = toastCalls[toastCalls.length - 1][0];
+      expect(lastToast.actions).toBeDefined();
+      expect(lastToast.actions[0].url).toContain("actions");
+    });
+  });
+
+  // ==========================================================================
+  // Bug 3: ensurePagesSource logging
+  // ==========================================================================
+  describe("ensurePagesSource logging", () => {
+    it("logs warning when ensurePagesSource returns configured: false", async () => {
+      setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true });
+      vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
+      vi.mocked(ensurePagesSource).mockResolvedValue({ configured: false, wasCreated: false });
+
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to configure GitHub Pages source")
+      );
+      consoleSpy.mockRestore();
     });
   });
 });

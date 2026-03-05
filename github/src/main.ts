@@ -13,7 +13,7 @@ import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, 
 import { getTauriCore, readFile } from "@symbiosis-lab/moss-api";
 import { reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
-import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "./github-deploy";
+import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush, type DeployResult } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { checkPagesStatus, setCustomDomain, ensurePagesSource, getPages, enforceHttps } from "./github-api";
@@ -73,14 +73,17 @@ function generateDnsTarget(owner: string): DnsTarget {
  * @param repo - Repository name
  * @param token - GitHub OAuth token (optional - if not available, skips status check)
  * @param pagesUrl - The expected GitHub Pages URL
- * @returns Object with isLive status and URL
+ * @param expectedCommit - Full SHA of the orphan commit pushed to gh-pages.
+ *   When set, a "built" status with a different commit is treated as stale.
+ * @returns Object with isLive status, URL, and optional error message
  */
 async function waitForPagesLive(
   owner: string,
   repo: string,
   token: string | null,
-  pagesUrl: string
-): Promise<{ isLive: boolean; url: string }> {
+  pagesUrl: string,
+  expectedCommit?: string,
+): Promise<{ isLive: boolean; url: string; error?: string }> {
   // If no token available, skip status check
   if (!token) {
     console.log("   Status check skipped (no token available)");
@@ -100,16 +103,23 @@ async function waitForPagesLive(
     const status = await checkPagesStatus(owner, repo, token);
 
     if (status.status === "built") {
-      console.log("   Site is live!");
-      return { isLive: true, url: pagesUrl };
+      // Guard against stale builds: if we know the expected commit,
+      // only consider it live when the build matches our push.
+      if (expectedCommit && status.commit && status.commit !== expectedCommit) {
+        console.log(`   Stale build detected (got ${status.commit}, expected ${expectedCommit})`);
+        // Keep polling — the new build hasn't started yet
+      } else {
+        console.log("   Site is live!");
+        return { isLive: true, url: pagesUrl };
+      }
     }
 
     if (status.status === "errored") {
       console.log("   Build failed on GitHub");
-      return { isLive: false, url: pagesUrl };
+      return { isLive: false, url: pagesUrl, error: status.error };
     }
 
-    // Still building - sleep before next check
+    // Still building or stale — sleep before next check
     if (i < maxAttempts - 1) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
@@ -228,7 +238,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
     // Tracks current phase so heartbeat message is informative, not generic
-    let commitSha = "";
+    let deployResult: DeployResult = { commitSha: "", orphanSha: "" };
     let currentPhase = "Deploying...";
     const heartbeat = setInterval(() => {
       reportProgress("deploying", 5, 10, currentPhase);
@@ -247,7 +257,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     try {
       // Single deploy: commits source + .moss/site/, pushes to main,
       // then extracts .moss/site/ tree as orphan commit → gh-pages
-      commitSha = await deployViaGitPush({
+      deployResult = await deployViaGitPush({
         owner,
         repo: repoName,
         token,
@@ -266,13 +276,17 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Ensure GitHub Pages serves from gh-pages (non-fatal)
     try {
-      await ensurePagesSource(owner, repoName, token, "gh-pages");
+      const pagesResult = await ensurePagesSource(owner, repoName, token, "gh-pages");
+      if (!pagesResult.configured) {
+        console.warn("Failed to configure GitHub Pages source — user may need to enable Pages manually");
+      }
     } catch (e) {
       console.warn(`   Failed to configure Pages source: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Generate pages URL for logging and response
     const pagesUrl = buildPagesUrl(owner, repoName);
+    const { commitSha, orphanSha } = deployResult;
 
     // Log the deployment result with URL immediately
     if (commitSha) {
@@ -285,9 +299,11 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
 
     // Phase 9: Check if deployment is live (only if we pushed changes)
     let isLive = false;
+    let liveError: string | undefined;
     if (commitSha) {
-      const liveStatus = await waitForPagesLive(owner, repoName, token, pagesUrl);
+      const liveStatus = await waitForPagesLive(owner, repoName, token, pagesUrl, orphanSha);
       isLive = liveStatus.isLive;
+      liveError = liveStatus.error;
     }
 
     // Build DNS target for custom domain configuration
@@ -297,7 +313,8 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     // Zero-config deployment - no manual steps needed
     let message: string;
     let toastMessage: string;
-    let toastVariant: "success" | "info" | "error";
+    let toastVariant: "success" | "info" | "warning" | "error";
+    let toastActions: Array<{ label: string; url: string }>;
 
     if (wasFirstSetup && commitSha) {
       // Scenario 1: First-time deployment (gh-pages branch created)
@@ -308,14 +325,34 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         `It may take a few minutes for your site to appear.`;
       toastMessage = "Deploy configured!";
       toastVariant = "success";
-    } else if (commitSha) {
-      // Scenario 2: Subsequent deploy with changes pushed
+      toastActions = [{ label: "View site", url: pagesUrl }];
+    } else if (commitSha && isLive) {
+      // Scenario 2a: Subsequent deploy, site is confirmed live
       message =
         `Site deployed to GitHub Pages!\n\n` +
         `Your site: ${pagesUrl}\n\n` +
         `Changes have been pushed to gh-pages branch.`;
-      toastMessage = isLive ? "Site is live!" : "Deploying...";
+      toastMessage = "Site is live!";
       toastVariant = "success";
+      toastActions = [{ label: "View site", url: pagesUrl }];
+    } else if (commitSha && liveError) {
+      // Scenario 2b: Subsequent deploy, build errored on GitHub
+      message =
+        `Site pushed to GitHub Pages but the build failed.\n\n` +
+        `Error: ${liveError}\n\n` +
+        `Check GitHub Pages settings for details.`;
+      toastMessage = liveError.length > 60 ? liveError.slice(0, 60) + "..." : liveError;
+      toastVariant = "warning";
+      toastActions = [{ label: "View on GitHub", url: `https://github.com/${owner}/${repoName}/settings/pages` }];
+    } else if (commitSha) {
+      // Scenario 2c: Subsequent deploy, unknown/timeout status
+      message =
+        `Site deployed to GitHub Pages!\n\n` +
+        `Your site: ${pagesUrl}\n\n` +
+        `Changes have been pushed to gh-pages branch.`;
+      toastMessage = "Deploying \u2014 check GitHub for status";
+      toastVariant = "info";
+      toastActions = [{ label: "View on GitHub", url: `https://github.com/${owner}/${repoName}/actions` }];
     } else {
       // Scenario 3: No changes to push
       message =
@@ -324,6 +361,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         `Your local site is already up to date.`;
       toastMessage = "No changes to deploy";
       toastVariant = "info";
+      toastActions = [{ label: "View site", url: pagesUrl }];
     }
 
     // Phase 10: Final progress message based on scenario
@@ -345,7 +383,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
     await showToast({
       message: toastMessage,
       variant: toastVariant,
-      actions: [{ label: "View site", url: pagesUrl }],
+      actions: toastActions,
       duration: 8000,
     });
 

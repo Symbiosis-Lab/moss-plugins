@@ -8,7 +8,7 @@
 
 export interface NormalizedComment {
   id: string;
-  source: string; // "matters", "nostr", "webmention", "waline"
+  source: string; // "matters", "webmention", "waline"
   author: { name: string; url?: string };
   content_html: string;
   date: string; // ISO 8601

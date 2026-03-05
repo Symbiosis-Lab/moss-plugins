@@ -20,7 +20,7 @@ import type {
 } from "./types";
 
 /** Default social source names to try loading */
-const DEFAULT_SOCIAL_SOURCES = ["matters", "nostr", "webmention", "activitypub"];
+const DEFAULT_SOCIAL_SOURCES = ["matters", "webmention", "activitypub"];
 
 /**
  * Build a mapping from relative source .md path to output URL path

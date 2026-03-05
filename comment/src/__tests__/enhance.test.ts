@@ -809,3 +809,193 @@ describe("enhance hook i18n lang detection", () => {
     expect(htmlCall![1]).toContain("1 comment");
   });
 });
+
+describe("enhance hook CSS delivery", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockReadPluginFile.mockReset();
+    mockHttpGet.mockReset();
+    clearDetectionCache();
+    mockReadPluginFile.mockResolvedValue(".moss-comments { color: red; }");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    (globalThis as any).__MOSS_INTERNAL_CONTEXT__ = {
+      project_path: "/Users/test/site",
+    };
+  });
+
+  it("writes CSS file to output directory once", async () => {
+    const ctx = makeEnhanceContext({});
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1",
+      updatedAt: new Date().toISOString(),
+      articles: {
+        "uid-hello": {
+          comments: [{
+            id: "c1",
+            content: "Nice!",
+            createdAt: "2024-01-01T00:00:00Z",
+            author: { displayName: "Alice" },
+          }],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    await enhance(ctx);
+
+    // CSS file should be written to output directory
+    const cssWriteCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
+    );
+    expect(cssWriteCall).toBeDefined();
+    expect(cssWriteCall![0]).toBe(".moss/site/moss-comments.css");
+    expect(cssWriteCall![1]).toContain(".moss-comments");
+  });
+
+  it("injects <link> tag instead of inline <style>", async () => {
+    const ctx = makeEnhanceContext({});
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1",
+      updatedAt: new Date().toISOString(),
+      articles: {
+        "uid-hello": {
+          comments: [{
+            id: "c1",
+            content: "Nice!",
+            createdAt: "2024-01-01T00:00:00Z",
+            author: { displayName: "Alice" },
+          }],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path === ".moss/site/posts/hello/index.html") {
+        return Promise.resolve(makeArticleHtml("Hello"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    await enhance(ctx);
+
+    // Find the written HTML
+    const htmlCall = mockWriteFile.mock.calls.find(
+      (call: any[]) => call[0] === ".moss/site/posts/hello/index.html"
+    );
+    expect(htmlCall).toBeDefined();
+    const writtenHtml = htmlCall![1];
+
+    // Should have <link> to external CSS with depth-relative path
+    // "posts/hello/" has depth 2, so prefix is "../../"
+    expect(writtenHtml).toContain('<link rel="stylesheet" href="../../moss-comments.css">');
+
+    // Should NOT have inline <style>
+    expect(writtenHtml).not.toContain("moss-comments-style");
+    expect(writtenHtml).not.toContain("<style");
+  });
+
+  it("writes CSS file only once even with multiple pages", async () => {
+    const ctx = makeEnhanceContext({});
+
+    const articleMap: ArticleMap = {
+      articles: {
+        "posts/hello/": {
+          source_path: "/Users/test/site/posts/hello.md",
+          url_path: "posts/hello/",
+          uid: "uid-hello",
+        },
+        "posts/world/": {
+          source_path: "/Users/test/site/posts/world.md",
+          url_path: "posts/world/",
+          uid: "uid-world",
+        },
+      },
+    };
+
+    const socialData = {
+      schemaVersion: "1",
+      updatedAt: new Date().toISOString(),
+      articles: {
+        "uid-hello": {
+          comments: [{
+            id: "c1",
+            content: "Nice!",
+            createdAt: "2024-01-01T00:00:00Z",
+            author: { displayName: "Alice" },
+          }],
+        },
+        "uid-world": {
+          comments: [{
+            id: "c2",
+            content: "Great!",
+            createdAt: "2024-01-02T00:00:00Z",
+            author: { displayName: "Bob" },
+          }],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify(articleMap));
+      }
+      if (path === ".moss/social/comment.json") {
+        return Promise.resolve(JSON.stringify(socialData));
+      }
+      if (path.endsWith("index.html")) {
+        return Promise.resolve(makeArticleHtml("Test"));
+      }
+      return Promise.reject(new Error("File not found"));
+    });
+
+    await enhance(ctx);
+
+    // CSS file should be written exactly once
+    const cssWriteCalls = mockWriteFile.mock.calls.filter(
+      (call: any[]) => typeof call[0] === "string" && call[0].endsWith("moss-comments.css")
+    );
+    expect(cssWriteCalls).toHaveLength(1);
+  });
+});

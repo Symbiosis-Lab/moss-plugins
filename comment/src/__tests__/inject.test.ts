@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findInsertionPoint, injectCommentSection, injectCssLink, injectInlineStyle } from "../inject";
+import { findInsertionPoint, injectCommentSection, injectCssLink, injectInlineStyle, rootRelativePrefix } from "../inject";
 
 // ============================================================================
 // Existing tests for findInsertionPoint and injectCommentSection
@@ -143,6 +143,37 @@ describe("injectInlineStyle", () => {
     const result = injectInlineStyle(html, multilineCss);
     expect(result).toContain(multilineCss);
     expect(result).toContain('class="moss-comments-style"');
+  });
+});
+
+// ============================================================================
+// rootRelativePrefix
+// ============================================================================
+
+describe("rootRelativePrefix", () => {
+  it("returns empty string for root path", () => {
+    expect(rootRelativePrefix("")).toBe("");
+    expect(rootRelativePrefix("/")).toBe("");
+  });
+
+  it("returns ../ for depth-1 paths", () => {
+    expect(rootRelativePrefix("posts/")).toBe("../");
+  });
+
+  it("returns ../../ for depth-2 paths", () => {
+    expect(rootRelativePrefix("posts/hello/")).toBe("../../");
+  });
+
+  it("returns ../../../ for depth-3 paths", () => {
+    expect(rootRelativePrefix("articles/2024/post/")).toBe("../../../");
+  });
+
+  it("handles paths without trailing slash", () => {
+    expect(rootRelativePrefix("posts/hello")).toBe("../../");
+  });
+
+  it("handles leading slash", () => {
+    expect(rootRelativePrefix("/posts/hello/")).toBe("../../");
   });
 });
 

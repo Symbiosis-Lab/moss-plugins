@@ -12,13 +12,13 @@
  *   2. Reads .moss/article-map.json for source->output path mapping
  *   3. Renders a minimal comment section (author, date, text)
  *   4. Injects the section before </article> in each page
- *   5. Inlines CSS as a <style> tag in each page's <head>
+ *   5. Copies CSS to output dir and links it via <link> in each page's <head>
  */
 
 import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
 import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
-import { findInsertionPoint, injectCommentSection, injectInlineStyle } from "./inject";
+import { findInsertionPoint, injectCommentSection, injectCssLink, rootRelativePrefix } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchAllArtalkComments, detectProvider } from "./fetcher";
 import { parseLang, type Lang } from "./i18n";
@@ -214,10 +214,15 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
     console.log("[info] Comment: No server_url configured, static comments only");
   }
 
-  // 1. Read CSS once for inline injection into each page
-  let commentsCss = "";
+  // 1. Read CSS and write to output directory as external file
+  const outputPrefix = getOutputPrefix(ctx);
+  let hasCss = false;
   try {
-    commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
+    const commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
+    if (commentsCss) {
+      await writeFile(`${outputPrefix}/${COMMENTS_CSS_FILENAME}`, commentsCss);
+      hasCss = true;
+    }
   } catch {
     console.log("[warn] Comment: Could not read CSS file, comments will be unstyled");
   }
@@ -253,10 +258,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
   }
   console.log(`[info] Comment: Resolved ${commentsByPage.size} pages with comments`);
 
-  // 6. Derive output prefix for project-relative paths
-  const outputPrefix = getOutputPrefix(ctx);
-
-  // 7. Collect pages that need injection:
+  // 6. Collect pages that need injection:
   //    - Pages with comments always get a section
   //    - Pages without comments only get a section if there's a form (serverUrl set)
   const allUrlPaths: string[] = [];
@@ -307,7 +309,7 @@ export async function enhance(ctx: EnhanceContext): Promise<HookResult> {
         siteName,
         uid,
         defaultComments,
-        commentsCss
+        hasCss
       );
       if (result) injectedCount++;
     } catch (e) {
@@ -339,7 +341,7 @@ async function processHtmlFile(
   siteName: string = "",
   uid: string = "",
   defaultComments: boolean = true,
-  css: string = ""
+  hasCss: boolean = false
 ): Promise<boolean> {
   try {
     let html = await readFile(htmlRelPath);
@@ -391,8 +393,13 @@ async function processHtmlFile(
     const injected = injectCommentSection(html, commentHtml);
     if (!injected) return false;
 
-    // Inject inline CSS in <head> (idempotent - skips if already present)
-    html = injectInlineStyle(injected, css);
+    // Inject depth-relative CSS link in <head>
+    if (hasCss) {
+      const cssHref = rootRelativePrefix(urlPath) + COMMENTS_CSS_FILENAME;
+      html = injectCssLink(injected, cssHref);
+    } else {
+      html = injected;
+    }
 
     await writeFile(htmlRelPath, html);
     console.log(`[info] Comment: Injected into ${urlPath} (${comments.length} comments)`);

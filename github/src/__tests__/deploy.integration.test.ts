@@ -238,6 +238,7 @@ describe("on_deploy integration", () => {
 
       expect(result.success).toBe(true);
       expect(result.deployment?.metadata?.was_first_setup).toBe("true");
+      expect(result.deployment?.metadata?.repo_url).toBe("https://github.com/newuser/newsite");
       expect(vi.mocked(deployViaGitPush)).toHaveBeenCalledWith(
         expect.objectContaining({ owner: "newuser", repo: "newsite" })
       );
@@ -281,6 +282,7 @@ describe("on_deploy integration", () => {
       expect(result.deployment).toBeDefined();
       expect(result.deployment?.method).toBe("github-pages");
       expect(result.deployment?.url).toBe("https://testuser.github.io/testrepo");
+      expect(result.deployment?.metadata?.repo_url).toBe("https://github.com/testuser/testrepo");
     });
 
     it("indicates first-time setup in message", async () => {

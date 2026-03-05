@@ -396,6 +396,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
         url: pagesUrl,
         deployed_at: new Date().toISOString(),
         metadata: {
+          repo_url: `https://github.com/${owner}/${repoName}`,
           branch: "gh-pages",
           was_first_setup: String(wasFirstSetup),
           commit_sha: commitSha,

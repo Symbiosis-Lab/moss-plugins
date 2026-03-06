@@ -341,10 +341,12 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
     });
 
     // Show warning toast
-    const fileList = largeSourceFiles.join(", ");
+    const fileList = largeSourceFiles
+      .map((f) => `&nbsp;&nbsp;${f}`)
+      .join("<br>");
     await showToast({
       variant: "warning",
-      message: `Skipped ${largeSourceFiles.length} file(s) exceeding 100 MB: ${fileList}`,
+      message: `Skipped ${largeSourceFiles.length} file(s) exceeding 100 MB:<br>${fileList}`,
       duration: 10_000,
     });
   }

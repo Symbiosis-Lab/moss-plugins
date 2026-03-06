@@ -74,11 +74,14 @@ export function buildArtalkClientScript(
     btn.textContent = '${safeSubmitting}';
     if (statusEl) { statusEl.textContent = ''; statusEl.className = 'comment-form-status'; }
 
+    var rawLink = (form.elements['link'].value || '').trim();
+    if (rawLink && !/^https?:\\/\\//.test(rawLink)) { rawLink = 'https://' + rawLink; }
+
     var body = {
       content: form.elements['content'].value,
       name: form.elements['name'].value,
       email: form.elements['email'].value,
-      link: form.elements['link'].value || '',
+      link: rawLink,
       page_key: '${safePageKey}',
       site_name: '${safeSiteName}',
       ua: navigator.userAgent

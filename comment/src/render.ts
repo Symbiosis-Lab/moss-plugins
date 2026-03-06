@@ -193,7 +193,7 @@ function renderCommentForm(pagePath: string, provider: string = "waline", lang: 
   <div class="comment-form-meta">
     <input type="text" name="name" class="comment-field" placeholder="${t.name}" required>
     <input type="email" name="email" class="comment-field" placeholder="${t.email_optional}">
-    <input type="url" name="link" class="comment-field" placeholder="${t.website_optional}">
+    <input type="text" name="link" class="comment-field" placeholder="${t.website_optional}">
     ${submitButton}
   </div>
   ${statusDiv}

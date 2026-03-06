@@ -16,7 +16,7 @@ import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush, type DeployResult } from "./github-deploy";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
-import { checkPagesStatus, setCustomDomain, ensurePagesSource, getPages, enforceHttps } from "./github-api";
+import { checkPagesStatus, requestPagesBuild, setCustomDomain, ensurePagesSource, getPages, enforceHttps } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 
 // ============================================================================
@@ -92,6 +92,7 @@ async function waitForPagesLive(
 
   const maxAttempts = 6; // 6 attempts × 5s = 30s max
   const pollInterval = 5000;
+  let buildRequested = false;
 
   console.log("   Checking deployment status...");
 
@@ -107,7 +108,13 @@ async function waitForPagesLive(
       // only consider it live when the build matches our push.
       if (expectedCommit && status.commit && status.commit !== expectedCommit) {
         console.log(`   Stale build detected (got ${status.commit}, expected ${expectedCommit})`);
-        // Keep polling — the new build hasn't started yet
+        // Force-pushed orphan commits sometimes don't trigger automatic builds.
+        // Request one explicitly — but only once per deploy.
+        if (!buildRequested) {
+          buildRequested = true;
+          console.log("   Requesting rebuild...");
+          await requestPagesBuild(owner, repo, token);
+        }
       } else {
         console.log("   Site is live!");
         return { isLive: true, url: pagesUrl };

@@ -84,6 +84,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 // Mock the github-api module (checkPagesStatus used by waitForPagesLive)
 vi.mock("../github-api", () => ({
   checkPagesStatus: vi.fn().mockResolvedValue({ status: "built", url: "", commit: "orphan-sha-abc1234def5678" }),
+  requestPagesBuild: vi.fn().mockResolvedValue(true),
   getAuthenticatedUser: vi.fn(),
   checkRepoExists: vi.fn(),
   createRepository: vi.fn(),

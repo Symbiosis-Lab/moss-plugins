@@ -313,6 +313,36 @@ export async function checkPagesStatus(
 }
 
 /**
+ * Explicitly request a GitHub Pages build.
+ *
+ * Force-pushed orphan commits sometimes don't trigger automatic builds.
+ * This endpoint forces GitHub to rebuild from the current gh-pages branch.
+ *
+ * @see https://docs.github.com/en/rest/pages/pages#request-a-github-pages-build
+ */
+export async function requestPagesBuild(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/pages/builds`,
+      {
+        method: "POST",
+        headers: {
+          ...GITHUB_API_HEADERS,
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get current GitHub Pages configuration (custom domain + HTTPS state)
  *
  * Used by the idempotent configure_domain hook to check what's already

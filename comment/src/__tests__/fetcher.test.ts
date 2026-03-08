@@ -555,6 +555,127 @@ describe("fetchAllArtalkComments", () => {
   });
 });
 
+describe("fetchArtalkComments — Artalk v2.9.1 response format (no data wrapper)", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+  });
+
+  it("parses comments from top-level json.comments (v2.9.1 format)", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        JSON.stringify({
+          comments: [
+            {
+              id: 1,
+              content: "<p>test</p>",
+              date: "2026-03-09T01:41:43.000Z",
+              nick: "tester",
+              email: "",
+              link: "",
+              rid: 0,
+              page_key: "e4cc2af9",
+            },
+          ],
+          count: 1,
+          roots_count: 1,
+        }),
+    });
+
+    const comments = await fetchArtalkComments(
+      "https://artalk.example.com",
+      "e4cc2af9",
+      "My Site"
+    );
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0].id).toBe("1");
+    expect(comments[0].content).toBe("<p>test</p>");
+    expect(comments[0].createdAt).toBe("2026-03-09T01:41:43.000Z");
+  });
+});
+
+describe("fetchAllArtalkComments — Artalk v2.9.1 response format (no data wrapper)", () => {
+  beforeEach(() => {
+    mockHttpGet.mockReset();
+  });
+
+  it("parses comments from top-level json.comments (v2.9.1 format)", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        JSON.stringify({
+          comments: [
+            {
+              id: 1,
+              content: "<p>Hello</p>",
+              date: "2026-03-09T10:00:00Z",
+              nick: "Alice",
+              rid: 0,
+              page_key: "/posts/hello/",
+            },
+          ],
+          count: 1,
+        }),
+    });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(result.size).toBe(1);
+    expect(result.get("/posts/hello/")).toHaveLength(1);
+    expect(result.get("/posts/hello/")![0].id).toBe("1");
+  });
+
+  it("paginates correctly with v2.9.1 top-level count", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      content: `<p>${i}</p>`,
+      date: "2026-03-09T10:00:00Z",
+      nick: "User",
+      rid: 0,
+      page_key: "/posts/hello/",
+    }));
+
+    mockHttpGet
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => JSON.stringify({ comments: page1, count: 100 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            comments: [
+              {
+                id: 101,
+                content: "<p>last</p>",
+                date: "2026-03-09T11:00:00Z",
+                nick: "User",
+                rid: 0,
+                page_key: "/posts/hello/",
+              },
+            ],
+            count: 1,
+          }),
+      });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(mockHttpGet).toHaveBeenCalledTimes(2);
+    expect(result.get("/posts/hello/")).toHaveLength(101);
+  });
+});
+
 describe("fetchArtalkComments — empty response guard", () => {
   beforeEach(() => {
     mockHttpGet.mockReset();

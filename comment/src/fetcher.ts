@@ -200,7 +200,7 @@ export async function fetchArtalkComments(
     if (!text) return [];
 
     const body = JSON.parse(text);
-    const comments: ArtalkComment[] = body.data?.comments;
+    const comments: ArtalkComment[] = body.comments ?? body.data?.comments;
 
     if (!comments || !Array.isArray(comments)) {
       return [];
@@ -251,7 +251,7 @@ export async function fetchAllArtalkComments(
       if (!text) break;
 
       const body = JSON.parse(text);
-      const comments: ArtalkComment[] = body.data?.comments;
+      const comments: ArtalkComment[] = body.comments ?? body.data?.comments;
 
       if (!comments || !Array.isArray(comments)) break;
 
@@ -263,7 +263,7 @@ export async function fetchAllArtalkComments(
       }
 
       // If we got fewer than LIMIT, we've fetched everything
-      const count = body.data?.count ?? comments.length;
+      const count = body.count ?? body.data?.count ?? comments.length;
       if (count < LIMIT) break;
 
       offset += LIMIT;

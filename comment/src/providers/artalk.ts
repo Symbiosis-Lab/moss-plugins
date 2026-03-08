@@ -182,21 +182,21 @@ export function buildArtalkClientScript(
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(json) {
           if (!json) return;
-          var list = (json.data && json.data.comments) || [];
+          var list = json.comments || (json.data && json.data.comments) || [];
           var added = 0;
           // Anchor = first build-time comment. Hydrated comments go before it
           // to maintain newest-first order (API returns date_desc).
           var anchor = commentList ? commentList.firstChild : null;
           for (var i = 0; i < list.length; i++) {
             var c = list[i];
-            if (new Date(c.created_at).getTime() <= builtAtMs) break;
+            if (new Date(c.date).getTime() <= builtAtMs) break;
             if (document.getElementById('comment-' + c.id)) continue;
 
             var li = document.createElement('li');
             li.className = 'comment-item';
             li.id = 'comment-' + c.id;
             var authorName = (c.nick || 'Anonymous').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-            var dateStr = new Date(c.created_at).toLocaleDateString('${locale}', {year:'numeric',month:'short',day:'numeric'});
+            var dateStr = new Date(c.date).toLocaleDateString('${locale}', {year:'numeric',month:'short',day:'numeric'});
             li.innerHTML = '<div class="comment-header">'
               + '<span class="comment-author">' + authorName + '</span>'
               + '<time class="comment-date">' + dateStr + '</time>'

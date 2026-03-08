@@ -135,8 +135,8 @@ describe("buildArtalkClientScript", () => {
 
     it("contains date comparison for filtering (builtAtMs boundary)", () => {
       const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
-      // The script should compare comment dates against builtAtMs
-      expect(script).toMatch(/new Date\(c\.created_at\)\.getTime\(\)\s*<=\s*builtAtMs/);
+      // The script should compare comment dates against builtAtMs using c.date
+      expect(script).toMatch(/new Date\(c\.date\)\.getTime\(\)\s*<=\s*builtAtMs/);
     });
 
     it("contains ID guard using document.getElementById", () => {
@@ -214,10 +214,16 @@ describe("buildArtalkClientScript", () => {
       expect(script).toMatch(/\.catch\(function/);
     });
 
-    it("parses Artalk v2 response as json.data.comments (not json.data)", () => {
+    it("parses Artalk v2.9.1 response from top-level json.comments", () => {
       const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
-      // Must match the Artalk v2 API shape: { data: { comments: [...] } }
-      expect(script).toContain("json.data && json.data.comments");
+      // Artalk v2.9.1 returns { comments: [...] } at top level (no data wrapper)
+      expect(script).toContain("json.comments");
+    });
+
+    it("uses c.date for comment date field (Artalk v2.9.1 format)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // Artalk returns 'date' not 'created_at'
+      expect(script).toMatch(/c\.date/);
     });
 
     it("checks res.ok before parsing JSON", () => {

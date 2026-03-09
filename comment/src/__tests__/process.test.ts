@@ -208,7 +208,7 @@ describe("process hook", () => {
     expect(parsed.articles["abc123"].comments[0].id).toBe("w1");
   });
 
-  it("fetches Artalk comments in batch when server is auto-detected as artalk", async () => {
+  it("fetches Artalk comments per-page when server is auto-detected as artalk", async () => {
     const ctx = makeContext(
       { server_url: "https://artalk.example.com" },
       { site_name: "My Blog" }
@@ -233,7 +233,7 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    // Mock httpGet: detection probe returns 200 (Artalk), batch fetch returns data
+    // Mock httpGet: detection probe returns 200 (Artalk), per-page fetch returns data
     mockHttpGet.mockImplementation((url: string) => {
       if (url.endsWith("/api/v2/conf")) {
         return Promise.resolve({
@@ -242,29 +242,27 @@ describe("process hook", () => {
           text: () => JSON.stringify({ app_name: "Artalk" }),
         });
       }
-      // Batch Artalk comments endpoint (flat_mode=true)
+      // Per-page Artalk comments endpoint (includes page_key)
       return Promise.resolve({
         ok: true,
         status: 200,
         text: () =>
           JSON.stringify({
-            data: {
-              comments: [
-                {
-                  id: 101,
-                  content: "<p>Artalk comment</p>",
-                  date: "2025-06-15T10:00:00.000Z",
-                  nick: "Charlie",
-                  email: "",
-                  link: "",
-                  rid: 0,
-                  page_key: "abc123",
-                  is_collapsed: false,
-                  is_pending: false,
-                },
-              ],
-              count: 1,
-            },
+            comments: [
+              {
+                id: 101,
+                content: "<p>Artalk comment</p>",
+                date: "2025-06-15T10:00:00.000Z",
+                nick: "Charlie",
+                email: "",
+                link: "",
+                rid: 0,
+                page_key: "abc123",
+                is_collapsed: false,
+                is_pending: false,
+              },
+            ],
+            count: 1,
           }),
       });
     });
@@ -278,9 +276,9 @@ describe("process hook", () => {
       "https://artalk.example.com/api/v2/conf"
     );
 
-    // Should have used batch Artalk API format (flat_mode=true, no page_key filter)
+    // Should have used per-page Artalk API (with page_key, not batch flat_mode)
     expect(mockHttpGet).toHaveBeenCalledWith(
-      expect.stringContaining("flat_mode=true")
+      expect.stringContaining("page_key=abc123")
     );
     expect(mockHttpGet).toHaveBeenCalledWith(
       expect.stringContaining("site_name=My%20Blog")

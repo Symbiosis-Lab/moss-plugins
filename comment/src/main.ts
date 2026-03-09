@@ -20,7 +20,7 @@ import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssStyle } from "./inject";
 import { getSubmitScriptBuilder } from "./providers";
-import { fetchWalineComments, fetchAllArtalkComments, detectProvider } from "./fetcher";
+import { fetchWalineComments, fetchArtalkComments, detectProvider } from "./fetcher";
 import { parseLang, type Lang } from "./i18n";
 import {
   loadCommentSocialData,
@@ -123,15 +123,18 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
   let totalComments = 0;
 
   if (providerName === "artalk") {
-    // Artalk: batch fetch all comments for the site in one go
-    console.log(`[info] Comment: Fetching all comments for site "${siteName}"...`);
-    const allComments = await fetchAllArtalkComments(serverUrl, siteName);
-
+    // Artalk: per-page fetch (v2.9.1 requires page_key)
     for (const { uid } of pagesWithUids) {
-      const comments = allComments.get(uid) || [];
-      if (comments.length > 0) {
-        mergeCommentSocialData(socialData, uid, comments);
-        totalComments += comments.length;
+      try {
+        const comments = await fetchArtalkComments(serverUrl, uid, siteName);
+        if (comments.length > 0) {
+          mergeCommentSocialData(socialData, uid, comments);
+          totalComments += comments.length;
+        }
+      } catch (error) {
+        console.log(
+          `[warn] Comment: Failed to fetch Artalk comments for uid=${uid}: ${error}`
+        );
       }
     }
   } else {

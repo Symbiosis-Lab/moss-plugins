@@ -208,7 +208,7 @@ describe("process hook", () => {
     expect(parsed.articles["abc123"].comments[0].id).toBe("w1");
   });
 
-  it("fetches Artalk comments per-page when server is auto-detected as artalk", async () => {
+  it("fetches Artalk comments in batch via stats endpoint when auto-detected as artalk", async () => {
     const ctx = makeContext(
       { server_url: "https://artalk.example.com" },
       { site_name: "My Blog" }
@@ -233,7 +233,7 @@ describe("process hook", () => {
 
     mockWriteFile.mockResolvedValue(undefined);
 
-    // Mock httpGet: detection probe returns 200 (Artalk), per-page fetch returns data
+    // Mock httpGet: detection probe returns 200 (Artalk), batch stats endpoint returns data
     mockHttpGet.mockImplementation((url: string) => {
       if (url.endsWith("/api/v2/conf")) {
         return Promise.resolve({
@@ -242,13 +242,13 @@ describe("process hook", () => {
           text: () => JSON.stringify({ app_name: "Artalk" }),
         });
       }
-      // Per-page Artalk comments endpoint (includes page_key)
+      // Stats/latest_comments endpoint (batch, flat array under data)
       return Promise.resolve({
         ok: true,
         status: 200,
         text: () =>
           JSON.stringify({
-            comments: [
+            data: [
               {
                 id: 101,
                 content: "<p>Artalk comment</p>",
@@ -262,7 +262,6 @@ describe("process hook", () => {
                 is_pending: false,
               },
             ],
-            count: 1,
           }),
       });
     });
@@ -276,9 +275,9 @@ describe("process hook", () => {
       "https://artalk.example.com/api/v2/conf"
     );
 
-    // Should have used per-page Artalk API (with page_key, not batch flat_mode)
+    // Should have used batch stats endpoint
     expect(mockHttpGet).toHaveBeenCalledWith(
-      expect.stringContaining("page_key=abc123")
+      expect.stringContaining("stats/latest_comments")
     );
     expect(mockHttpGet).toHaveBeenCalledWith(
       expect.stringContaining("site_name=My%20Blog")

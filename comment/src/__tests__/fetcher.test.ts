@@ -390,42 +390,38 @@ describe("fetchAllArtalkComments", () => {
     mockHttpGet.mockReset();
   });
 
-  it("fetches all comments in one paginated batch and groups by page_key", async () => {
-    // Single page of results (count < limit means no more pages)
+  it("uses stats/latest_comments endpoint and groups by page_key", async () => {
     mockHttpGet.mockResolvedValue({
       ok: true,
       status: 200,
       text: () =>
         JSON.stringify({
-          data: {
-            comments: [
-              {
-                id: 1,
-                content: "<p>Hello</p>",
-                date: "2025-06-15T10:00:00Z",
-                nick: "Alice",
-                rid: 0,
-                page_key: "/posts/hello/",
-              },
-              {
-                id: 2,
-                content: "<p>World</p>",
-                date: "2025-06-15T11:00:00Z",
-                nick: "Bob",
-                rid: 0,
-                page_key: "/posts/world/",
-              },
-              {
-                id: 3,
-                content: "<p>Reply</p>",
-                date: "2025-06-15T12:00:00Z",
-                nick: "Charlie",
-                rid: 1,
-                page_key: "/posts/hello/",
-              },
-            ],
-            count: 3,
-          },
+          data: [
+            {
+              id: 1,
+              content: "<p>Hello</p>",
+              date: "2025-06-15T10:00:00Z",
+              nick: "Alice",
+              rid: 0,
+              page_key: "/posts/hello/",
+            },
+            {
+              id: 2,
+              content: "<p>World</p>",
+              date: "2025-06-15T11:00:00Z",
+              nick: "Bob",
+              rid: 0,
+              page_key: "/posts/world/",
+            },
+            {
+              id: 3,
+              content: "<p>Reply</p>",
+              date: "2025-06-15T12:00:00Z",
+              nick: "Charlie",
+              rid: 1,
+              page_key: "/posts/hello/",
+            },
+          ],
         }),
     });
 
@@ -434,13 +430,13 @@ describe("fetchAllArtalkComments", () => {
       "My Site"
     );
 
-    // Should have made one request with flat_mode=true
+    // Should use stats/latest_comments endpoint
     expect(mockHttpGet).toHaveBeenCalledTimes(1);
     expect(mockHttpGet).toHaveBeenCalledWith(
-      expect.stringContaining("flat_mode=true")
+      expect.stringContaining("stats/latest_comments")
     );
     expect(mockHttpGet).toHaveBeenCalledWith(
-      expect.stringContaining("offset=0")
+      expect.stringContaining("site_name=My%20Site")
     );
 
     // Grouped by page_key
@@ -458,59 +454,6 @@ describe("fetchAllArtalkComments", () => {
       replyToId: undefined,
     });
     expect(helloComments[1].replyToId).toBe("1");
-  });
-
-  it("paginates when count equals limit", async () => {
-    // First page: 100 comments (count === limit → fetch next page)
-    const page1Comments = Array.from({ length: 100 }, (_, i) => ({
-      id: i + 1,
-      content: `<p>Comment ${i + 1}</p>`,
-      date: "2025-06-15T10:00:00Z",
-      nick: "User",
-      rid: 0,
-      page_key: "/posts/hello/",
-    }));
-
-    // Second page: 5 comments (count < limit → done)
-    const page2Comments = Array.from({ length: 5 }, (_, i) => ({
-      id: 101 + i,
-      content: `<p>Comment ${101 + i}</p>`,
-      date: "2025-06-15T11:00:00Z",
-      nick: "User",
-      rid: 0,
-      page_key: "/posts/hello/",
-    }));
-
-    mockHttpGet
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () =>
-          JSON.stringify({
-            data: { comments: page1Comments, count: 100 },
-          }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () =>
-          JSON.stringify({
-            data: { comments: page2Comments, count: 5 },
-          }),
-      });
-
-    const result = await fetchAllArtalkComments(
-      "https://artalk.example.com",
-      "My Site"
-    );
-
-    expect(mockHttpGet).toHaveBeenCalledTimes(2);
-    // Second call should have offset=100
-    expect(mockHttpGet).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("offset=100")
-    );
-    expect(result.get("/posts/hello/")).toHaveLength(105);
   });
 
   it("returns empty map on HTTP error", async () => {
@@ -544,6 +487,21 @@ describe("fetchAllArtalkComments", () => {
       ok: true,
       status: 200,
       text: () => "",
+    });
+
+    const result = await fetchAllArtalkComments(
+      "https://artalk.example.com",
+      "My Site"
+    );
+
+    expect(result.size).toBe(0);
+  });
+
+  it("handles empty data array", async () => {
+    mockHttpGet.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify({ data: [] }),
     });
 
     const result = await fetchAllArtalkComments(
@@ -596,85 +554,6 @@ describe("fetchArtalkComments — Artalk v2.9.1 response format (no data wrapper
   });
 });
 
-describe("fetchAllArtalkComments — Artalk v2.9.1 response format (no data wrapper)", () => {
-  beforeEach(() => {
-    mockHttpGet.mockReset();
-  });
-
-  it("parses comments from top-level json.comments (v2.9.1 format)", async () => {
-    mockHttpGet.mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        JSON.stringify({
-          comments: [
-            {
-              id: 1,
-              content: "<p>Hello</p>",
-              date: "2026-03-09T10:00:00Z",
-              nick: "Alice",
-              rid: 0,
-              page_key: "/posts/hello/",
-            },
-          ],
-          count: 1,
-        }),
-    });
-
-    const result = await fetchAllArtalkComments(
-      "https://artalk.example.com",
-      "My Site"
-    );
-
-    expect(result.size).toBe(1);
-    expect(result.get("/posts/hello/")).toHaveLength(1);
-    expect(result.get("/posts/hello/")![0].id).toBe("1");
-  });
-
-  it("paginates correctly with v2.9.1 top-level count", async () => {
-    const page1 = Array.from({ length: 100 }, (_, i) => ({
-      id: i + 1,
-      content: `<p>${i}</p>`,
-      date: "2026-03-09T10:00:00Z",
-      nick: "User",
-      rid: 0,
-      page_key: "/posts/hello/",
-    }));
-
-    mockHttpGet
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => JSON.stringify({ comments: page1, count: 100 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () =>
-          JSON.stringify({
-            comments: [
-              {
-                id: 101,
-                content: "<p>last</p>",
-                date: "2026-03-09T11:00:00Z",
-                nick: "User",
-                rid: 0,
-                page_key: "/posts/hello/",
-              },
-            ],
-            count: 1,
-          }),
-      });
-
-    const result = await fetchAllArtalkComments(
-      "https://artalk.example.com",
-      "My Site"
-    );
-
-    expect(mockHttpGet).toHaveBeenCalledTimes(2);
-    expect(result.get("/posts/hello/")).toHaveLength(101);
-  });
-});
 
 describe("fetchArtalkComments — empty response guard", () => {
   beforeEach(() => {

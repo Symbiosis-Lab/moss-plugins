@@ -216,9 +216,10 @@ export async function fetchArtalkComments(
 }
 
 /**
- * Fetch ALL comments for a site from Artalk in paginated batches.
+ * Fetch ALL comments for a site from Artalk using the stats endpoint.
  *
- * Uses flat_mode=true to get all comments (including replies) in a flat list.
+ * Uses /api/v2/stats/latest_comments which returns all comments for a site
+ * without requiring page_key (unlike /api/v2/comments in Artalk v2.9.1+).
  * Groups results by page_key so callers can look up comments per page.
  *
  * @param serverUrl - Base URL of the Artalk server
@@ -229,44 +230,33 @@ export async function fetchAllArtalkComments(
   serverUrl: string,
   siteName: string
 ): Promise<Map<string, GenericSocialComment[]>> {
-  const LIMIT = 100;
   const result = new Map<string, GenericSocialComment[]>();
 
   try {
     const encodedSiteName = encodeURIComponent(siteName);
-    let offset = 0;
+    const url = `${serverUrl}/api/v2/stats/latest_comments?site_name=${encodedSiteName}&limit=1000`;
+    const response = await httpGet(url);
 
-    while (true) {
-      const url = `${serverUrl}/api/v2/comments?site_name=${encodedSiteName}&limit=${LIMIT}&offset=${offset}&flat_mode=true`;
-      const response = await httpGet(url);
+    if (!response.ok) {
+      console.log(
+        `[warn] Comment: Artalk batch fetch failed: HTTP ${response.status}`
+      );
+      return result;
+    }
 
-      if (!response.ok) {
-        console.log(
-          `[warn] Comment: Artalk batch fetch failed: HTTP ${response.status}`
-        );
-        break;
-      }
+    const text = response.text();
+    if (!text) return result;
 
-      const text = response.text();
-      if (!text) break;
+    const body = JSON.parse(text);
+    const comments: ArtalkComment[] = body.data;
 
-      const body = JSON.parse(text);
-      const comments: ArtalkComment[] = body.comments ?? body.data?.comments;
+    if (!comments || !Array.isArray(comments)) return result;
 
-      if (!comments || !Array.isArray(comments)) break;
-
-      for (const c of comments) {
-        const pageKey = c.page_key ?? "";
-        const existing = result.get(pageKey) ?? [];
-        existing.push(normalizeArtalkComment(c));
-        result.set(pageKey, existing);
-      }
-
-      // If we got fewer than LIMIT, we've fetched everything
-      const count = body.count ?? body.data?.count ?? comments.length;
-      if (count < LIMIT) break;
-
-      offset += LIMIT;
+    for (const c of comments) {
+      const pageKey = c.page_key ?? "";
+      const existing = result.get(pageKey) ?? [];
+      existing.push(normalizeArtalkComment(c));
+      result.set(pageKey, existing);
     }
   } catch (error) {
     console.log(

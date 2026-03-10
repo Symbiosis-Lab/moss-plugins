@@ -21,29 +21,10 @@ export function renderStars(rating: number | null): string {
 }
 
 /**
- * Resolve a cover path relative to the page's URL directory.
- */
-function resolveCoverSrc(coverPath: string, pageUrlPath: string): string {
-  // Both are relative to project root. Compute relative path from page to cover.
-  const pageParts = pageUrlPath.replace(/\/$/, "").split("/");
-  const coverParts = coverPath.split("/");
-
-  // Find common prefix length
-  let common = 0;
-  while (common < pageParts.length && common < coverParts.length && pageParts[common] === coverParts[common]) {
-    common++;
-  }
-
-  const ups = pageParts.length - common;
-  const rel = [...Array(ups).fill(".."), ...coverParts.slice(common)].join("/");
-  return rel || coverPath;
-}
-
-/**
  * Render the book header: cover image + creator + year.
  * Injected after <h1> in the article.
  */
-export function renderHeader(entry: ReviewSocialEntry, pageUrlPath: string): string {
+export function renderHeader(entry: ReviewSocialEntry): string {
   const hasCreator = entry.creator.length > 0;
   const hasYear = entry.year !== null;
 
@@ -53,10 +34,9 @@ export function renderHeader(entry: ReviewSocialEntry, pageUrlPath: string): str
   const parts: string[] = [];
 
   // Cover image
-  if (entry.cover_downloaded && entry.cover_path) {
-    const src = resolveCoverSrc(entry.cover_path, pageUrlPath);
+  if (entry.cover_url) {
     parts.push(
-      `<img class="review-cover" src="${escapeAttr(src)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
+      `<img class="review-cover" src="${escapeAttr(entry.cover_url)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
     );
   }
 

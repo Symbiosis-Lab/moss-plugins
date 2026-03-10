@@ -9,7 +9,7 @@
  *   Reads review.json, injects book header after <h1> and colophon before </article>.
  */
 
-import { readFile, writeFile, fetchUrl, downloadAsset, readPluginFile, fileExists } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
 import { fetchNeoDBItem } from "./neodb";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
@@ -22,7 +22,6 @@ import type {
   ModifiedFile,
   ArticleMap,
   ReviewSocialEntry,
-  NeoDBItem,
 } from "./types";
 
 const REVIEW_CSS_FILENAME = "review.css";
@@ -57,44 +56,6 @@ function parseFrontmatter(markdown: string): ParsedFrontmatter {
   if (coverMatch) result.cover = coverMatch[1].trim().replace(/^["']|["']$/g, "");
 
   return result;
-}
-
-// ============================================================================
-// Cover download helper
-// ============================================================================
-
-function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-async function downloadCover(
-  coverUrl: string,
-  title: string,
-  sourceDir: string
-): Promise<{ downloaded: boolean; path: string | null }> {
-  try {
-    // Get extension from URL
-    const urlPath = new URL(coverUrl).pathname;
-    const ext = urlPath.match(/\.\w+$/)?.[0] || ".jpg";
-    const filename = slugify(title) + ext;
-    const targetPath = sourceDir + "/" + filename;
-
-    // Skip if already exists
-    try {
-      const exists = await fileExists(targetPath);
-      if (exists) return { downloaded: true, path: targetPath };
-    } catch {
-      // fileExists might not be available, proceed with download
-    }
-
-    const result = await downloadAsset(coverUrl, sourceDir, { filename });
-    if (result.ok) {
-      return { downloaded: true, path: targetPath };
-    }
-    return { downloaded: false, path: null };
-  } catch {
-    return { downloaded: false, path: null };
-  }
 }
 
 // ============================================================================
@@ -184,18 +145,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       continue;
     }
 
-    // 5. Download cover if available and writer hasn't specified their own
-    let coverDownloaded = false;
-    let coverPath: string | null = null;
-
-    if (item.cover_image_url) {
-      const sourceDir = sourcePath.replace(/\/[^/]+$/, "");
-      const result = await downloadCover(item.cover_image_url, item.title, sourceDir);
-      coverDownloaded = result.downloaded;
-      coverPath = result.path;
-    }
-
-    // 6. Build social entry
+    // 5. Build social entry
     const reviewEntry: ReviewSocialEntry = {
       neodb_url: fm.neodb,
       category: item.category,
@@ -207,8 +157,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       isbn: item.isbn,
       community_rating: item.rating,
       community_rating_count: item.rating_count,
-      cover_downloaded: coverDownloaded,
-      cover_path: coverPath,
+      cover_url: item.cover_image_url,
       external_urls: item.external_urls,
       writer_rating: fm.rating ?? null,
       fetched_at: new Date().toISOString(),
@@ -299,7 +248,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     let html = file.html;
 
     // Inject header after <h1>
-    const headerHtml = renderHeader(entry, urlPath);
+    const headerHtml = renderHeader(entry);
     if (headerHtml) {
       const injected = injectAfterH1(html, headerHtml);
       if (injected) html = injected;

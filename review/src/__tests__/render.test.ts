@@ -13,8 +13,7 @@ const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntr
   isbn: "9780300078152",
   community_rating: 8.2,
   community_rating_count: 45,
-  cover_downloaded: true,
-  cover_path: "reading/seeing-like-a-state.jpg",
+  cover_url: "https://neodb.social/m/book/cover.jpg",
   external_urls: {
     neodb: "https://neodb.social/book/abc",
     douban: "https://book.douban.com/subject/123/",
@@ -50,32 +49,32 @@ describe("renderStars", () => {
 
 describe("renderHeader", () => {
   it("renders cover + creator + year", () => {
-    const html = renderHeader(makeEntry(), "reading/");
+    const html = renderHeader(makeEntry());
     expect(html).toContain('class="review-header"');
     expect(html).toContain('class="review-cover"');
     expect(html).toContain("James C. Scott");
     expect(html).toContain("1998");
   });
 
-  it("omits cover when not downloaded", () => {
-    const html = renderHeader(makeEntry({ cover_downloaded: false, cover_path: null }), "reading/");
+  it("omits cover when no URL", () => {
+    const html = renderHeader(makeEntry({ cover_url: null }));
     expect(html).not.toContain("<img");
     expect(html).toContain("James C. Scott");
   });
 
   it("returns empty when no creator and no year", () => {
-    const html = renderHeader(makeEntry({ creator: [], year: null }), "reading/");
+    const html = renderHeader(makeEntry({ creator: [], year: null }));
     expect(html).toBe("");
   });
 
   it("shows only creator when no year", () => {
-    const html = renderHeader(makeEntry({ year: null }), "reading/");
+    const html = renderHeader(makeEntry({ year: null }));
     expect(html).toContain("James C. Scott");
     expect(html).not.toContain("·");
   });
 
   it("joins multiple creators with comma", () => {
-    const html = renderHeader(makeEntry({ creator: ["Alice", "Bob"] }), "reading/");
+    const html = renderHeader(makeEntry({ creator: ["Alice", "Bob"] }));
     expect(html).toContain("Alice, Bob");
   });
 });

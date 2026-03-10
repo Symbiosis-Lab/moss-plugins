@@ -46,8 +46,7 @@ export interface ReviewSocialEntry {
   isbn: string | null;
   community_rating: number | null;
   community_rating_count: number;
-  cover_downloaded: boolean;
-  cover_path: string | null;    // relative to project root
+  cover_url: string | null;     // remote cover image URL
   external_urls: {
     neodb: string;
     douban?: string;

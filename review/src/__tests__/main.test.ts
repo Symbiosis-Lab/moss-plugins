@@ -3,17 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockReadFile = vi.hoisted(() => vi.fn());
 const mockWriteFile = vi.hoisted(() => vi.fn());
 const mockFetchUrl = vi.hoisted(() => vi.fn());
-const mockDownloadAsset = vi.hoisted(() => vi.fn());
 const mockReadPluginFile = vi.hoisted(() => vi.fn());
-const mockFileExists = vi.hoisted(() => vi.fn());
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   readFile: mockReadFile,
   writeFile: mockWriteFile,
   fetchUrl: mockFetchUrl,
-  downloadAsset: mockDownloadAsset,
   readPluginFile: mockReadPluginFile,
-  fileExists: mockFileExists,
 }));
 
 import { process, enhance } from "../main";
@@ -31,8 +27,6 @@ describe("process hook", () => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset();
     mockFetchUrl.mockReset();
-    mockDownloadAsset.mockReset();
-    mockFileExists.mockReset();
   });
 
   it("skips when no article-map.json", async () => {
@@ -74,14 +68,6 @@ describe("process hook", () => {
       text: () => JSON.stringify(bookFixture),
     });
 
-    mockDownloadAsset.mockResolvedValue({
-      ok: true,
-      status: 200,
-      bytesWritten: 1000,
-      actualPath: "reading/seeing-like-a-state.jpg",
-    });
-
-    mockFileExists.mockResolvedValue(false);
     mockWriteFile.mockResolvedValue(undefined);
 
     const result = await process(makeProcessCtx());
@@ -126,8 +112,7 @@ describe("enhance hook", () => {
           isbn: "978-0-000-00000-0",
           community_rating: 8.0,
           community_rating_count: 100,
-          cover_downloaded: false,
-          cover_path: null,
+          cover_url: null,
           external_urls: { neodb: "https://neodb.social/book/abc" },
           writer_rating: 4,
           fetched_at: "2026-03-10T00:00:00.000Z",

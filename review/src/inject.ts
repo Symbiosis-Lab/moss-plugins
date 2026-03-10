@@ -3,8 +3,17 @@
  *
  * Three injection points:
  * - After </h1>: book header (cover + creator + year)
- * - Before </article>: colophon (rating + biblio + links)
+ * - Before comment section or </article>: colophon (rating + biblio + links)
  * - In <head>: inline CSS
+ *
+ * Plugin ordering: moss runs enhance plugins sequentially (plugin-runtime.ts),
+ * each seeing the previous plugin's modifications. The colophon injection is
+ * order-independent — it works whether review runs before or after comment:
+ *
+ *   Review first: colophon inserts before </article>; comment then inserts
+ *                 before </article> too, placing comments after colophon. ✓
+ *   Comment first: comment section already in HTML; colophon inserts before
+ *                  <section class="moss-comments">, placing it above comments. ✓
  */
 
 /**

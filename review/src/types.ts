@@ -1,0 +1,127 @@
+/**
+ * Types for the Review plugin
+ */
+
+// ============================================================================
+// NeoDB Types
+// ============================================================================
+
+/** Normalized item from any NeoDB category */
+export interface NeoDBItem {
+  id: string;
+  uuid: string;
+  category: string;
+  title: string;
+  cover_image_url: string | null;
+  creator: string[];        // normalized: author, director, or artist
+  year: number | null;      // normalized from pub_year, year, release_year
+  publisher: string | null; // pub_house for books, label for albums
+  pages: number | null;
+  isbn: string | null;
+  rating: number | null;    // NeoDB community rating, 1-10 scale
+  rating_count: number;
+  external_urls: {
+    neodb: string;
+    douban?: string;
+    goodreads?: string;
+    openlibrary?: string;
+    imdb?: string;
+    tmdb?: string;
+  };
+}
+
+// ============================================================================
+// Social Data Types
+// ============================================================================
+
+/** Entry in .moss/social/review.json, keyed by uid */
+export interface ReviewSocialEntry {
+  neodb_url: string;
+  category: string;
+  title: string;
+  creator: string[];
+  year: number | null;
+  publisher: string | null;
+  pages: number | null;
+  isbn: string | null;
+  community_rating: number | null;
+  community_rating_count: number;
+  cover_downloaded: boolean;
+  cover_path: string | null;    // relative to project root
+  external_urls: {
+    neodb: string;
+    douban?: string;
+    goodreads?: string;
+    openlibrary?: string;
+    imdb?: string;
+    tmdb?: string;
+  };
+  writer_rating: number | null; // from frontmatter, 1-5 scale
+  fetched_at: string;           // ISO 8601
+}
+
+/** Social data file for the review plugin */
+export interface ReviewSocialFile {
+  schemaVersion: string;
+  updatedAt: string;
+  articles: Record<string, ReviewSocialEntry>;
+}
+
+// ============================================================================
+// Article Map Types (same as comment plugin)
+// ============================================================================
+
+export interface ArticleMapEntry {
+  source_path: string;
+  url_path: string;
+  uid?: string;
+}
+
+export interface ArticleMap {
+  articles: Record<string, ArticleMapEntry>;
+}
+
+// ============================================================================
+// Hook Context Types (same as comment plugin)
+// ============================================================================
+
+export interface ProjectInfo {
+  total_files: number;
+  homepage_file: string | null;
+  site_name?: string;
+}
+
+export interface ProcessContext {
+  project_info: ProjectInfo;
+  config: Record<string, any>;
+}
+
+export interface EnhanceContext {
+  project_path: string;
+  moss_dir: string;
+  output_dir: string;
+  project_info: ProjectInfo;
+  config: Record<string, any>;
+  interactions: any[];
+  files: EnhanceFile[];
+}
+
+export interface HookResult {
+  success: boolean;
+  message?: string;
+  interactions?: any[];
+}
+
+export interface EnhanceFile {
+  path: string;
+  html: string;
+}
+
+export interface ModifiedFile {
+  path: string;
+  html: string;
+}
+
+export interface EnhanceResult extends HookResult {
+  modified?: ModifiedFile[];
+}

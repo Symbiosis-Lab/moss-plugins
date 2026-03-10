@@ -1,0 +1,13 @@
+{
+  "name": "review",
+  "version": "0.1.0",
+  "description": "Enrich review posts with metadata from NeoDB",
+  "display_name": "Reviews",
+  "author": "moss team",
+  "entry": "main.bundle.js",
+  "capabilities": ["process", "enhance"],
+  "global_name": "ReviewPlugin",
+  "icon": "icon.svg",
+  "config": {},
+  "config_schema": {}
+}

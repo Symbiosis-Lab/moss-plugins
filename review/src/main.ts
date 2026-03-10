@@ -98,6 +98,23 @@ async function downloadCover(
 }
 
 // ============================================================================
+// Source path derivation
+// ============================================================================
+
+/**
+ * Returns source_path if non-empty, otherwise derives from url_path.
+ * e.g. "文字/书评/seeing-like-a-state/" → "文字/书评/seeing-like-a-state.md"
+ */
+function deriveSourcePath(sourcePath: string, urlPath: string): string | null {
+  if (sourcePath) return sourcePath;
+  if (!urlPath) return null;
+  // Strip trailing slash, append .md
+  const trimmed = urlPath.replace(/\/+$/, "");
+  if (!trimmed) return null;
+  return trimmed + ".md";
+}
+
+// ============================================================================
 // Process Hook
 // ============================================================================
 
@@ -127,9 +144,12 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
   for (const [_key, entry] of Object.entries(articleMap.articles)) {
     if (!entry.uid) continue;
 
+    const sourcePath = deriveSourcePath(entry.source_path, entry.url_path);
+    if (!sourcePath) continue;
+
     let markdown: string;
     try {
-      markdown = await readFile(entry.source_path);
+      markdown = await readFile(sourcePath);
     } catch {
       continue;
     }
@@ -169,7 +189,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
     let coverPath: string | null = null;
 
     if (item.cover_image_url) {
-      const sourceDir = entry.source_path.replace(/\/[^/]+$/, "");
+      const sourceDir = sourcePath.replace(/\/[^/]+$/, "");
       const result = await downloadCover(item.cover_image_url, item.title, sourceDir);
       coverDownloaded = result.downloaded;
       coverPath = result.path;

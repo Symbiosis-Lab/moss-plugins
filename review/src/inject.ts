@@ -19,9 +19,17 @@ export function injectAfterH1(html: string, content: string): string | null {
 }
 
 /**
- * Inject HTML before the last </article> tag.
+ * Inject HTML before the comment section if present, otherwise before </article>.
+ * This ensures the colophon appears between article body and comments.
  */
 export function injectBeforeArticleEnd(html: string, content: string): string | null {
+  // Prefer inserting before the comment section
+  const commentMatch = html.match(/<section\s[^>]*class="moss-comments"/i);
+  if (commentMatch && commentMatch.index !== undefined) {
+    return html.slice(0, commentMatch.index) + content + "\n" + html.slice(commentMatch.index);
+  }
+
+  // Fallback: before </article>
   const tag = "</article>";
   const idx = html.lastIndexOf(tag);
   if (idx === -1) {

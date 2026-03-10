@@ -30,6 +30,19 @@ describe("injectBeforeArticleEnd", () => {
   it("returns null when no </article>", () => {
     expect(injectBeforeArticleEnd('<p>no article</p>', "colophon")).toBeNull();
   });
+
+  it("injects before comment section when present", () => {
+    const html = '<article><p>body</p><section class="moss-comments" id="moss-comments">comments</section></article>';
+    const result = injectBeforeArticleEnd(html, '<footer>colophon</footer>');
+    expect(result).toContain('<footer>colophon</footer>\n<section class="moss-comments"');
+    expect(result!.indexOf("colophon")).toBeLessThan(result!.indexOf("moss-comments"));
+  });
+
+  it("falls back to </article> when no comment section", () => {
+    const html = '<article><p>body</p></article>';
+    const result = injectBeforeArticleEnd(html, '<footer>colophon</footer>');
+    expect(result).toContain('<footer>colophon</footer>\n</article>');
+  });
 });
 
 describe("injectCssInHead", () => {

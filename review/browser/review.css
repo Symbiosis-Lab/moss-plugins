@@ -1,1 +1,80 @@
-/* Review plugin styles — filled in Task 7 */
+/* Review plugin — header and colophon styles
+ * Uses moss design tokens. Works in light and dark mode.
+ */
+
+.review-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 1rem 0 2rem;
+}
+
+.review-cover {
+  width: 80px;
+  height: auto;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  font-size: 0.95em;
+  color: var(--moss-color-muted, #666);
+  padding-top: 4px;
+}
+
+.review-creator {
+  font-weight: 500;
+}
+
+.review-sep {
+  color: var(--moss-color-muted, #666);
+  margin: 0 0.15em;
+}
+
+/* Colophon */
+.review-colophon {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--moss-color-border, #e0e0e0);
+  font-size: 0.9em;
+  color: var(--moss-color-muted, #666);
+}
+
+.review-rating {
+  font-size: 1.2em;
+  color: var(--moss-color-accent, #c9a84c);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.05em;
+}
+
+.review-community-rating {
+  font-size: 0.85em;
+  margin-bottom: 0.5rem;
+}
+
+.review-biblio {
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.review-links a {
+  color: var(--moss-color-accent, #4a7c59);
+  text-decoration: none;
+}
+
+.review-links a:hover {
+  text-decoration: underline;
+}
+
+/* Mobile: stack cover above meta */
+@media (max-width: 32rem) {
+  .review-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

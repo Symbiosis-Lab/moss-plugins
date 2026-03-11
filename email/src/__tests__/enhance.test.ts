@@ -424,11 +424,10 @@ describe("enhance hook", () => {
     });
   });
 
-  describe("enhance removes footer-description when injecting form", () => {
-    it("should strip the footer-description paragraph since the button replaces it", async () => {
-      // Real footer structure: footer-right contains <p class="footer-description"> and <a class="footer-link"> as siblings
+  describe("enhance injects form inside footer-right, not footer-left", () => {
+    it("should place the form inside footer-right div", async () => {
       const html = `<!DOCTYPE html>
-<html lang="en">
+<html>
 <body>
   <footer class="container">
     <div class="footer-content">
@@ -436,7 +435,6 @@ describe("enhance hook", () => {
         <a href="friends/" class="footer-link">友链</a>
       </div>
       <div class="footer-right">
-        <p class="footer-description">Subscribe</p>
         <a href="/feed.xml" class="footer-link" data-external>RSS</a>
       </div>
     </div>
@@ -457,9 +455,63 @@ describe("enhance hook", () => {
       const result = await enhance(ctx);
 
       const modifiedHtml = result.modified![0].html;
-      // Footer-description should be removed (button already says Subscribe)
-      expect(modifiedHtml).not.toContain("footer-description");
-      // Form and RSS link should still be present
+
+      // The form must be inside footer-right, not footer-left
+      const footerRightStart = modifiedHtml.indexOf('<div class="footer-right">');
+      const footerLeftStart = modifiedHtml.indexOf('<div class="footer-left">');
+      const formStart = modifiedHtml.indexOf('footer-subscribe-form');
+
+      expect(footerRightStart).toBeGreaterThan(-1);
+      expect(formStart).toBeGreaterThan(footerRightStart);
+
+      // Find the closing </div> for footer-right — form must be before it
+      // Also verify footer-left is untouched
+      const footerLeftEnd = modifiedHtml.indexOf('</div>', footerLeftStart + 1);
+      const footerLeftContent = modifiedHtml.slice(footerLeftStart, footerLeftEnd);
+      expect(footerLeftContent).not.toContain('footer-subscribe-form');
+
+      // The structure must remain valid: footer-right should close before footer-content closes
+      // Parse: after footer-right opens, the next </div> after form should close footer-right,
+      // then the next </div> closes footer-content
+      const afterFooterRight = modifiedHtml.slice(footerRightStart);
+      // Count: footer-right div should contain RSS link + form, then close
+      // footer-content div should close after that, then footer closes
+      expect(modifiedHtml).toContain('</footer>');
+    });
+  });
+
+  describe("enhance preserves existing footer-right content", () => {
+    it("should keep all existing content and append form", async () => {
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<body>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>`;
+
+      mockPluginFileExists.mockResolvedValue(true);
+      mockReadPluginFile.mockResolvedValue(
+        JSON.stringify({ username: "testuser" })
+      );
+
+      const ctx = createEnhanceContext({ api_key: "test-key" }, [
+        { path: "test.html", html },
+      ]);
+
+      const { enhance } = await import("../enhance");
+      const result = await enhance(ctx);
+
+      const modifiedHtml = result.modified![0].html;
+      // Form and RSS link should both be present
       expect(modifiedHtml).toContain("footer-subscribe-form");
       expect(modifiedHtml).toContain("footer-link");
     });

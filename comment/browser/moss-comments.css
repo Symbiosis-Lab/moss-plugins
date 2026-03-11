@@ -372,7 +372,7 @@ a.comment-author:hover {
 
 @keyframes slideDown {
   from { max-height: 0; opacity: 0; }
-  to { max-height: 300px; opacity: 1; }
+  to { max-height: 500px; opacity: 1; }
 }
 
 /* Smaller typography in reply form */

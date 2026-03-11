@@ -59,6 +59,9 @@ export function buildArtalkClientScript(
   var textarea = document.getElementById('moss-comment-text');
   var statusEl = document.getElementById('moss-comment-status');
   var commentList = document.querySelector('.moss-comments .comment-list');
+  var currentReplyId = null;
+  var currentReplyWrapper = null;
+  var defaultFormSlot = document.getElementById('default-form-slot');
 
   // Auto-grow textarea
   if (textarea) {
@@ -164,10 +167,6 @@ export function buildArtalkClientScript(
   });
 
   /* --- Reply logic: relocating form pattern --- */
-  var currentReplyId = null;
-  var currentReplyWrapper = null;
-  var defaultFormSlot = document.getElementById('default-form-slot');
-
   function cancelReply(skipScroll) {
     if (!currentReplyWrapper) return;
     if (defaultFormSlot) {

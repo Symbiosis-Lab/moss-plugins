@@ -48,6 +48,8 @@ export function buildArtalkClientScript(
   const safeNetworkError = escapeForSingleQuotedJs(t.network_error);
   const safeCountOne = escapeForSingleQuotedJs(t.comment_count_one);
   const safeCountMany = escapeForSingleQuotedJs(t.comment_count_many);
+  const safeReplyingTo = escapeForSingleQuotedJs(t.replying_to);
+  const safeCancel = escapeForSingleQuotedJs(t.cancel);
   const locale = LANG_TO_LOCALE[lang];
 
   return `(function() {
@@ -82,6 +84,7 @@ export function buildArtalkClientScript(
       name: form.elements['name'].value,
       email: form.elements['email'].value,
       link: rawLink,
+      rid: currentReplyId ? parseInt(currentReplyId, 10) : 0,
       page_key: '${safePageKey}',
       site_name: '${safeSiteName}',
       ua: navigator.userAgent
@@ -111,12 +114,6 @@ export function buildArtalkClientScript(
         statusEl.className = 'comment-form-status comment-form-status--success';
       }
 
-      if (!commentList) {
-        commentList = document.createElement('ol');
-        commentList.className = 'comment-list';
-        form.after(commentList);
-      }
-
       var li = document.createElement('li');
       li.className = 'comment-item';
       li.id = 'comment-' + data.id;
@@ -127,8 +124,31 @@ export function buildArtalkClientScript(
         + '<time class="comment-date">' + now + '</time>'
         + '</div>'
         + '<div class="comment-body"><p>' + body.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
-      // Newest first: prepend so the just-submitted comment appears at the top
-      commentList.insertBefore(li, commentList.firstChild);
+
+      if (currentReplyId) {
+        // Insert as nested reply under the parent comment
+        var parentLi = document.getElementById('comment-' + currentReplyId);
+        if (parentLi) {
+          var repliesOl = parentLi.querySelector('.comment-replies');
+          if (!repliesOl) {
+            repliesOl = document.createElement('ol');
+            repliesOl.className = 'comment-replies';
+            parentLi.appendChild(repliesOl);
+          }
+          repliesOl.insertBefore(li, null);
+        }
+        cancelReply(false);
+      } else {
+        if (!commentList) {
+          commentList = document.createElement('ol');
+          commentList.className = 'comment-list';
+          var defaultSlot = document.getElementById('default-form-slot');
+          if (defaultSlot) defaultSlot.after(commentList);
+          else form.after(commentList);
+        }
+        // Newest first: prepend so the just-submitted comment appears at the top
+        commentList.insertBefore(li, commentList.firstChild);
+      }
 
       form.elements['content'].value = '';
       if (textarea) { textarea.style.height = 'auto'; }
@@ -142,6 +162,73 @@ export function buildArtalkClientScript(
       }
     });
   });
+
+  /* --- Reply logic: relocating form pattern --- */
+  var currentReplyId = null;
+  var currentReplyWrapper = null;
+  var defaultFormSlot = document.getElementById('default-form-slot');
+
+  function cancelReply(skipScroll) {
+    if (!currentReplyWrapper) return;
+    if (defaultFormSlot) {
+      defaultFormSlot.appendChild(form);
+      defaultFormSlot.classList.remove('comment-form-slot--collapsed');
+    }
+    currentReplyWrapper.remove();
+    currentReplyWrapper = null;
+    currentReplyId = null;
+    if (!skipScroll && defaultFormSlot) {
+      defaultFormSlot.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  var section = document.getElementById('moss-comments');
+  if (section) {
+    section.addEventListener('click', function(e) {
+      var btn = e.target.closest('.comment-reply-btn');
+      if (!btn) return;
+
+      var replyId = btn.getAttribute('data-reply-id');
+      var replyName = btn.getAttribute('data-reply-name');
+      var commentItem = document.getElementById('comment-' + replyId);
+      if (!commentItem) return;
+
+      // If already replying to this comment, just focus
+      if (currentReplyId === replyId) { textarea.focus(); return; }
+
+      // Cancel any existing reply
+      cancelReply(true);
+
+      // Collapse default form slot
+      if (defaultFormSlot) defaultFormSlot.classList.add('comment-form-slot--collapsed');
+
+      // Create reply wrapper with thread indent
+      var wrapper = document.createElement('div');
+      wrapper.className = 'comment-reply-form-wrapper';
+
+      // Reply indicator
+      var indicator = document.createElement('div');
+      indicator.className = 'comment-reply-indicator';
+      indicator.innerHTML = '<span>\\u21a9 ${safeReplyingTo} <strong>' + replyName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</strong> \\u00b7</span>';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'comment-reply-cancel';
+      cancelBtn.textContent = '${safeCancel}';
+      cancelBtn.addEventListener('click', function() { cancelReply(false); });
+      indicator.appendChild(cancelBtn);
+      wrapper.appendChild(indicator);
+
+      // Move form into wrapper
+      wrapper.appendChild(form);
+      commentItem.appendChild(wrapper);
+
+      currentReplyWrapper = wrapper;
+      currentReplyId = replyId;
+
+      textarea.focus();
+      wrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
 
   /*
    * Stale-while-revalidate / progressive enhancement for comments.
@@ -168,7 +255,6 @@ export function buildArtalkClientScript(
    * Trust model: Artalk performs server-side HTML sanitization, so we use
    * innerHTML for comment content (same as the static render path).
    */
-  var section = document.getElementById('moss-comments');
   var builtAtStr = section && section.getAttribute('data-built-at');
   var builtAtMs = builtAtStr ? new Date(builtAtStr).getTime() : 0;
   var details = section && section.querySelector('details');

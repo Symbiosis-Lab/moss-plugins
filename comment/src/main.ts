@@ -15,7 +15,7 @@
  *   5. Inlines CSS via <style> in each page's <head>
  */
 
-import { readFile, readPluginFile } from "@symbiosis-lab/moss-api";
+import { readFile, readPluginFile, type SlotContext, type SlotResult, type SlotContent } from "@symbiosis-lab/moss-api";
 import { loadAllComments, buildSourceToUrlMap, buildUidToUrlMap } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { findInsertionPoint, injectCommentSection, injectCssStyle } from "./inject";
@@ -373,5 +373,127 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     message: `Injected comment sections into ${modified.length} pages`,
     modified,
   };
+}
+
+// ============================================================================
+// Content Slots
+// ============================================================================
+
+/**
+ * getSlotContent - Declare content for template slots.
+ *
+ * Returns:
+ * - "head-end": static CSS for comment sections
+ * - "before-article-end": per-page comment section HTML keyed by URL path
+ */
+export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+  const config = ctx.config || {};
+  const serverUrl = (config.server_url as string) || "";
+  const siteName = (config.site_name as string) || ctx.project_info.site_name || "";
+  const defaultComments = config.default_comments !== false;
+  const providerName = serverUrl ? await detectProvider(serverUrl) : "waline";
+  const buildScript = getSubmitScriptBuilder(providerName);
+
+  const slots: Record<string, SlotContent> = {};
+
+  // 1. Read CSS
+  let commentsCss = "";
+  try {
+    commentsCss = await readPluginFile(COMMENTS_CSS_FILENAME);
+  } catch {
+    // CSS file not found
+  }
+
+  if (commentsCss) {
+    slots["head-end"] = { type: "static", html: `<style class="moss-comments-style">${commentsCss}</style>` };
+  }
+
+  // 2. Load comments from .moss/social/*.json
+  const commentsByKey = await loadAllComments(["comment"]);
+
+  // 3. Build uid/path mappings from article_map in context
+  const articleMap = ctx.article_map as { articles?: Record<string, { source_path?: string; url_path: string; uid?: string }> } | undefined;
+  const articles = articleMap?.articles || {};
+
+  const uidToUrl = new Map<string, string>();
+  const urlToUid = new Map<string, string>();
+  const sourceToUrl = new Map<string, string>();
+
+  // Get project_path for source path stripping
+  const win = globalThis.window || globalThis;
+  const projectPath: string | undefined = (win as any).__MOSS_INTERNAL_CONTEXT__?.project_path;
+  let prefix = projectPath || "";
+  if (prefix && !prefix.endsWith("/")) prefix += "/";
+
+  for (const [_key, entry] of Object.entries(articles)) {
+    if (entry.uid && entry.url_path) {
+      uidToUrl.set(entry.uid, entry.url_path);
+      urlToUid.set(entry.url_path, entry.uid);
+    }
+    if (entry.source_path && entry.url_path) {
+      let relativePath = entry.source_path;
+      if (prefix && relativePath.startsWith(prefix)) {
+        relativePath = relativePath.slice(prefix.length);
+      } else {
+        relativePath = relativePath.replace(/^\//, "");
+      }
+      sourceToUrl.set(relativePath, entry.url_path);
+    }
+  }
+
+  // 4. Resolve comments by page URL
+  const commentsByPage = new Map<string, NormalizedComment[]>();
+  for (const [key, comments] of commentsByKey) {
+    const urlPath = uidToUrl.get(key) || sourceToUrl.get(key);
+    if (urlPath) {
+      const existing = commentsByPage.get(urlPath) || [];
+      existing.push(...comments);
+      commentsByPage.set(urlPath, existing);
+    }
+  }
+
+  // 5. Build set of pages that should have comment forms
+  const pagesWithForms = new Set<string>();
+  if (serverUrl) {
+    for (const v of uidToUrl.values()) pagesWithForms.add(v);
+    for (const v of sourceToUrl.values()) pagesWithForms.add(v);
+  }
+
+  // 6. Build per-page comment section HTML
+  const pages: Record<string, string> = {};
+
+  for (const urlPath of new Set([...commentsByPage.keys(), ...pagesWithForms])) {
+    const comments = commentsByPage.get(urlPath) || [];
+    const uid = urlToUid.get(urlPath) || "";
+
+    // Respect default_comments setting
+    if (!defaultComments && comments.length === 0 && !pagesWithForms.has(urlPath)) continue;
+
+    // Detect lang from project_info
+    const lang = parseLang(`<html lang="${ctx.project_info.lang || "en"}">`);
+
+    const submitScript = (buildScript && serverUrl)
+      ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang)
+      : "";
+
+    const commentHtml = renderCommentSection(
+      comments,
+      urlPath,
+      serverUrl,
+      submitScript,
+      providerName,
+      lang,
+    );
+
+    if (commentHtml) {
+      pages[urlPath] = commentHtml;
+    }
+  }
+
+  if (Object.keys(pages).length > 0) {
+    slots["before-article-end"] = { type: "per-page", pages };
+  }
+
+  return { success: true, slots };
 }
 

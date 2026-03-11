@@ -9,7 +9,7 @@
  *   Reads review.json, injects book header after <h1> and colophon before </article>.
  */
 
-import { readFile, writeFile, readPluginFile } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, readPluginFile, type SlotContext, type SlotResult, type SlotContent } from "@symbiosis-lab/moss-api";
 import { fetchNeoDBItem } from "./neodb";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
@@ -273,4 +273,80 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
 
   console.log(`[info] Review: Enhanced ${modified.length} page(s)`);
   return { success: true, message: `Enhanced ${modified.length} page(s)`, modified };
+}
+
+// ============================================================================
+// Content Slots
+// ============================================================================
+
+/**
+ * getSlotContent - Declare content for template slots.
+ *
+ * Returns:
+ * - "head-end": static CSS for review header/colophon
+ * - "after-title": per-page review headers (cover + creator + year)
+ * - "before-article-end": per-page review colophons (rating, biblio, links)
+ */
+export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+  const slots: Record<string, SlotContent> = {};
+
+  // 1. Read CSS
+  let reviewCss = "";
+  try {
+    reviewCss = await readPluginFile(REVIEW_CSS_FILENAME);
+  } catch {
+    // CSS file not found
+  }
+
+  if (reviewCss) {
+    slots["head-end"] = { type: "static", html: `<style class="moss-review-style">${reviewCss}</style>` };
+  }
+
+  // 2. Load social data
+  let socialData;
+  try {
+    socialData = await loadReviewSocialData();
+  } catch {
+    return { success: true, slots };
+  }
+
+  // 3. Build uid->urlPath map from article_map in context
+  const articleMap = ctx.article_map as { articles?: Record<string, { url_path: string; uid?: string }> } | undefined;
+  const articles = articleMap?.articles || {};
+
+  const uidToUrl = new Map<string, string>();
+  for (const [_key, entry] of Object.entries(articles)) {
+    if (entry.uid && entry.url_path) {
+      uidToUrl.set(entry.uid, entry.url_path);
+    }
+  }
+
+  // 4. Build per-page header and colophon HTML
+  const headerPages: Record<string, string> = {};
+  const colophonPages: Record<string, string> = {};
+
+  for (const [uid, entry] of Object.entries(socialData.articles)) {
+    const urlPath = uidToUrl.get(uid);
+    if (!urlPath) continue;
+
+    const headerHtml = renderHeader(entry);
+    if (headerHtml) {
+      headerPages[urlPath] = headerHtml;
+    }
+
+    const colophonHtml = renderColophon(entry);
+    if (colophonHtml) {
+      colophonPages[urlPath] = colophonHtml;
+    }
+  }
+
+  if (Object.keys(headerPages).length > 0) {
+    slots["after-title"] = { type: "per-page", pages: headerPages };
+  }
+
+  if (Object.keys(colophonPages).length > 0) {
+    slots["before-article-end"] = { type: "per-page", pages: colophonPages };
+  }
+
+  return { success: true, slots };
 }

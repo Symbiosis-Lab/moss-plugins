@@ -5,7 +5,8 @@
   "display_name": "Comments",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["process", "enhance"],
+  "capabilities": ["process", "enhance", "slots"],
+  "slots": ["head-end", "before-article-end"],
   "global_name": "CommentPlugin",
   "icon": "icon.svg",
   "config": {

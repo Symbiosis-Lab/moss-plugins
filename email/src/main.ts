@@ -178,6 +178,83 @@ export async function syndicate(context: AfterDeployContext): Promise<HookResult
 }
 
 // ============================================================================
+// Content Slots
+// ============================================================================
+
+import {
+  readPluginFile,
+  writePluginFile,
+  pluginFileExists,
+  type SlotContext,
+  type SlotResult,
+  type SlotContent,
+} from "@symbiosis-lab/moss-api";
+import { getNewsletterInfo } from "./buttondown";
+
+const SUBSCRIBE_CSS_FILENAME = "email-subscribe.css";
+
+/**
+ * getSlotContent - Declare content for template slots.
+ *
+ * Returns:
+ * - "head-end": static CSS for the subscribe form
+ * - "footer-right": static subscribe form HTML
+ */
+export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+  const config = ctx.config as PluginConfig;
+  const slots: Record<string, SlotContent> = {};
+
+  if (!config.api_key) {
+    return { success: false, slots };
+  }
+
+  // Get username (cached or from API)
+  let username: string;
+  try {
+    if (await pluginFileExists("newsletter-info.json")) {
+      const cached = JSON.parse(await readPluginFile("newsletter-info.json"));
+      username = cached.username;
+    } else {
+      const info = await getNewsletterInfo(config.api_key);
+      username = info.username;
+      await writePluginFile("newsletter-info.json", JSON.stringify({ username }));
+    }
+  } catch (e) {
+    return { success: false, slots };
+  }
+
+  // Read plugin CSS
+  let subscribeCss = "";
+  try {
+    subscribeCss = await readPluginFile(SUBSCRIBE_CSS_FILENAME);
+  } catch {
+    // CSS file not found — form will be unstyled
+  }
+
+  // head-end: inject CSS
+  if (subscribeCss) {
+    slots["head-end"] = { type: "static", html: `<style class="moss-email-style">${subscribeCss}</style>` };
+  }
+
+  // footer-right: subscribe form
+  // Use lang from project_info; default to English
+  const lang = ctx.project_info.lang || "en";
+  const isZh = lang.startsWith("zh");
+  const placeholderText = isZh ? "邮箱" : "email";
+  const buttonText = isZh ? "订阅" : "Subscribe";
+
+  const formHtml = `<form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
+            <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
+            <input type="hidden" value="1" name="embed" />
+            <button type="submit" class="moss-btn">${buttonText}</button>
+        </form>`;
+
+  slots["footer-right"] = { type: "static", html: formHtml };
+
+  return { success: true, slots };
+}
+
+// ============================================================================
 // Plugin Export
 // ============================================================================
 
@@ -189,6 +266,7 @@ import { enhance } from "./enhance";
 const EmailPlugin = {
   enhance,
   syndicate,
+  getSlotContent,
 };
 
 // Register plugin globally for the plugin runtime

@@ -3,17 +3,12 @@
  *
  * Three injection points:
  * - After </h1>: book header (cover + creator + year)
- * - Before comment section or </article>: colophon (rating + biblio + links)
+ * - Before </article>: colophon (rating + biblio + links) — article metadata
  * - In <head>: inline CSS
  *
- * Plugin ordering: moss runs enhance plugins sequentially (plugin-runtime.ts),
- * each seeing the previous plugin's modifications. The colophon injection is
- * order-independent — it works whether review runs before or after comment:
- *
- *   Review first: colophon inserts before </article>; comment then inserts
- *                 before </article> too, placing comments after colophon. ✓
- *   Comment first: comment section already in HTML; colophon inserts before
- *                  <section class="moss-comments">, placing it above comments. ✓
+ * The colophon is article metadata (bibliographic info, rating, links) and
+ * belongs inside <article> as a <footer>. Comments are injected by the
+ * comment plugin after </article>, so there's no ordering concern.
  */
 
 /**
@@ -28,17 +23,10 @@ export function injectAfterH1(html: string, content: string): string | null {
 }
 
 /**
- * Inject HTML before the comment section if present, otherwise before </article>.
- * This ensures the colophon appears between article body and comments.
+ * Inject HTML before </article>. The colophon is article metadata and
+ * belongs inside the article element.
  */
 export function injectBeforeArticleEnd(html: string, content: string): string | null {
-  // Prefer inserting before the comment section
-  const commentMatch = html.match(/<section\s[^>]*class="moss-comments"/i);
-  if (commentMatch && commentMatch.index !== undefined) {
-    return html.slice(0, commentMatch.index) + content + "\n" + html.slice(commentMatch.index);
-  }
-
-  // Fallback: before </article>
   const tag = "</article>";
   const idx = html.lastIndexOf(tag);
   if (idx === -1) {

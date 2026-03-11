@@ -83,7 +83,8 @@ function formatDate(isoDate: string, lang: Lang = "en"): string {
  * Render a single comment as an <li> element.
  * Author name is a clickable link when URL is available.
  */
-function renderComment(comment: NormalizedComment, lang: Lang = "en"): string {
+function renderComment(comment: NormalizedComment, lang: Lang = "en", showReply: boolean = false): string {
+  const t = translations[lang];
   const authorName = escapeHtml(comment.author.name);
   const authorHtml = comment.author.url
     ? `<a href="${escapeHtml(comment.author.url)}" class="comment-author" rel="nofollow noopener" target="_blank">${authorName}</a>`
@@ -92,10 +93,15 @@ function renderComment(comment: NormalizedComment, lang: Lang = "en"): string {
   const dateStr = formatDate(comment.date, lang);
   const contentHtml = sanitizeHtml(comment.content_html);
 
+  const replyBtn = showReply
+    ? `<button type="button" class="comment-reply-btn" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.author.name)}">↩ ${t.reply_action}</button>`
+    : "";
+
   return `<li class="comment-item" id="comment-${escapeHtml(comment.id)}">
   <div class="comment-header">
     ${authorHtml}
     <time class="comment-date" datetime="${escapeHtml(comment.date)}">${dateStr}</time>
+    ${replyBtn}
   </div>
   <div class="comment-body">${contentHtml}</div>`;
 }
@@ -106,7 +112,7 @@ function renderComment(comment: NormalizedComment, lang: Lang = "en"): string {
  * Top-level comments (no replyToId) go in the root list.
  * Replies are nested inside their parent's <li>.
  */
-function renderCommentList(comments: NormalizedComment[], lang: Lang = "en"): string {
+function renderCommentList(comments: NormalizedComment[], lang: Lang = "en", showReply: boolean = false): string {
   // Separate top-level and replies
   const topLevel: NormalizedComment[] = [];
   const repliesByParent = new Map<string, NormalizedComment[]>();
@@ -122,7 +128,7 @@ function renderCommentList(comments: NormalizedComment[], lang: Lang = "en"): st
   }
 
   function renderWithReplies(comment: NormalizedComment): string {
-    let html = renderComment(comment, lang);
+    let html = renderComment(comment, lang, showReply);
     const replies = repliesByParent.get(comment.id);
     if (replies && replies.length > 0) {
       html += `\n  <ol class="comment-replies">`;
@@ -139,7 +145,7 @@ function renderCommentList(comments: NormalizedComment[], lang: Lang = "en"): st
     // All comments are replies to something not in our set — render flat
     let html = "";
     for (const comment of comments) {
-      html += renderComment(comment, lang) + "\n</li>";
+      html += renderComment(comment, lang, showReply) + "\n</li>";
     }
     return html;
   }
@@ -232,10 +238,11 @@ export function renderCommentSection(
   if (!hasComments && !hasForm) return "";
 
   const commentListHtml = hasComments
-    ? `<ol class="comment-list">${renderCommentList(comments, lang)}</ol>`
+    ? `<ol class="comment-list">${renderCommentList(comments, lang, !!serverUrl)}</ol>`
     : "";
 
   const formHtml = hasForm ? renderCommentForm(pagePath, provider, lang) : "";
+  const wrappedFormHtml = `<div class="comment-form-slot" id="default-form-slot">${formHtml}</div>`;
   const scriptHtml = hasForm && submitScript
     ? `<script>${submitScript}</script>`
     : "";
@@ -253,7 +260,7 @@ export function renderCommentSection(
   return `<section class="moss-comments" id="moss-comments" data-built-at="${builtAt}">
   <details>
     <summary class="comments-toggle">${ICON_MESSAGE_CIRCLE}<span>${summaryText}</span>${ICON_CHEVRON}</summary>
-    ${formHtml}
+    ${wrappedFormHtml}
     ${commentListHtml}
     ${scriptHtml}
   </details>

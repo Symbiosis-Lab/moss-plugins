@@ -51,10 +51,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -88,10 +94,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -135,7 +147,7 @@ describe("enhance hook", () => {
       const { enhance } = await import("../enhance");
       const result = await enhance(ctx);
 
-      // No files modified — no footer-content div
+      // No files modified — no footer-right div
       expect(result.modified).toEqual([]);
     });
   });
@@ -145,10 +157,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -176,10 +194,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -220,10 +244,16 @@ describe("enhance hook", () => {
       const originalHtml = `<!DOCTYPE html>
 <html>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -264,10 +294,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html lang="en">
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -292,10 +328,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html lang="en">
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -319,10 +361,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html lang="zh-Hans">
 <body>
-  <div class="footer-content">
-    <p class="footer-description">订阅</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -346,10 +394,16 @@ describe("enhance hook", () => {
       const html = `<!DOCTYPE html>
 <html lang="zh-Hans">
 <body>
-  <div class="footer-content">
-    <p class="footer-description">订阅</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -372,14 +426,21 @@ describe("enhance hook", () => {
 
   describe("enhance removes footer-description when injecting form", () => {
     it("should strip the footer-description paragraph since the button replaces it", async () => {
-      // Real footer structure: <p class="footer-description"> and <a class="footer-link"> as siblings
+      // Real footer structure: footer-right contains <p class="footer-description"> and <a class="footer-link"> as siblings
       const html = `<!DOCTYPE html>
 <html lang="en">
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <p class="footer-description">Subscribe</p>
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -411,10 +472,16 @@ describe("enhance hook", () => {
 <html lang="en">
 <head><title>Test</title></head>
 <body>
-  <div class="footer-content">
-    <p class="footer-description">Subscribe</p>
-    <a href="/feed.xml" class="footer-link" data-external>RSS</a>
-  </div>
+  <footer class="container">
+    <div class="footer-content">
+      <div class="footer-left">
+        <a href="friends/" class="footer-link">友链</a>
+      </div>
+      <div class="footer-right">
+        <a href="/feed.xml" class="footer-link" data-external>RSS</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>`;
 
@@ -439,7 +506,7 @@ describe("enhance hook", () => {
       expect(modifiedHtml).toContain(sampleCss);
     });
 
-    it("should not inject CSS when no footer-content div", async () => {
+    it("should not inject CSS when no footer-right div", async () => {
       const noFooterHtml = `<!DOCTYPE html>
 <html><head><title>Test</title></head>
 <body><div class="main-content"><h1>Test</h1></div></body>

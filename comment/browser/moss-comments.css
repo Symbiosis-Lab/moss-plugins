@@ -54,16 +54,17 @@
 /* Comment Section */
 .moss-comments {
   margin-top: 6rem;
-  padding-top: var(--moss-space-lg, 2rem);
-  border-top: 1px solid var(--moss-border-light, #e6e2db);
   max-width: var(--moss-content-width, 70ch);
+  box-sizing: border-box;
+  padding: 0 var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
   margin-left: auto;
   margin-right: auto;
 }
 
-/* Padding on inner details, not section — so border-top matches content width */
+/* Border on inner details so the divider aligns with text, not the padded box edge */
 .moss-comments > details {
-  padding: 0 var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
+  padding-top: var(--moss-space-lg, 2rem);
+  border-top: 1px solid var(--moss-border-light, #e6e2db);
 }
 
 .has-sidebar .moss-comments {

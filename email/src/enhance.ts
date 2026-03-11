@@ -126,8 +126,8 @@ function injectSubscribeForm(html: string, username: string): string {
   // Skip if form already injected (idempotency)
   if (html.includes('footer-subscribe-form')) return html;
 
-  const footerContentRegex = /<div class="footer-content">([\s\S]*?)<\/div>/;
-  const match = html.match(footerContentRegex);
+  const footerRightRegex = /<div class="footer-right">([\s\S]*?)<\/div>/;
+  const match = html.match(footerRightRegex);
   if (!match) return html;
 
   // Preserve existing content (RSS link) but remove description (button replaces it)
@@ -143,7 +143,7 @@ function injectSubscribeForm(html: string, username: string): string {
   const placeholderText = isZh ? '邮箱' : 'email';
   const buttonText = isZh ? '订阅' : 'Subscribe';
 
-  const formHtml = `<div class="footer-content">
+  const formHtml = `<div class="footer-right">
     ${cleanedContent}
     <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
         <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
@@ -152,5 +152,5 @@ function injectSubscribeForm(html: string, username: string): string {
     </form>
 </div>`;
 
-  return html.replace(footerContentRegex, formHtml);
+  return html.replace(footerRightRegex, formHtml);
 }

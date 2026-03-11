@@ -126,15 +126,14 @@ function injectSubscribeForm(html: string, username: string): string {
   // Skip if form already injected (idempotency)
   if (html.includes('footer-subscribe-form')) return html;
 
-  const footerRightRegex = /<div class="footer-right">([\s\S]*?)<\/div>/;
-  const match = html.match(footerRightRegex);
-  if (!match) return html;
+  const marker = '<div class="footer-right">';
+  const startIdx = html.indexOf(marker);
+  if (startIdx === -1) return html;
 
-  // Preserve existing content (RSS link) but remove description (button replaces it)
-  const existingContent = match[1].trim();
-  const cleanedContent = existingContent
-    .replace(/<p class="footer-description">[\s\S]*?<\/p>/, '')
-    .trim();
+  // Find the closing </div> for footer-right (no nested divs inside it)
+  const searchFrom = startIdx + marker.length;
+  const endIdx = html.indexOf('</div>', searchFrom);
+  if (endIdx === -1) return html;
 
   // Detect language from HTML lang attribute
   const langMatch = html.match(/<html[^>]*\blang="([^"]+)"/);
@@ -143,14 +142,8 @@ function injectSubscribeForm(html: string, username: string): string {
   const placeholderText = isZh ? '邮箱' : 'email';
   const buttonText = isZh ? '订阅' : 'Subscribe';
 
-  const formHtml = `<div class="footer-right">
-    ${cleanedContent}
-    <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">
-        <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />
-        <input type="hidden" value="1" name="embed" />
-        <button type="submit" class="moss-btn">${buttonText}</button>
-    </form>
-</div>`;
+  const formSnippet = `\n        <form action="https://buttondown.com/api/emails/embed-subscribe/${username}" method="post" class="footer-subscribe-form">\n            <input type="email" name="email" class="moss-input" placeholder="${placeholderText}" required />\n            <input type="hidden" value="1" name="embed" />\n            <button type="submit" class="moss-btn">${buttonText}</button>\n        </form>\n      `;
 
-  return html.replace(footerRightRegex, formHtml);
+  // Insert form before the closing </div>
+  return html.slice(0, endIdx) + formSnippet + html.slice(endIdx);
 }

@@ -59,8 +59,11 @@
   max-width: var(--moss-content-width, 70ch);
   margin-left: auto;
   margin-right: auto;
-  padding-left: var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
-  padding-right: var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
+}
+
+/* Padding on inner details, not section — so border-top matches content width */
+.moss-comments > details {
+  padding: 0 var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
 }
 
 .has-sidebar .moss-comments {

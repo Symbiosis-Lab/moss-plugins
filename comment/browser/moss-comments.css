@@ -53,9 +53,19 @@
 
 /* Comment Section */
 .moss-comments {
-  margin-top: var(--moss-space-xl, 3rem);
+  margin-top: var(--moss-space-2xl, 4rem);
   padding-top: var(--moss-space-lg, 2rem);
   border-top: 1px solid var(--moss-border-light, #e6e2db);
+  max-width: var(--moss-content-width, 70ch);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
+  padding-right: var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
+}
+
+.has-sidebar .moss-comments {
+  max-width: var(--moss-content-width-sidebar, 65ch);
+  margin-left: 0;
 }
 
 /* ==========================================================================
@@ -340,6 +350,92 @@ a.comment-author:hover {
   color: var(--moss-color-accent, #2d5a2d);
 }
 
+/* Default form slot — collapses when form relocates */
+.comment-form-slot {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+.comment-form-slot--collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Reply form wrapper — indented like a reply thread */
+.comment-reply-form-wrapper {
+  margin-top: var(--moss-space-sm, 1rem);
+  padding: var(--moss-space-sm, 1rem) 0 0 var(--moss-space-sm, 1rem);
+  margin-left: var(--moss-space-xs, 0.5rem);
+  border-left: 2px solid var(--moss-border-medium, #d1cdc4);
+  overflow: hidden;
+  animation: slideDown 0.25s ease-out;
+}
+
+@keyframes slideDown {
+  from { max-height: 0; opacity: 0; }
+  to { max-height: 300px; opacity: 1; }
+}
+
+/* Smaller typography in reply form */
+.comment-reply-form-wrapper .comment-form textarea {
+  font-size: var(--moss-font-sm, 1rem);
+  min-height: 2.5rem;
+}
+.comment-reply-form-wrapper .comment-field {
+  font-size: 0.875rem;
+  padding: 0.375rem 0;
+}
+.comment-reply-form-wrapper .comment-form-submit {
+  font-size: 0.875rem;
+  padding: 0.375rem 1rem;
+}
+.comment-reply-form-wrapper .comment-form {
+  padding-top: 0;
+}
+
+/* Reply button in comment header */
+.comment-reply-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--moss-color-muted, #8a8580);
+  padding: 0;
+  margin-left: auto;
+  transition: color 0.15s ease;
+}
+.comment-reply-btn:hover {
+  color: var(--moss-color-accent, #2d5a2d);
+}
+
+/* Reply indicator */
+.comment-reply-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--moss-color-muted, #8a8580);
+  margin-bottom: var(--moss-space-xs, 0.5rem);
+}
+.comment-reply-indicator strong {
+  color: var(--moss-color-text, #2c2825);
+  font-weight: 480;
+}
+.comment-reply-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--moss-color-muted, #8a8580);
+  font-size: 0.875rem;
+  padding: 0;
+  margin-left: 0.25rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.comment-reply-cancel:hover {
+  color: var(--moss-color-text, #2c2825);
+}
+
 /* ==========================================================================
    Responsive
    ========================================================================== */
@@ -354,6 +450,10 @@ a.comment-author:hover {
     padding-left: var(--moss-space-xs, 0.5rem);
     margin-left: 0.25rem;
   }
+
+  .comment-reply-form-wrapper .comment-form-meta {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* Full stack on very narrow screens */
@@ -364,5 +464,13 @@ a.comment-author:hover {
 
   .comment-form-submit {
     justify-self: end;
+  }
+
+  .comment-reply-form-wrapper .comment-form-meta {
+    grid-template-columns: 1fr;
+  }
+  .comment-reply-form-wrapper {
+    padding-left: var(--moss-space-xs, 0.5rem);
+    margin-left: 0.25rem;
   }
 }

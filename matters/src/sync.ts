@@ -610,6 +610,7 @@ export async function syncToLocalFiles(
 
       const frontmatter = generateFrontmatter({
         title: article.title,
+        description: article.summary,
         date: article.createdAt,
         updated: article.revisedAt,
         tags: article.tags.map((t) => t.content),

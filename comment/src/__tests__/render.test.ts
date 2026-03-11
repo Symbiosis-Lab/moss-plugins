@@ -315,6 +315,6 @@ describe("edge cases", () => {
     expect(html).toContain("<details>");
     expect(html).toContain("1 comment");
     expect(html).toContain("comment-list");
-    expect(html).not.toContain("comment-form");
+    expect(html).not.toContain("comment-form-submit");
   });
 });

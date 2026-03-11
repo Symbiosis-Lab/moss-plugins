@@ -21,6 +21,9 @@ export interface TranslationStrings {
   email_optional: string;
   website_optional: string;
   reply: string;
+  reply_action: string;
+  replying_to: string;
+  cancel: string;
   submitting: string;
   comment_submitted: string;
   network_error: string;
@@ -40,6 +43,9 @@ export const translations: Record<Lang, TranslationStrings> = {
     email_optional: "Email (optional)",
     website_optional: "Website (optional)",
     reply: "Reply",
+    reply_action: "Reply",
+    replying_to: "Replying to",
+    cancel: "Cancel",
     submitting: "Submitting...",
     comment_submitted: "Comment submitted!",
     network_error: "Network error. Please try again.",
@@ -53,6 +59,9 @@ export const translations: Record<Lang, TranslationStrings> = {
     email_optional: "邮箱（选填）",
     website_optional: "网站（选填）",
     reply: "回复",
+    reply_action: "回复",
+    replying_to: "回复",
+    cancel: "取消",
     submitting: "提交中...",
     comment_submitted: "评论已提交！",
     network_error: "网络错误，请重试。",
@@ -66,6 +75,9 @@ export const translations: Record<Lang, TranslationStrings> = {
     email_optional: "電子郵件（選填）",
     website_optional: "網站（選填）",
     reply: "回覆",
+    reply_action: "回覆",
+    replying_to: "回覆",
+    cancel: "取消",
     submitting: "提交中...",
     comment_submitted: "評論已提交！",
     network_error: "網路錯誤，請重試。",

@@ -31,17 +31,12 @@ describe("injectBeforeArticleEnd", () => {
     expect(injectBeforeArticleEnd('<p>no article</p>', "colophon")).toBeNull();
   });
 
-  it("injects before comment section when present", () => {
-    const html = '<article><p>body</p><section class="moss-comments" id="moss-comments">comments</section></article>';
-    const result = injectBeforeArticleEnd(html, '<footer>colophon</footer>');
-    expect(result).toContain('<footer>colophon</footer>\n<section class="moss-comments"');
-    expect(result!.indexOf("colophon")).toBeLessThan(result!.indexOf("moss-comments"));
-  });
-
-  it("falls back to </article> when no comment section", () => {
-    const html = '<article><p>body</p></article>';
+  it("colophon stays inside article even when comments follow outside", () => {
+    // Comments are now outside <article>, so colophon simply goes before </article>
+    const html = '<article><p>body</p></article><section class="moss-comments">comments</section>';
     const result = injectBeforeArticleEnd(html, '<footer>colophon</footer>');
     expect(result).toContain('<footer>colophon</footer>\n</article>');
+    expect(result!.indexOf("colophon")).toBeLessThan(result!.indexOf("</article>"));
   });
 });
 

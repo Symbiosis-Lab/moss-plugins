@@ -10,10 +10,10 @@ import { findInsertionPoint, injectCommentSection, injectCssStyle } from "../inj
 // ============================================================================
 
 describe("findInsertionPoint", () => {
-  it("finds </article> as first priority", () => {
+  it("returns position after </article> (comments go outside article)", () => {
     const html = "<body><main><article>content</article></main></body>";
     const idx = findInsertionPoint(html);
-    expect(idx).toBe(html.indexOf("</article>"));
+    expect(idx).toBe(html.indexOf("</article>") + "</article>".length);
   });
 
   it("finds </main> when no </article>", () => {
@@ -34,14 +34,14 @@ describe("findInsertionPoint", () => {
 });
 
 describe("injectCommentSection", () => {
-  it("injects before </article>", () => {
+  it("injects after </article> (comments are outside article per HTML5 semantics)", () => {
     const html = "<article>content</article>";
     const result = injectCommentSection(html, "<div>comments</div>");
     expect(result).toContain("<div>comments</div>");
     expect(result).toContain("</article>");
-    // Comment section should be before </article>
-    expect(result!.indexOf("<div>comments</div>")).toBeLessThan(
-      result!.indexOf("</article>")
+    // Comment section should be AFTER </article>
+    expect(result!.indexOf("</article>")).toBeLessThan(
+      result!.indexOf("<div>comments</div>")
     );
   });
 

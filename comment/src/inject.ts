@@ -19,15 +19,19 @@ function lastIndexOfTag(html: string, tag: string): number {
 /**
  * Find the best insertion point for the comment section.
  *
+ * Comments are not part of the article itself — they are meta-discussion
+ * about it. Per HTML5 semantics, they belong outside <article>.
+ *
  * Priority:
- * 1. Before </article>
+ * 1. After </article> (outside the article element)
  * 2. Before </main>
  * 3. Before </body>
- * 4. End of string (no injection)
+ * 4. No injection (-1)
  */
 export function findInsertionPoint(html: string): number {
-  const articleEnd = lastIndexOfTag(html, "</article>");
-  if (articleEnd !== -1) return articleEnd;
+  const articleEndTag = "</article>";
+  const articleEnd = lastIndexOfTag(html, articleEndTag);
+  if (articleEnd !== -1) return articleEnd + articleEndTag.length;
 
   const mainEnd = lastIndexOfTag(html, "</main>");
   if (mainEnd !== -1) return mainEnd;

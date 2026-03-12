@@ -258,13 +258,10 @@ export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
 // Plugin Export
 // ============================================================================
 
-import { enhance } from "./enhance";
-
 /**
  * Plugin object exported as global for the moss plugin runtime
  */
 const EmailPlugin = {
-  enhance,
   syndicate,
   getSlotContent,
 };
@@ -274,6 +271,5 @@ const EmailPlugin = {
   EmailPlugin;
 
 // Also export for module usage
-export { enhance };
 export { syndicate as after_deploy };
 export default EmailPlugin;

@@ -5,8 +5,15 @@
   "display_name": "Reviews",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["process", "enhance", "slots"],
-  "slots": ["head-end", "after-title", "before-article-end"],
+  "capabilities": [
+    "process",
+    "slots"
+  ],
+  "slots": [
+    "head-end",
+    "after-title",
+    "before-article-end"
+  ],
   "global_name": "ReviewPlugin",
   "icon": "icon.svg",
   "config": {},

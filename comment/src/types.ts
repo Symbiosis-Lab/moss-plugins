@@ -68,39 +68,7 @@ export interface ProcessContext {
   config: Record<string, any>;
 }
 
-export interface EnhanceContext {
-  project_path: string;
-  moss_dir: string;
-  output_dir: string;
-  project_info: ProjectInfo;
-  config: Record<string, any>;
-  interactions: any[];
-  files: EnhanceFile[];
-}
-
 export interface HookResult {
   success: boolean;
   message?: string;
-  interactions?: any[];
-}
-
-// ============================================================================
-// Enhance Pipeline Types
-// ============================================================================
-
-/** A file passed into the enhance hook by the pipeline. */
-export interface EnhanceFile {
-  path: string;
-  html: string;
-}
-
-/** A file modified by the enhance hook, returned to the pipeline. */
-export interface ModifiedFile {
-  path: string;
-  html: string;
-}
-
-/** Result returned from the enhance hook. Extends HookResult with modified files. */
-export interface EnhanceResult extends HookResult {
-  modified?: ModifiedFile[];
 }

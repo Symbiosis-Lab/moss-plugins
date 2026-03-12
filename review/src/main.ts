@@ -5,21 +5,17 @@
  *   Reads article-map.json, finds pages with neodb: frontmatter,
  *   fetches metadata from NeoDB, downloads covers, writes .moss/social/review.json.
  *
- * enhance hook (post-build):
- *   Reads review.json, injects book header after <h1> and colophon before </article>.
+ * getSlotContent (slot content):
+ *   Declares CSS, per-page review headers and colophons for template injection.
  */
 
 import { readFile, writeFile, readPluginFile, type SlotContext, type SlotResult, type SlotContent } from "@symbiosis-lab/moss-api";
 import { fetchNeoDBItem } from "./neodb";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
-import { injectAfterH1, injectBeforeArticleEnd, injectCssInHead } from "./inject";
 import type {
   ProcessContext,
-  EnhanceContext,
   HookResult,
-  EnhanceResult,
-  ModifiedFile,
   ArticleMap,
   ReviewSocialEntry,
 } from "./types";
@@ -176,103 +172,6 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
   }
 
   return { success: true, message: `Processed ${fetchCount} review(s)` };
-}
-
-// ============================================================================
-// Enhance Hook
-// ============================================================================
-
-/** Convert file path to URL path (same logic as comment plugin) */
-function filePathToUrlPath(filePath: string): string {
-  let p = filePath.replace(/\.html$/, "");
-  if (p.endsWith("/index") || p === "index") {
-    p = p.replace(/\/?index$/, "");
-    return p ? p + "/" : "";
-  }
-  return p;
-}
-
-export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
-  console.log("[info] Review: Starting enhance hook...");
-
-  // 1. Read CSS
-  let reviewCss = "";
-  try {
-    reviewCss = await readPluginFile(REVIEW_CSS_FILENAME);
-  } catch {
-    console.log("[warn] Review: Could not read CSS file");
-  }
-
-  // 2. Load social data
-  let socialData;
-  try {
-    socialData = await loadReviewSocialData();
-  } catch {
-    return { success: true, message: "No review data found", modified: [] };
-  }
-
-  // 3. Build uid→urlPath map from article-map
-  const uidToUrl = new Map<string, string>();
-  const urlToUid = new Map<string, string>();
-  try {
-    const mapContent = await readFile(".moss/article-map.json");
-    const articleMap = JSON.parse(mapContent) as ArticleMap;
-    if (articleMap.articles) {
-      for (const [_key, entry] of Object.entries(articleMap.articles)) {
-        if (entry.uid) {
-          uidToUrl.set(entry.uid, entry.url_path);
-          urlToUid.set(entry.url_path, entry.uid);
-        }
-      }
-    }
-  } catch {
-    return { success: true, message: "No article map, skipping enhance", modified: [] };
-  }
-
-  // 4. Transform files
-  const modified: ModifiedFile[] = [];
-
-  for (const file of ctx.files) {
-    const urlPath = filePathToUrlPath(file.path);
-    const uid = urlToUid.get(urlPath);
-    if (!uid) continue;
-
-    const entry = socialData.articles[uid];
-    if (!entry) continue;
-
-    // Skip if already injected (idempotent)
-    if (file.html.includes('class="review-header"') || file.html.includes('class="review-colophon"')) {
-      continue;
-    }
-
-    let html = file.html;
-
-    // Inject header after <h1>
-    const headerHtml = renderHeader(entry);
-    if (headerHtml) {
-      const injected = injectAfterH1(html, headerHtml);
-      if (injected) html = injected;
-    }
-
-    // Inject colophon before </article>
-    const colophonHtml = renderColophon(entry);
-    if (colophonHtml) {
-      const injected = injectBeforeArticleEnd(html, colophonHtml);
-      if (injected) html = injected;
-    }
-
-    // Inject CSS
-    if (reviewCss && html !== file.html) {
-      html = injectCssInHead(html, reviewCss);
-    }
-
-    if (html !== file.html) {
-      modified.push({ path: file.path, html });
-    }
-  }
-
-  console.log(`[info] Review: Enhanced ${modified.length} page(s)`);
-  return { success: true, message: `Enhanced ${modified.length} page(s)`, modified };
 }
 
 // ============================================================================

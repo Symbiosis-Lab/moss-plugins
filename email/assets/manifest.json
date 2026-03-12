@@ -6,8 +6,14 @@
   "display_name": "Email Newsletter",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["enhance", "syndicate", "slots"],
-  "slots": ["head-end", "footer-right"],
+  "capabilities": [
+    "syndicate",
+    "slots"
+  ],
+  "slots": [
+    "head-end",
+    "footer-right"
+  ],
   "global_name": "EmailPlugin",
   "domain": "buttondown.com",
   "config": {},

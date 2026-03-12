@@ -5,7 +5,7 @@
  *   Reads article-map.json, finds pages with neodb: frontmatter,
  *   fetches metadata from NeoDB, downloads covers, writes .moss/social/review.json.
  *
- * getSlotContent (slot content):
+ * enhance (slot content):
  *   Declares CSS, per-page review headers and colophons for template injection.
  */
 
@@ -179,14 +179,14 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
 // ============================================================================
 
 /**
- * getSlotContent - Declare content for template slots.
+ * enhance - Declare content for template slots.
  *
  * Returns:
  * - "head-end": static CSS for review header/colophon
  * - "after-title": per-page review headers (cover + creator + year)
  * - "before-article-end": per-page review colophons (rating, biblio, links)
  */
-export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+export async function enhance(ctx: SlotContext): Promise<SlotResult> {
   const slots: Record<string, SlotContent> = {};
 
   // 1. Read CSS

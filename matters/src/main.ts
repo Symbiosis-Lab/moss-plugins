@@ -309,7 +309,8 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       allCollections,
       userName,
       context.config || {},
-      profile
+      profile,
+      context.project_info.homepage_file,
     );
 
     // Build summary message

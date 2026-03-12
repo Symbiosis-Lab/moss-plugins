@@ -317,7 +317,13 @@ export async function syncToLocalFiles(
   collections: MattersCollection[],
   userName: string,
   config: Record<string, unknown>,
-  profile: MattersUserProfile
+  profile: MattersUserProfile,
+  // moss tells us which file it detected as the homepage (e.g., "刘果.md", "index.md").
+  // When set, we skip homepage generation — the user already has a home file and the
+  // Matters plugin should not create a competing index.md. This uses the same detection
+  // logic as moss-core's home::detect_home_file_in_folder(), which considers index stems,
+  // self-named folder notes, and alphabetical fallback.
+  homepageFile?: string | null,
 ): Promise<SyncResultWithMap> {
   const result: SyncResult = {
     created: 0,
@@ -387,65 +393,72 @@ export async function syncToLocalFiles(
   // ============================================================================
   // Generate Homepage (index.md)
   // ============================================================================
-  // The homepage is created at the project root with only the user's display name
-  // in frontmatter. moss identifies it as the homepage by its location (root index.md).
+  // Skip if moss already detected a home file (e.g., "刘果.md", "index.md", "readme.md").
+  // The homepageFile comes from moss's home file detection (moss-core home.rs), which
+  // considers index stems, self-named folder notes, and alphabetical fallback. When a
+  // home file exists, the Matters plugin should not create a competing index.md.
   processedItems++;
   await reportProgress("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
 
-  try {
-    const homepageFrontmatter = generateFrontmatter({
-      title: profile.displayName,
-    });
-
-    let homepageBody = profile.description || "";
-
-    if (profile.pinnedWorks && profile.pinnedWorks.length > 0) {
-      const gridItems = profile.pinnedWorks.map((work) => {
-        if (work.type === "collection") {
-          const slug = slugify(work.title);
-          // In file mode, collections are .md files; in folder mode, they are directories
-          const collectionPath = useFileMode
-            ? `/${folders.article}/${slug}`
-            : `/${folders.article}/${slug}/`;
-          return `[${work.title}](${collectionPath})`;
-        } else {
-          // Article — find its path (standalone or in collection)
-          const slug = work.slug || slugify(work.title);
-          const shortHash = work.shortHash ?? "";
-          const collectionSlug = articleFirstCollection.get(shortHash);
-          const path = collectionSlug
-            ? `/${folders.article}/${collectionSlug}/${slug}/`
-            : `/${folders.article}/${slug}/`;
-          return `[${work.title}](${path})`;
-        }
+  if (homepageFile) {
+    console.log(`   ⏭️  Skipping homepage (moss detected home file: ${homepageFile})`);
+    result.skipped++;
+  } else {
+    try {
+      const homepageFrontmatter = generateFrontmatter({
+        title: profile.displayName,
       });
 
-      homepageBody += "\n\n:::grid 3\n" + gridItems.join("\n:::\n") + "\n:::\n";
-    }
+      let homepageBody = profile.description || "";
 
-    const homepageContent = homepageFrontmatter + "\n\n" + homepageBody;
+      if (profile.pinnedWorks && profile.pinnedWorks.length > 0) {
+        const gridItems = profile.pinnedWorks.map((work) => {
+          if (work.type === "collection") {
+            const slug = slugify(work.title);
+            // In file mode, collections are .md files; in folder mode, they are directories
+            const collectionPath = useFileMode
+              ? `/${folders.article}/${slug}`
+              : `/${folders.article}/${slug}/`;
+            return `[${work.title}](${collectionPath})`;
+          } else {
+            // Article — find its path (standalone or in collection)
+            const slug = work.slug || slugify(work.title);
+            const shortHash = work.shortHash ?? "";
+            const collectionSlug = articleFirstCollection.get(shortHash);
+            const path = collectionSlug
+              ? `/${folders.article}/${collectionSlug}/${slug}/`
+              : `/${folders.article}/${slug}/`;
+            return `[${work.title}](${path})`;
+          }
+        });
 
-    // Check if homepage already exists with same content
-    let existingHomepage: string | null = null;
-    try {
-      existingHomepage = await readFile("index.md");
-    } catch {
-      // File doesn't exist
-    }
+        homepageBody += "\n\n:::grid 3\n" + gridItems.join("\n:::\n") + "\n:::\n";
+      }
 
-    if (existingHomepage) {
-      console.log(`   ⏭️  Skipping homepage (already exists): index.md`);
-      result.skipped++;
-    } else {
-      await writeFile("index.md", homepageContent);
-      console.log(`   ✅ Created homepage: index.md`);
-      result.created++;
+      const homepageContent = homepageFrontmatter + "\n\n" + homepageBody;
+
+      // Check if homepage already exists with same content
+      let existingHomepage: string | null = null;
+      try {
+        existingHomepage = await readFile("index.md");
+      } catch {
+        // File doesn't exist
+      }
+
+      if (existingHomepage) {
+        console.log(`   ⏭️  Skipping homepage (already exists): index.md`);
+        result.skipped++;
+      } else {
+        await writeFile("index.md", homepageContent);
+        console.log(`   ✅ Created homepage: index.md`);
+        result.created++;
+      }
+    } catch (error) {
+      const errorMsg = `Failed to create homepage: ${error}`;
+      await reportError(errorMsg, "syncing_homepage", false);
+      console.error(`   ❌ ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
-  } catch (error) {
-    const errorMsg = `Failed to create homepage: ${error}`;
-    await reportError(errorMsg, "syncing_homepage", false);
-    console.error(`   ❌ ${errorMsg}`);
-    result.errors.push(errorMsg);
   }
 
   // Process collections

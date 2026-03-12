@@ -261,6 +261,78 @@ describe("syncToLocalFiles - homepage grid from pinned works", () => {
 });
 
 // ============================================================================
+// Homepage skip when moss detects existing home file
+// ============================================================================
+
+describe("syncToLocalFiles - skip homepage when homepageFile is set", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should skip homepage creation when homepageFile indicates an existing home file", async () => {
+    // moss detected "刘果.md" as the home file — Matters should NOT create index.md
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "Bio", pinnedWorks: [] },
+      "刘果.md", // homepageFile — moss already found a home file
+    );
+
+    // Homepage should be skipped
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+    // index.md should NOT be created
+    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`);
+    expect(indexFile).toBeUndefined();
+  });
+
+  it("should skip homepage creation when homepageFile is index.md", async () => {
+    // moss detected "index.md" as the home file — even if readFile would fail,
+    // the homepageFile flag should short-circuit
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "Bio", pinnedWorks: [] },
+      "index.md",
+    );
+
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should still create homepage when homepageFile is null", async () => {
+    // No home file detected by moss — Matters should create index.md as before
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "Bio", pinnedWorks: [] },
+      null,
+    );
+
+    expect(result.result.created).toBeGreaterThanOrEqual(1);
+    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`);
+    expect(indexFile).toBeDefined();
+  });
+
+  it("should still create homepage when homepageFile is undefined (backwards compat)", async () => {
+    // homepageFile not passed at all — existing behavior preserved
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "Bio", pinnedWorks: [] },
+    );
+
+    expect(result.result.created).toBeGreaterThanOrEqual(1);
+    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`);
+    expect(indexFile).toBeDefined();
+  });
+});
+
+// ============================================================================
 // Folder-mode Collection Order Tests
 // ============================================================================
 

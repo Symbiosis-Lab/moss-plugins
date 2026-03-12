@@ -194,13 +194,13 @@ import { getNewsletterInfo } from "./buttondown";
 const SUBSCRIBE_CSS_FILENAME = "email-subscribe.css";
 
 /**
- * getSlotContent - Declare content for template slots.
+ * enhance - Declare content for template slots.
  *
  * Returns:
  * - "head-end": static CSS for the subscribe form
  * - "footer-right": static subscribe form HTML
  */
-export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+export async function enhance(ctx: SlotContext): Promise<SlotResult> {
   const config = ctx.config as PluginConfig;
   const slots: Record<string, SlotContent> = {};
 
@@ -263,7 +263,7 @@ export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
  */
 const EmailPlugin = {
   syndicate,
-  getSlotContent,
+  enhance,
 };
 
 // Register plugin globally for the plugin runtime

@@ -7,7 +7,7 @@
  *   Fetches comments from configured server (Waline or Artalk)
  *   and writes them to .moss/social/comment.json keyed by content uid.
  *
- * getSlotContent (slot content):
+ * enhance (slot content):
  *   Declares CSS and per-page comment section HTML for template injection.
  */
 
@@ -168,13 +168,13 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
 // ============================================================================
 
 /**
- * getSlotContent - Declare content for template slots.
+ * enhance - Declare content for template slots.
  *
  * Returns:
  * - "head-end": static CSS for comment sections
  * - "before-article-end": per-page comment section HTML keyed by URL path
  */
-export async function getSlotContent(ctx: SlotContext): Promise<SlotResult> {
+export async function enhance(ctx: SlotContext): Promise<SlotResult> {
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
   const siteName = (config.site_name as string) || ctx.project_info.site_name || "";

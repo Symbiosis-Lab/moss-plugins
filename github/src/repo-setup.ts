@@ -14,7 +14,7 @@
 import { openBrowserWithHtml, closeBrowser, onEvent } from "@symbiosis-lab/moss-api";
 import { reportProgress } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
-import { getAuthenticatedUser, checkRepoExists, createRepository } from "./github-api";
+import { getAuthenticatedUser, checkRepoExists, createRepository, getRepoSshUrl } from "./github-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 
 /**
@@ -30,10 +30,11 @@ export interface RepoSetupResult {
 }
 
 /**
- * Value returned when user submits the dialog
+ * Value returned when user makes a deploy choice
  */
-interface RepoSetupValue {
-  name: string;
+interface DeployChoice {
+  action: "replace-root" | "custom-domain";
+  repoName?: string;
 }
 
 /**
@@ -72,13 +73,27 @@ export async function ensureGitHubRepo(): Promise<RepoSetupResult | null> {
   const rootRepoName = `${username}.github.io`;
   const rootExists = await checkRepoExists(username, rootRepoName, token);
 
-  // Step 4: Auto-create or show UI
+  // Step 4: Auto-create or show deploy choice UI
   if (!rootExists) {
     // Root is available - auto-create (no UI needed!)
     return await createRootRepo(username, rootRepoName, token);
   } else {
-    // Root is taken - show UI for custom repo name
-    return await showRepoNameUI(username, token);
+    // Root is taken - show decision UI
+    const choice = await showDeployChoiceUI(username, token);
+    if (!choice) {
+      await closeBrowser();
+      return null;
+    }
+
+    if (choice.action === "replace-root") {
+      const sshUrl = await getRepoSshUrl(username, rootRepoName, token);
+      await closeBrowser();
+      return { name: rootRepoName, sshUrl, fullName: `${username}/${rootRepoName}` };
+    } else {
+      const createdRepo = await createRepository(choice.repoName!, token, "Created with moss");
+      await closeBrowser();
+      return { name: createdRepo.name, sshUrl: createdRepo.sshUrl, fullName: createdRepo.fullName };
+    }
   }
 }
 
@@ -208,55 +223,30 @@ async function showBrowserWithProgress<T>(
 }
 
 /**
- * Show UI for custom repo name (when root is taken)
+ * Show deploy choice UI when root repo is already taken.
+ * Presents two options: "Replace it" or "Use a custom domain".
  */
-async function showRepoNameUI(
+async function showDeployChoiceUI(
   username: string,
   token: string
-): Promise<RepoSetupResult | null> {
-  console.log("   Root repo already exists, showing UI for custom name...");
+): Promise<DeployChoice | null> {
+  console.log("   Root repo already exists, showing deploy choice UI...");
 
-  const html = createRepoSetupHtml(username, token);
-  const result = await showBrowserWithProgress<RepoSetupValue>(
+  const html = createDeployChoiceHtml(username, token);
+  return await showBrowserWithProgress<DeployChoice>(
     html,
-    "github:repo-created",
+    "github:deploy-choice",
     "Setting up GitHub repository...",
     300000
   );
-
-  if (!result) {
-    console.log("   User cancelled repository setup");
-    await closeBrowser(); // Close browser on cancellation
-    return null;
-  }
-
-  // Create the custom repo
-  const repoName = result.name;
-  console.log(`   Creating repository: ${repoName}`);
-
-  try {
-    const createdRepo = await createRepository(repoName, token, "Created with moss");
-    console.log(`   Repository created: ${createdRepo.htmlUrl}`);
-
-    await closeBrowser(); // Close browser after successful repo creation
-
-    return {
-      name: createdRepo.name,
-      sshUrl: createdRepo.sshUrl,
-      fullName: createdRepo.fullName,
-    };
-  } catch (error) {
-    console.error(`   Failed to create repository: ${error}`);
-    await closeBrowser(); // Close browser on error
-    return null;
-  }
 }
 
 /**
- * Generate the HTML for the repo setup browser UI
- * Shows explanation that root is already taken
+ * Generate the HTML for the deploy choice browser UI.
+ * Two-card layout: "Replace it" (deploy to existing root) or
+ * "Use a custom domain" (create a project repo).
  */
-function createRepoSetupHtml(username: string, token: string): string {
+function createDeployChoiceHtml(username: string, token: string): string {
   const rootRepoName = `${username}.github.io`;
 
   return `<!DOCTYPE html>
@@ -300,7 +290,7 @@ function createRepoSetupHtml(username: string, token: string): string {
 
     .container {
       width: 100%;
-      max-width: 440px;
+      max-width: 480px;
     }
 
     .icon {
@@ -340,8 +330,42 @@ function createRepoSetupHtml(username: string, token: string): string {
       font-family: monospace;
     }
 
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+      transition: border-color 0.15s;
+    }
+
+    .card:hover {
+      border-color: var(--text-muted);
+    }
+
+    .card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .card code {
+      background: rgba(88, 166, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+      color: var(--link);
+    }
+
     .form-group {
-      margin-bottom: 24px;
+      margin-bottom: 16px;
     }
 
     label {
@@ -354,7 +378,7 @@ function createRepoSetupHtml(username: string, token: string): string {
     .input-wrapper {
       display: flex;
       align-items: center;
-      background: var(--surface);
+      background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 6px;
       overflow: hidden;
@@ -429,28 +453,8 @@ function createRepoSetupHtml(username: string, token: string): string {
       to { transform: rotate(360deg); }
     }
 
-    .url-preview {
-      padding: 12px 16px;
-      background: var(--surface);
-      border-radius: 6px;
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-bottom: 24px;
-      line-height: 1.5;
-    }
-
-    .url-preview strong {
-      color: var(--text);
-    }
-
-    .buttons {
-      display: flex;
-      gap: 12px;
-    }
-
     button {
-      flex: 1;
-      padding: 12px 20px;
+      padding: 10px 20px;
       font-size: 14px;
       font-weight: 500;
       border-radius: 6px;
@@ -467,6 +471,7 @@ function createRepoSetupHtml(username: string, token: string): string {
     .btn-primary {
       background: var(--primary);
       color: white;
+      width: 100%;
     }
 
     .btn-primary:hover:not(:disabled) {
@@ -474,19 +479,34 @@ function createRepoSetupHtml(username: string, token: string): string {
     }
 
     .btn-secondary {
-      background: var(--surface);
+      background: var(--surface-hover);
       color: var(--text);
       border: 1px solid var(--border);
+      width: 100%;
     }
 
     .btn-secondary:hover:not(:disabled) {
-      background: var(--surface-hover);
+      background: var(--border);
     }
 
-    .creating {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .cancel-row {
+      text-align: center;
+      margin-top: 16px;
+    }
+
+    .cancel-link {
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      text-decoration: underline;
+      padding: 0;
+      width: auto;
+    }
+
+    .cancel-link:hover {
+      color: var(--text);
     }
   </style>
 </head>
@@ -496,35 +516,44 @@ function createRepoSetupHtml(username: string, token: string): string {
       <path d="M12 2C6.475 2 2 6.475 2 12c0 4.42 2.865 8.17 6.84 9.49.5.09.68-.22.68-.48v-1.69c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48C19.14 20.17 22 16.42 22 12c0-5.525-4.475-10-10-10z" fill="#8b949e"/>
     </svg>
 
-    <h1>Choose a repository name</h1>
+    <h1>Deploy your site</h1>
     <p class="subtitle">
-      Create a repository for your site.
+      <code>${rootRepoName}</code> already exists. How would you like to deploy?
     </p>
 
-    <div class="info-box">
-      <strong>Note:</strong> <code>${rootRepoName}</code> is already in use.
-      Your site will be deployed to <strong>${username}.github.io/<em>repo-name</em>/</strong>
+    <!-- Card 1: Replace root -->
+    <div class="card" id="card-replace">
+      <h2>Replace it</h2>
+      <p>
+        Deploy to your existing <code>${rootRepoName}</code> repository.
+        Your site will be at <strong>${username}.github.io/</strong>
+      </p>
+      <button class="btn-primary" id="replace-btn">Deploy to ${username}.github.io</button>
     </div>
 
-    <div class="form-group">
-      <label for="repo-name">Repository name</label>
-      <div class="input-wrapper" id="input-wrapper">
-        <span class="prefix">github.com/${username}/</span>
-        <input type="text" id="repo-name" placeholder="my-website"
-               autocomplete="off" autocorrect="off" spellcheck="false" autofocus>
+    <!-- Card 2: Custom domain / project repo -->
+    <div class="card" id="card-custom">
+      <h2>Use a custom domain</h2>
+      <p>
+        Create a new repository and set up a custom domain later.
+        Your site will be at <strong>${username}.github.io/<em>repo-name</em>/</strong> until the domain is configured.
+      </p>
+
+      <div class="form-group">
+        <label for="repo-name">Repository name</label>
+        <div class="input-wrapper" id="input-wrapper">
+          <span class="prefix">github.com/${username}/</span>
+          <input type="text" id="repo-name" placeholder="my-website"
+                 autocomplete="off" autocorrect="off" spellcheck="false">
+        </div>
+        <div class="status" id="status"></div>
       </div>
-      <div class="status" id="status"></div>
+
+      <button class="btn-secondary" id="custom-btn" disabled>Create & Deploy</button>
     </div>
 
-    <div class="url-preview" id="url-preview">
-      Your site URL: <strong>https://${username}.github.io/<span id="preview-name">my-website</span>/</strong>
-    </div>
-
-    <div class="buttons">
-      <button class="btn-secondary" id="cancel-btn">Cancel</button>
-      <button class="btn-primary" id="create-btn" disabled>
-        <span id="btn-text">Create & Deploy</span>
-      </button>
+    <div class="cancel-row">
+      <button class="cancel-link" id="cancel-btn">Cancel</button>
     </div>
   </div>
 
@@ -534,10 +563,9 @@ function createRepoSetupHtml(username: string, token: string): string {
     const input = document.getElementById('repo-name');
     const inputWrapper = document.getElementById('input-wrapper');
     const status = document.getElementById('status');
-    const createBtn = document.getElementById('create-btn');
-    const btnText = document.getElementById('btn-text');
+    const replaceBtn = document.getElementById('replace-btn');
+    const customBtn = document.getElementById('custom-btn');
     const cancelBtn = document.getElementById('cancel-btn');
-    const previewName = document.getElementById('preview-name');
 
     let checkTimeout = null;
     let isAvailable = false;
@@ -562,7 +590,7 @@ function createRepoSetupHtml(username: string, token: string): string {
         (type === 'available' ? 'success' :
          (type === 'taken' || type === 'invalid') ? 'error' : '');
 
-      createBtn.disabled = type !== 'available';
+      customBtn.disabled = type !== 'available';
       isAvailable = type === 'available';
     }
 
@@ -621,7 +649,6 @@ function createRepoSetupHtml(username: string, token: string): string {
 
     input.addEventListener('input', (e) => {
       const name = e.target.value.trim();
-      previewName.textContent = name || 'my-website';
 
       if (checkTimeout) {
         clearTimeout(checkTimeout);
@@ -634,21 +661,23 @@ function createRepoSetupHtml(username: string, token: string): string {
       }, 300);
     });
 
+    replaceBtn.addEventListener('click', () => {
+      replaceBtn.disabled = true;
+      replaceBtn.innerHTML = '<span style="display:flex;align-items:center;justify-content:center;gap:8px"><span class="spinner"></span>Connecting...</span>';
+      mossApi.emit('github:deploy-choice', { action: 'replace-root' });
+    });
+
+    customBtn.addEventListener('click', () => {
+      if (!isAvailable) return;
+      const name = input.value.trim();
+      customBtn.disabled = true;
+      customBtn.innerHTML = '<span style="display:flex;align-items:center;justify-content:center;gap:8px"><span class="spinner"></span>Creating...</span>';
+      mossApi.emit('github:deploy-choice', { action: 'custom-domain', repoName: name });
+    });
+
     cancelBtn.addEventListener('click', () => {
       mossApi.close();
     });
-
-    createBtn.addEventListener('click', async () => {
-      if (!isAvailable) return;
-
-      const name = input.value.trim();
-      createBtn.disabled = true;
-      btnText.innerHTML = '<span class="creating"><div class="spinner"></div>Creating...</span>';
-
-      mossApi.emit('github:repo-created', { name: name });
-    });
-
-    input.focus();
   </script>
 </body>
 </html>`;

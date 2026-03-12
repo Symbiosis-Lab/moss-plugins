@@ -26,6 +26,14 @@ export function parseGitHubUrl(remoteUrl: string): { owner: string; repo: string
 }
 
 /**
+ * Check if a repo is the root GitHub Pages repo for the given owner.
+ * Root repos follow the pattern {owner}.github.io (case-insensitive).
+ */
+export function isRootRepo(owner: string, repo: string): boolean {
+  return repo.toLowerCase() === `${owner.toLowerCase()}.github.io`;
+}
+
+/**
  * Build GitHub Pages URL from owner and repo name.
  * User/org site repos (e.g., "username.github.io") serve at root.
  */

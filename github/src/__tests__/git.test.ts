@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseGitHubUrl, extractGitHubPagesUrl, buildPagesUrl } from "../git";
+import { parseGitHubUrl, extractGitHubPagesUrl, buildPagesUrl, isRootRepo } from "../git";
 
 describe("parseGitHubUrl", () => {
   describe("HTTPS URLs", () => {
@@ -146,6 +146,28 @@ describe("extractGitHubPagesUrl", () => {
     expect(() => {
       extractGitHubPagesUrl("not-a-url");
     }).toThrow("Could not parse GitHub URL from remote");
+  });
+});
+
+describe("isRootRepo", () => {
+  it("returns true for exact match (alice/alice.github.io)", () => {
+    expect(isRootRepo("alice", "alice.github.io")).toBe(true);
+  });
+
+  it("returns true for case-insensitive owner (Alice/alice.github.io)", () => {
+    expect(isRootRepo("Alice", "alice.github.io")).toBe(true);
+  });
+
+  it("returns true for case-insensitive both (Alice/Alice.github.io)", () => {
+    expect(isRootRepo("Alice", "Alice.github.io")).toBe(true);
+  });
+
+  it("returns false for non-root repo (alice/my-website)", () => {
+    expect(isRootRepo("alice", "my-website")).toBe(false);
+  });
+
+  it("returns false for different user's root repo (alice/bob.github.io)", () => {
+    expect(isRootRepo("alice", "bob.github.io")).toBe(false);
   });
 });
 

@@ -55,11 +55,13 @@ vi.mock("../auth", () => ({
 const mockGetAuthenticatedUser = vi.fn();
 const mockCheckRepoExists = vi.fn();
 const mockCreateRepository = vi.fn();
+const mockGetRepoSshUrl = vi.fn();
 
 vi.mock("../github-api", () => ({
   getAuthenticatedUser: (token: string) => mockGetAuthenticatedUser(token),
   checkRepoExists: (owner: string, name: string, token: string) => mockCheckRepoExists(owner, name, token),
   createRepository: (name: string, token: string, description?: string) => mockCreateRepository(name, token, description),
+  getRepoSshUrl: (owner: string, repo: string, token: string) => mockGetRepoSshUrl(owner, repo, token),
 }));
 
 describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
@@ -93,7 +95,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Simulate user taking 75 seconds to fill out form (should trigger 2 heartbeats)
     let eventHandler: ((payload: unknown) => void) | null = null;
     mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-      if (eventName === "github:repo-created") {
+      if (eventName === "github:deploy-choice") {
         eventHandler = handler;
       }
       return vi.fn(); // Return unlisten function
@@ -126,7 +128,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     await vi.advanceTimersByTimeAsync(15000);
 
     // User submits form via event
-    eventHandler!({ name: "my-website" });
+    eventHandler!({ action: "custom-domain", repoName: "my-website" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -149,7 +151,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // User submits form after 35 seconds (should trigger 1 heartbeat, then clear)
     let eventHandler: ((payload: unknown) => void) | null = null;
     mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-      if (eventName === "github:repo-created") {
+      if (eventName === "github:deploy-choice") {
         eventHandler = handler;
       }
       return vi.fn();
@@ -169,7 +171,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
 
     // User submits form (should clear interval)
-    eventHandler!({ name: "quick-submit" });
+    eventHandler!({ action: "custom-domain", repoName: "quick-submit" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -221,7 +223,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Simulate user taking 120 seconds (2 minutes) - should NOT timeout
     let eventHandler: ((payload: unknown) => void) | null = null;
     mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-      if (eventName === "github:repo-created") {
+      if (eventName === "github:deploy-choice") {
         eventHandler = handler;
       }
       return vi.fn();
@@ -246,7 +248,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenCalledTimes(4);
 
     // User finally submits form
-    eventHandler!({ name: "slow-user" });
+    eventHandler!({ action: "custom-domain", repoName: "slow-user" });
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -265,7 +267,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
 
     let eventHandler: ((payload: unknown) => void) | null = null;
     mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-      if (eventName === "github:repo-created") {
+      if (eventName === "github:deploy-choice") {
         eventHandler = handler;
       }
       return vi.fn();
@@ -293,7 +295,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     expect(mockReportProgress).toHaveBeenNthCalledWith(3, "setup", 0, 6, "Setting up GitHub repository...");
 
     // Complete
-    eventHandler!({ name: "test" });
+    eventHandler!({ action: "custom-domain", repoName: "test" });
     await vi.runAllTimersAsync();
     await resultPromise;
   });

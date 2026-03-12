@@ -51,11 +51,13 @@ vi.mock("../auth", () => ({
 const mockGetAuthenticatedUser = vi.fn();
 const mockCheckRepoExists = vi.fn();
 const mockCreateRepository = vi.fn();
+const mockGetRepoSshUrl = vi.fn();
 
 vi.mock("../github-api", () => ({
   getAuthenticatedUser: (token: string) => mockGetAuthenticatedUser(token),
   checkRepoExists: (owner: string, name: string, token: string) => mockCheckRepoExists(owner, name, token),
   createRepository: (name: string, token: string, description?: string) => mockCreateRepository(name, token, description),
+  getRepoSshUrl: (owner: string, repo: string, token: string) => mockGetRepoSshUrl(owner, repo, token),
 }));
 
 describe("ensureGitHubRepo", () => {
@@ -181,30 +183,73 @@ describe("ensureGitHubRepo", () => {
     });
   });
 
-  describe("show UI when root is taken", () => {
+  describe("show deploy choice UI when root is taken", () => {
     beforeEach(() => {
       // Setup: Authenticated user
       mockGetToken.mockResolvedValue("test-token");
       mockGetAuthenticatedUser.mockResolvedValue({ login: "testuser" });
     });
 
-    it("shows UI when {username}.github.io already exists", async () => {
+    it("shows deploy choice UI when {username}.github.io already exists", async () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // Setup event listener to simulate form submission
-      let capturedEventHandler: ((payload: unknown) => void) | null = null;
+      // Simulate user choosing "replace-root"
       mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-        if (eventName === "github:repo-created") {
-          capturedEventHandler = handler;
-          // Simulate immediate form submission
+        if (eventName === "github:deploy-choice") {
           setTimeout(() => {
-            if (capturedEventHandler) {
-              capturedEventHandler({ name: "my-website" });
-            }
+            handler({ action: "replace-root" });
           }, 10);
         }
-        return vi.fn(); // Return unlisten function
+        return vi.fn();
+      });
+
+      mockGetRepoSshUrl.mockResolvedValue("git@github.com:testuser/testuser.github.io.git");
+
+      const result = await ensureGitHubRepo();
+
+      // Should use openBrowserWithHtml
+      expect(mockOpenBrowserWithHtml).toHaveBeenCalledWith(expect.any(String));
+
+      // Should listen for github:deploy-choice event (not github:repo-created)
+      expect(mockOnEvent).toHaveBeenCalledWith("github:deploy-choice", expect.any(Function));
+
+      // HTML should contain deploy choice elements
+      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
+      expect(html).toContain("already");
+      expect(html).toContain("replace-root");
+      expect(html).toContain("custom-domain");
+      expect(html).toContain("mossApi.emit('github:deploy-choice'");
+      expect(html).toContain("mossApi.close()");
+      expect(html).not.toContain("mossApi.submit");
+      expect(html).not.toContain("__TAURI__");
+
+      // Should NOT create a new repo — reuse existing root
+      expect(mockCreateRepository).not.toHaveBeenCalled();
+      expect(mockGetRepoSshUrl).toHaveBeenCalledWith("testuser", "testuser.github.io", "test-token");
+
+      // Should close browser after decision
+      expect(mockCloseBrowser).toHaveBeenCalled();
+
+      expect(result).toEqual({
+        name: "testuser.github.io",
+        sshUrl: "git@github.com:testuser/testuser.github.io.git",
+        fullName: "testuser/testuser.github.io",
+      });
+    }, 10000);
+
+    it("creates custom repo when user chooses 'custom-domain'", async () => {
+      // Root repo EXISTS
+      mockCheckRepoExists.mockResolvedValue(true);
+
+      // Simulate user choosing "custom-domain" with a repo name
+      mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+        if (eventName === "github:deploy-choice") {
+          setTimeout(() => {
+            handler({ action: "custom-domain", repoName: "my-website" });
+          }, 10);
+        }
+        return vi.fn();
       });
 
       mockCreateRepository.mockResolvedValue({
@@ -213,30 +258,14 @@ describe("ensureGitHubRepo", () => {
         sshUrl: "git@github.com:testuser/my-website.git",
       });
 
-      // Start the flow and await
       const result = await ensureGitHubRepo();
 
-      // Should use openBrowserWithHtml (not old showBrowserForm API)
-      expect(mockOpenBrowserWithHtml).toHaveBeenCalledWith(expect.any(String));
-
-      // NEW: Should listen for github:repo-created event
-      expect(mockOnEvent).toHaveBeenCalledWith("github:repo-created", expect.any(Function));
-
-      // HTML should contain explanation about root being taken
-      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
-      expect(html).toContain("already");
-
-      // NEW: HTML should use mossApi.emit/close (not mossApi.submit/cancel)
-      expect(html).toContain("mossApi.emit('github:repo-created'");
-      expect(html).toContain("mossApi.close()");
-      expect(html).not.toContain("mossApi.submit");
-      expect(html).not.toContain("mossApi.cancel()");
-      expect(html).not.toContain("__TAURI__");
-
       // Should create custom repo
-      expect(mockCreateRepository).toHaveBeenCalledWith("my-website", "test-token", expect.any(String));
+      expect(mockCreateRepository).toHaveBeenCalledWith("my-website", "test-token", "Created with moss");
+      // Should NOT fetch root repo SSH URL
+      expect(mockGetRepoSshUrl).not.toHaveBeenCalled();
 
-      // NEW: Should close browser after repo creation
+      // Should close browser after repo creation
       expect(mockCloseBrowser).toHaveBeenCalled();
 
       expect(result).toEqual({
@@ -244,62 +273,43 @@ describe("ensureGitHubRepo", () => {
         sshUrl: "git@github.com:testuser/my-website.git",
         fullName: "testuser/my-website",
       });
-    }, 10000); // Increase timeout for this test
+    }, 10000);
 
-    it("returns null when user cancels UI", async () => {
+    it("returns null when user cancels UI (null choice)", async () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // Setup event listener but don't trigger it (simulates user closing browser)
-      mockOnEvent.mockImplementation(async () => {
-        return vi.fn(); // Return unlisten function
-      });
-
-      // NEW: We need a way to detect browser close without form submission
-      // For now, this test will timeout - we'll handle this in implementation
-      // by using a timeout mechanism similar to the old code
-
-      // This will be handled via timeout in the implementation
-      // For testing, we'll skip this scenario for now
-      expect(mockOnEvent).toBeDefined();
-    });
-
-    it("returns null when UI times out", async () => {
-      // Root repo EXISTS
-      mockCheckRepoExists.mockResolvedValue(true);
-
-      // Setup event listener but don't trigger it within timeout
+      // Event listener never fires — simulates timeout/cancel
       mockOnEvent.mockImplementation(async () => {
         return vi.fn();
       });
 
-      // NEW: Timeout will be handled by the implementation
-      // We'll use a short timeout for testing
-      // This test will be updated once we implement timeout handling
+      // We just verify the structure is correct
       expect(mockOnEvent).toBeDefined();
     });
 
-    it("includes explanation about URL paths in UI", async () => {
+    it("includes repo name input with availability check in custom-domain card", async () => {
       // Root repo EXISTS
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // Setup event listener
       mockOnEvent.mockImplementation(async () => {
         return vi.fn();
       });
 
-      // Start the flow (will timeout, but we just want to inspect HTML)
+      // Start the flow (will timeout, but we inspect HTML)
       const resultPromise = ensureGitHubRepo();
-
-      // Give it time to render HTML
       await new Promise(resolve => setTimeout(resolve, 10));
 
-      // NEW: Check openBrowserWithHtml instead of showBrowserForm
       const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
-      // UI should explain the URL difference
-      expect(html).toMatch(/github\.io.*\//i);
 
-      // Don't await resultPromise as it will timeout
+      // Should have repo name input
+      expect(html).toContain('id="repo-name"');
+      expect(html).toContain('autocomplete="off"');
+      expect(html).toContain('autocorrect="off"');
+      expect(html).toContain('spellcheck="false"');
+
+      // Should have availability check logic
+      expect(html).toContain("api.github.com/repos");
     });
   });
 
@@ -327,81 +337,34 @@ describe("ensureGitHubRepo", () => {
     });
   });
 
-  describe("input field attributes", () => {
+  describe("deploy choice UI input field attributes", () => {
     beforeEach(() => {
       mockGetToken.mockResolvedValue("test-token");
       mockGetAuthenticatedUser.mockResolvedValue({ login: "testuser" });
     });
 
     it("includes autocomplete, autocorrect, and spellcheck attributes on repo name input", async () => {
-      // Root repo EXISTS - triggers UI
+      // Root repo EXISTS - triggers deploy choice UI
       mockCheckRepoExists.mockResolvedValue(true);
 
-      // Setup event listener
       mockOnEvent.mockImplementation(async () => {
         return vi.fn();
       });
 
-      // Start the flow
       const resultPromise = ensureGitHubRepo();
-
-      // Give it time to render HTML
       await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(mockOpenBrowserWithHtml).toHaveBeenCalled();
-
-      // NEW: Extract the HTML passed to openBrowserWithHtml
       const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
 
-      // Verify the input has all required attributes
-      // The input should have: autocomplete="off" autocorrect="off" spellcheck="false"
       expect(html).toMatch(/<input[^>]*id="repo-name"[^>]*>/);
-
-      // Extract the input tag
       const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
       expect(inputMatch).not.toBeNull();
 
       const inputTag = inputMatch![0];
-
-      // Verify each attribute is present
       expect(inputTag).toContain('autocomplete="off"');
       expect(inputTag).toContain('autocorrect="off"');
       expect(inputTag).toContain('spellcheck="false"');
-      expect(inputTag).toContain('autofocus');
-
-      // Don't await resultPromise as it will timeout
-    });
-
-    it("disables autocorrect to prevent iOS keyboard corrections", async () => {
-      mockCheckRepoExists.mockResolvedValue(true);
-
-      mockOnEvent.mockImplementation(async () => {
-        return vi.fn();
-      });
-
-      const resultPromise = ensureGitHubRepo();
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
-      const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
-
-      expect(inputMatch![0]).toContain('autocorrect="off"');
-    });
-
-    it("disables spellcheck to avoid underlining valid repo names", async () => {
-      mockCheckRepoExists.mockResolvedValue(true);
-
-      mockOnEvent.mockImplementation(async () => {
-        return vi.fn();
-      });
-
-      const resultPromise = ensureGitHubRepo();
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const html = mockOpenBrowserWithHtml.mock.calls[0][0] as string;
-      const inputMatch = html.match(/<input[^>]*id="repo-name"[^>]*>/);
-
-      expect(inputMatch![0]).toContain('spellcheck="false"');
     });
   });
 });

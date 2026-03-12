@@ -631,6 +631,62 @@ describe("GitHub API", () => {
   });
 
   // ============================================================================
+  // getRepoSshUrl() tests
+  // ============================================================================
+  describe("getRepoSshUrl", () => {
+    let getRepoSshUrl: (owner: string, repo: string, token: string) => Promise<string>;
+
+    beforeEach(async () => {
+      const module = await import("../github-api");
+      getRepoSshUrl = module.getRepoSshUrl;
+      mockFetch.mockReset();
+    });
+
+    it("returns ssh_url from the API response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ssh_url: "git@github.com:alice/alice.github.io.git",
+        }),
+      });
+
+      const sshUrl = await getRepoSshUrl("alice", "alice.github.io", "test-token");
+
+      expect(sshUrl).toBe("git@github.com:alice/alice.github.io.git");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/alice/alice.github.io",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer test-token",
+          }),
+        })
+      );
+    });
+
+    it("throws when repo is not found (404)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+
+      await expect(
+        getRepoSshUrl("alice", "nonexistent", "test-token")
+      ).rejects.toThrow("Repo not found: alice/nonexistent");
+    });
+
+    it("throws on other HTTP errors", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      });
+
+      await expect(
+        getRepoSshUrl("alice", "alice.github.io", "test-token")
+      ).rejects.toThrow("Repo not found: alice/alice.github.io");
+    });
+  });
+
+  // ============================================================================
   // setCustomDomain() — 404 retry behavior
   // ============================================================================
   describe("setCustomDomain", () => {

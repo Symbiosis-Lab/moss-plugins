@@ -225,6 +225,28 @@ export async function createRepository(
 }
 
 /**
+ * Get the SSH URL for an existing repository
+ *
+ * @param owner - Repository owner (username or org)
+ * @param repo - Repository name
+ * @param token - GitHub OAuth access token
+ * @returns The SSH URL (e.g., git@github.com:owner/repo.git)
+ * @throws Error if repo is not found or request fails
+ */
+export async function getRepoSshUrl(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<string> {
+  const response = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
+    headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error(`Repo not found: ${owner}/${repo}`);
+  const data = await response.json();
+  return data.ssh_url;
+}
+
+/**
  * Check if a repository exists for a given owner
  *
  * Feature 20: Used to check if {username}.github.io already exists

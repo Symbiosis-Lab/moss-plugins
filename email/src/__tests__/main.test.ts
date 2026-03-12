@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AfterDeployContext, ArticleInfo } from "../types";
+import type { SyndicateContext, ArticleInfo } from "../types";
 
 // Create mocks before importing the module
 const mockHttpPost = vi.fn();
@@ -47,8 +47,8 @@ describe("Email Newsletter Plugin", () => {
   }
 
   function createTestContext(
-    overrides: Partial<AfterDeployContext> = {}
-  ): AfterDeployContext {
+    overrides: Partial<SyndicateContext> = {}
+  ): SyndicateContext {
     return {
       project_info: {
         project_type: "moss",

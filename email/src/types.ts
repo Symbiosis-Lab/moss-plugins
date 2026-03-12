@@ -4,7 +4,7 @@
 
 // Re-export SDK types for convenience
 export type {
-  AfterDeployContext,
+  SyndicateContext,
   HookResult,
   ArticleInfo,
 } from "@symbiosis-lab/moss-api";

@@ -9,7 +9,7 @@
  *   Declares CSS, per-page review headers and colophons for template injection.
  */
 
-import { readFile, writeFile, readPluginFile, type SlotContext, type SlotResult, type SlotContent } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, readPluginFile, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
 import { fetchNeoDBItem } from "./neodb";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
@@ -186,8 +186,8 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
  * - "after-title": per-page review headers (cover + creator + year)
  * - "before-article-end": per-page review colophons (rating, biblio, links)
  */
-export async function enhance(ctx: SlotContext): Promise<SlotResult> {
-  const slots: Record<string, SlotContent> = {};
+export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
+  const slots: Record<string, EnhanceContent> = {};
 
   // 1. Read CSS
   let reviewCss = "";

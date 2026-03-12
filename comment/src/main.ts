@@ -11,7 +11,7 @@
  *   Declares CSS and per-page comment section HTML for template injection.
  */
 
-import { readFile, readPluginFile, type SlotContext, type SlotResult, type SlotContent } from "@symbiosis-lab/moss-api";
+import { readFile, readPluginFile, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
 import { loadAllComments } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { getSubmitScriptBuilder } from "./providers";
@@ -174,7 +174,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
  * - "head-end": static CSS for comment sections
  * - "before-article-end": per-page comment section HTML keyed by URL path
  */
-export async function enhance(ctx: SlotContext): Promise<SlotResult> {
+export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const config = ctx.config || {};
   const serverUrl = (config.server_url as string) || "";
   const siteName = (config.site_name as string) || ctx.project_info.site_name || "";
@@ -182,7 +182,7 @@ export async function enhance(ctx: SlotContext): Promise<SlotResult> {
   const providerName = serverUrl ? await detectProvider(serverUrl) : "waline";
   const buildScript = getSubmitScriptBuilder(providerName);
 
-  const slots: Record<string, SlotContent> = {};
+  const slots: Record<string, EnhanceContent> = {};
 
   // 1. Read CSS
   let commentsCss = "";

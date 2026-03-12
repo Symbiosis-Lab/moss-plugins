@@ -12,7 +12,7 @@ import {
   setupMockTauri,
   type MockTauriContext,
 } from "@symbiosis-lab/moss-api/testing";
-import type { OnDeployContext, HookResult } from "../../src/types";
+import type { DeployContext, HookResult } from "../../src/types";
 
 // Load the feature file
 const feature = await loadFeature("features/deploy/validation.feature");
@@ -97,9 +97,9 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
   let scenarioSiteFiles: string[] = ["index.html"]; // Default site files
 
   /**
-   * Create a mock OnDeployContext for testing
+   * Create a mock DeployContext for testing
    */
-  function createMockContext(): OnDeployContext {
+  function createMockContext(): DeployContext {
     return {
       project_path: projectPath,
       moss_dir: `${projectPath}/.moss`,

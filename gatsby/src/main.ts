@@ -11,7 +11,7 @@ import {
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
 import type {
-  OnBuildContext as BaseOnBuildContext,
+  GenerateContext as BaseGenerateContext,
   HookResult,
 } from "@symbiosis-lab/moss-api";
 import {
@@ -29,7 +29,7 @@ interface PluginConfig {
   [key: string]: unknown;
 }
 
-interface OnBuildContext extends BaseOnBuildContext {
+interface GenerateContext extends BaseGenerateContext {
   project_path: string;
   moss_dir: string;
   output_dir: string;
@@ -40,7 +40,7 @@ interface OnBuildContext extends BaseOnBuildContext {
 /**
  * Build hook - runs Gatsby to generate the static site.
  */
-export async function on_build(context: OnBuildContext): Promise<HookResult> {
+export async function on_build(context: GenerateContext): Promise<HookResult> {
   const buildArgs = context.config.build_args || [];
   const runtimeDir = `${context.moss_dir}/plugins/gatsby-generator/.runtime`;
 
@@ -170,4 +170,4 @@ const GatsbyGenerator = { on_build };
 
 export default GatsbyGenerator;
 
-export type { OnBuildContext, HookResult, PluginConfig };
+export type { GenerateContext, HookResult, PluginConfig };

@@ -27,7 +27,7 @@ interface PluginConfig {
   build_args?: string[];
 }
 
-interface OnBuildContext {
+interface GenerateContext {
   project_path: string;
   moss_dir: string;
   output_dir: string;
@@ -46,7 +46,7 @@ interface HookResult {
 /**
  * Build hook - runs Eleventy to generate the static site.
  */
-export async function on_build(context: OnBuildContext): Promise<HookResult> {
+export async function on_build(context: GenerateContext): Promise<HookResult> {
   const buildArgs = context.config.build_args || [];
   const runtimeDir = `${context.moss_dir}/plugins/eleventy-generator/.runtime`;
 
@@ -175,4 +175,4 @@ const EleventyGenerator = { on_build };
 
 export default EleventyGenerator;
 
-export type { OnBuildContext, HookResult, PluginConfig };
+export type { GenerateContext, HookResult, PluginConfig };

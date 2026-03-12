@@ -6,8 +6,8 @@
  */
 
 import type {
-  BeforeBuildContext,
-  AfterDeployContext,
+  ProcessContext,
+  SyndicateContext,
   HookResult,
   ArticleInfo,
 } from "./types";
@@ -182,7 +182,7 @@ async function promptLogin(): Promise<boolean> {
  *
  * This capability pre-processes content before generation.
  */
-export async function process(context: BeforeBuildContext): Promise<HookResult> {
+export async function process(context: ProcessContext): Promise<HookResult> {
   setCurrentHookName("process");
   clearTokenCache();
   await initializeDomain();
@@ -454,7 +454,7 @@ export async function process(context: BeforeBuildContext): Promise<HookResult> 
  * This capability publishes content to external platforms after deployment.
  * Articles are syndicated one at a time (sequentially) to allow user review.
  */
-export async function syndicate(context: AfterDeployContext): Promise<HookResult> {
+export async function syndicate(context: SyndicateContext): Promise<HookResult> {
   setCurrentHookName("syndicate");
   clearTokenCache();
   await initializeDomain();

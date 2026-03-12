@@ -10,7 +10,7 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
-import type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
+import type { GenerateContext, HookResult } from "@symbiosis-lab/moss-api";
 import {
   createAstroStructure,
   createAstroConfig,
@@ -29,7 +29,7 @@ interface PluginConfig {
 /**
  * Build hook - runs Astro to generate the static site.
  */
-export async function on_build(context: OnBuildContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: SiteConfig }): Promise<HookResult> {
+export async function on_build(context: GenerateContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: SiteConfig }): Promise<HookResult> {
   const buildArgs = context.config.build_args || [];
   const runtimeDir = `${context.moss_dir}/plugins/astro-generator/.runtime`;
 
@@ -153,4 +153,4 @@ const AstroGenerator = { on_build };
 export default AstroGenerator;
 
 export type { PluginConfig };
-export type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
+export type { GenerateContext, HookResult } from "@symbiosis-lab/moss-api";

@@ -101,13 +101,13 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 // ============================================================================
 
 import { configure_domain } from "../main";
-import type { OnConfigureDomainContext } from "../types";
+import type { ConfigureDomainContext } from "../types";
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
-function makeContext(domain: string): OnConfigureDomainContext {
+function makeContext(domain: string): ConfigureDomainContext {
   return {
     domain,
     deployment: {
@@ -119,7 +119,7 @@ function makeContext(domain: string): OnConfigureDomainContext {
     project_info: {
       name: "test-project",
       version: "1.0.0",
-    } as OnConfigureDomainContext["project_info"],
+    } as ConfigureDomainContext["project_info"],
     config: {},
   };
 }

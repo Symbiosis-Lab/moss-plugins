@@ -13,7 +13,7 @@ import {
   setupMockTauri,
   type MockTauriContext,
 } from "@symbiosis-lab/moss-api/testing";
-import type { OnDeployContext } from "../types";
+import type { DeployContext } from "../types";
 
 // We need to mock the utils module to prevent actual IPC calls for logging
 vi.mock("../utils", () => ({
@@ -103,9 +103,9 @@ import { checkPagesStatus, ensurePagesSource } from "../github-api";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
- * Create a mock OnDeployContext for testing
+ * Create a mock DeployContext for testing
  */
-function createMockContext(overrides?: Partial<OnDeployContext>): OnDeployContext {
+function createMockContext(overrides?: Partial<DeployContext>): DeployContext {
   return {
     project_path: "/test/project",
     moss_dir: "/test/project/.moss",

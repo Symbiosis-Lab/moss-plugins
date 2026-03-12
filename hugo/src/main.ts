@@ -10,7 +10,7 @@
  * The plugin follows the **moss scans → Plugin translates → Hugo builds** pattern:
  *
  * 1. **moss scans** the project folder and detects the structure (homepage, collections, etc.)
- * 2. **Plugin receives** OnBuildContext with parsed project_info
+ * 2. **Plugin receives** GenerateContext with parsed project_info
  * 3. **Plugin translates** moss's structure to Hugo-compatible layout by copying files
  * 4. **Hugo builds** from the translated structure, outputs to staging directory
  * 5. **moss handles** the zero-flicker staging pattern (atomic swap)
@@ -61,7 +61,7 @@ import {
   resolveBinary,
   BinaryResolutionError,
 } from "@symbiosis-lab/moss-api";
-import type { OnBuildContext, HookResult } from "@symbiosis-lab/moss-api";
+import type { GenerateContext, HookResult } from "@symbiosis-lab/moss-api";
 import {
   createHugoStructure,
   translatePageTree,
@@ -102,7 +102,7 @@ interface PluginConfig {
  * @param context - Build context from moss containing project info and config
  * @returns Hook result indicating success or failure
  */
-export async function on_build(context: OnBuildContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: Record<string, unknown> }): Promise<HookResult> {
+export async function on_build(context: GenerateContext & { config: PluginConfig; moss_dir: string; output_dir: string; project_path: string; site_config: Record<string, unknown> }): Promise<HookResult> {
   const buildArgs = context.config.build_args || ["--minify"];
 
   // Runtime directory under plugin's .moss location
@@ -224,5 +224,5 @@ const HugoGenerator = { on_build };
 export default HugoGenerator;
 
 // Re-export types for testing
-export type { OnBuildContext, HookResult };
+export type { GenerateContext, HookResult };
 export type { PluginConfig };

@@ -4,7 +4,7 @@
  * Syndicates articles to email subscribers via Buttondown after deployment.
  */
 
-import type { AfterDeployContext, HookResult, ArticleInfo } from "./types";
+import type { SyndicateContext, HookResult, ArticleInfo } from "./types";
 import type { PluginConfig, SyndicatedEntry } from "./types";
 import { showToast, openBrowser } from "@symbiosis-lab/moss-api";
 import { createEmail } from "./buttondown";
@@ -39,7 +39,7 @@ function formatEmailBody(article: ArticleInfo, siteUrl: string): string {
  * This capability publishes content to email after deployment.
  * Only syndicates articles that haven't been sent before.
  */
-export async function syndicate(context: AfterDeployContext): Promise<HookResult> {
+export async function syndicate(context: SyndicateContext): Promise<HookResult> {
   console.log("📧 Email Newsletter: Starting syndication...");
 
   try {
@@ -185,9 +185,9 @@ import {
   readPluginFile,
   writePluginFile,
   pluginFileExists,
-  type SlotContext,
-  type SlotResult,
-  type SlotContent,
+  type EnhanceContext,
+  type EnhanceResult,
+  type EnhanceContent,
 } from "@symbiosis-lab/moss-api";
 import { getNewsletterInfo } from "./buttondown";
 
@@ -200,9 +200,9 @@ const SUBSCRIBE_CSS_FILENAME = "email-subscribe.css";
  * - "head-end": static CSS for the subscribe form
  * - "footer-right": static subscribe form HTML
  */
-export async function enhance(ctx: SlotContext): Promise<SlotResult> {
+export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const config = ctx.config as PluginConfig;
-  const slots: Record<string, SlotContent> = {};
+  const slots: Record<string, EnhanceContent> = {};
 
   if (!config.api_key) {
     return { success: false, slots };

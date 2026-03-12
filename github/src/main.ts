@@ -9,7 +9,7 @@
  * - Stores tokens in git credential helper for persistence
  */
 
-import type { OnDeployContext, OnConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
+import type { DeployContext, ConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
 import { getTauriCore, readFile } from "@symbiosis-lab/moss-api";
 import { reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
@@ -151,7 +151,7 @@ async function waitForPagesLive(
  * 3. Force-pushes compiled site to gh-pages via git CLI
  * 4. Verifies deployment is live
  */
-async function deploy(context: OnDeployContext): Promise<HookResult> {
+async function deploy(context: DeployContext): Promise<HookResult> {
   setCurrentHookName("deploy");
 
   console.log("GitHub Deployer: Starting deployment...");
@@ -461,7 +461,7 @@ async function deploy(context: OnDeployContext): Promise<HookResult> {
  * This is NON-FATAL from moss's perspective - DNS is already configured.
  * If this fails, the user can retry or set the domain manually in GitHub settings.
  */
-async function configure_domain(context: OnConfigureDomainContext): Promise<HookResult> {
+async function configure_domain(context: ConfigureDomainContext): Promise<HookResult> {
   setCurrentHookName("configure_domain");
 
   const { domain } = context;

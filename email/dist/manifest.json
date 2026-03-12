@@ -8,7 +8,7 @@
   "entry": "main.bundle.js",
   "capabilities": [
     "syndicate",
-    "slots"
+    "enhance"
   ],
   "slots": [
     "head-end",

@@ -235,8 +235,6 @@ export function renderCommentSection(
   const hasComments = comments.length > 0;
   const hasForm = !!serverUrl;
 
-  if (!hasComments && !hasForm) return "";
-
   const commentListHtml = hasComments
     ? `<ol class="comment-list">${renderCommentList(comments, lang, !!serverUrl)}</ol>`
     : "";

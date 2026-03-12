@@ -7,7 +7,7 @@
   "entry": "main.bundle.js",
   "capabilities": [
     "process",
-    "slots"
+    "enhance"
   ],
   "slots": [
     "head-end",

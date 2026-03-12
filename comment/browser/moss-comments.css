@@ -51,25 +51,16 @@
    - ResultFirst 2026 trends — "stripping away non-essential frills"
    ========================================================================== */
 
-/* Comment Section */
+/* Comment Section — inherits width from parent article container */
 .moss-comments {
   margin-top: 6rem;
-  max-width: var(--moss-content-width, 70ch);
   box-sizing: border-box;
-  padding: 0 var(--moss-container-padding, clamp(1rem, 5vw, 2rem));
-  margin-left: auto;
-  margin-right: auto;
 }
 
-/* Border on inner details so the divider aligns with text, not the padded box edge */
+/* Divider above comment section */
 .moss-comments > details {
   padding-top: var(--moss-space-lg, 2rem);
   border-top: 1px solid var(--moss-border-light, #e6e2db);
-}
-
-.has-sidebar .moss-comments {
-  max-width: var(--moss-content-width-sidebar, 65ch);
-  margin-left: 0;
 }
 
 /* ==========================================================================

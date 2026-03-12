@@ -7,11 +7,11 @@
   "entry": "main.bundle.js",
   "capabilities": [
     "process",
-    "slots"
+    "enhance"
   ],
   "slots": [
     "head-end",
-    "before-article-end"
+    "after-article"
   ],
   "global_name": "CommentPlugin",
   "icon": "icon.svg",

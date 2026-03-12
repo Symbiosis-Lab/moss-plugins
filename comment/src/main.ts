@@ -172,7 +172,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
  *
  * Returns:
  * - "head-end": static CSS for comment sections
- * - "before-article-end": per-page comment section HTML keyed by URL path
+ * - "after-article": per-page comment section HTML keyed by URL path
  */
 export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const config = ctx.config || {};
@@ -250,11 +250,16 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   // 6. Build per-page comment section HTML
   const pages: Record<string, string> = {};
 
-  for (const urlPath of new Set([...commentsByPage.keys(), ...pagesWithForms])) {
+  // When defaultComments is true, iterate over ALL articles (not just those with comments)
+  const allArticleUrls = defaultComments
+    ? new Set([...Object.values(articles).map(a => a.url_path), ...commentsByPage.keys(), ...pagesWithForms])
+    : new Set([...commentsByPage.keys(), ...pagesWithForms]);
+
+  for (const urlPath of allArticleUrls) {
     const comments = commentsByPage.get(urlPath) || [];
     const uid = urlToUid.get(urlPath) || "";
 
-    // Respect default_comments setting
+    // Skip pages with no comments and no form when defaultComments is off
     if (!defaultComments && comments.length === 0 && !pagesWithForms.has(urlPath)) continue;
 
     // Detect lang from project_info
@@ -279,7 +284,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   }
 
   if (Object.keys(pages).length > 0) {
-    slots["before-article-end"] = { type: "per-page", pages };
+    slots["after-article"] = { type: "per-page", pages };
   }
 
   return { success: true, slots };

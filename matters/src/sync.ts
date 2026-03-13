@@ -45,7 +45,7 @@ import type { MattersPluginConfig } from "./config";
 import { slugify, reportProgress, reportError } from "./utils";
 import { overallProgress } from "./progress";
 import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
-import { readFile, writeFile, listFiles } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
 import { isMattersUrl, articleUrl } from "./domain";
 
 // ============================================================================
@@ -461,6 +461,9 @@ export async function syncToLocalFiles(
     }
   }
 
+  // Fetch project tree once for home-file detection in collection folders
+  const projectTree = await listProjectTree();
+
   // Process collections
   for (const collection of collections) {
     processedItems++;
@@ -479,6 +482,19 @@ export async function syncToLocalFiles(
       const collectionPath = useFileMode
         ? `${folders.article}/${collectionSlug}.md`  // File mode: collection as .md file
         : `${folders.article}/${collectionSlug}/index.md`;  // Folder mode: collection as folder with index.md
+
+      // In folder mode, skip if the folder already has a home file (self-named note, etc.)
+      if (!useFileMode) {
+        const folderPrefix = `${folders.article}/${collectionSlug}/`;
+        const homeInFolder = projectTree.find(
+          (f) => f.path.startsWith(folderPrefix) && f.is_home
+        );
+        if (homeInFolder) {
+          console.log(`   ⏭️  Skipping collection index (folder has home file: ${homeInFolder.path})`);
+          result.skipped++;
+          continue;
+        }
+      }
 
       let existingContent: string | null = null;
       try {

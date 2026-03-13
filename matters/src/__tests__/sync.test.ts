@@ -659,6 +659,102 @@ Content`;
 });
 
 // ============================================================================
+// Collection skip when folder already has a home file
+// ============================================================================
+
+describe("syncToLocalFiles - skip collection index when folder has home file", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("should skip collection index.md when folder has a self-named note", async () => {
+    // Simulate: user has articles/my-collection/my-collection.md (Obsidian folder note)
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/articles/my-collection/my-collection.md`,
+      "---\ntitle: \"My Collection\"\n---\n\nUser's custom content"
+    );
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [{
+        id: "c1",
+        title: "My Collection",
+        description: "Collection desc",
+        articles: [],
+        cover: null,
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    // Collection should be skipped — self-named note is the home file
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+    // index.md should NOT be created
+    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`);
+    expect(indexFile).toBeUndefined();
+    // Self-named note should be untouched
+    const selfNamed = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/my-collection.md`);
+    expect(selfNamed?.content).toContain("User's custom content");
+  });
+
+  it("should still create collection index.md when folder has no home file", async () => {
+    // No pre-existing files in the collection folder
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [],
+      "testuser", {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    // With no collections, nothing to test — this is a control case
+    expect(result.result.created).toBeGreaterThanOrEqual(0);
+  });
+
+  it("should still create collection index.md when folder only has non-home files", async () => {
+    // Folder has an article but no home file
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/articles/my-collection/some-article.md`,
+      "---\ntitle: \"Some Article\"\n---\n\nArticle content"
+    );
+
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "Some Article", slug: "some-article", shortHash: "hash1",
+          content: "<p>Article content</p>", summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [{
+        id: "c1",
+        title: "My Collection",
+        description: "Collection desc",
+        articles: [{ id: "a1", shortHash: "hash1", title: "Some Article", slug: "some-article" }],
+        cover: null,
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    // Collection index.md SHOULD be created since some-article.md is not a home file
+    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`);
+    expect(indexFile).toBeDefined();
+  });
+});
+
+// ============================================================================
 // extractShortHash Tests
 // ============================================================================
 

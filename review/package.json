@@ -1,5 +1,5 @@
 {
-  "name": "@symbiosis-lab/moss-plugin-review",
+  "name": "review",
   "version": "0.1.0",
   "description": "Enrich review posts with metadata from NeoDB",
   "main": "dist/main.bundle.js",

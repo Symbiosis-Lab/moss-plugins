@@ -50,6 +50,7 @@ export function buildArtalkClientScript(
   const safeCountMany = escapeForSingleQuotedJs(t.comment_count_many);
   const safeReplyingTo = escapeForSingleQuotedJs(t.replying_to);
   const safeCancel = escapeForSingleQuotedJs(t.cancel);
+  const safeReplyAction = escapeForSingleQuotedJs(t.reply_action);
   const locale = LANG_TO_LOCALE[lang];
 
   return `(function() {
@@ -62,6 +63,18 @@ export function buildArtalkClientScript(
   var currentReplyId = null;
   var currentReplyWrapper = null;
   var defaultFormSlot = document.getElementById('default-form-slot');
+
+  function updateCommentCount() {
+    var s = document.getElementById('moss-comments');
+    if (!s) return;
+    var total = s.querySelectorAll('.comment-item').length;
+    var d = s.querySelector('details');
+    if (!d) return;
+    var sp = d.querySelector('summary span');
+    if (sp) {
+      sp.textContent = total === 1 ? '${safeCountOne}' : '${safeCountMany}'.replace('{n}', total);
+    }
+  }
 
   // Auto-grow textarea
   if (textarea) {
@@ -122,9 +135,11 @@ export function buildArtalkClientScript(
       li.id = 'comment-' + data.id;
       var now = new Date().toLocaleDateString('${locale}', {year:'numeric',month:'short',day:'numeric'});
       var authorName = body.name || 'Anonymous';
+      var safeAuthor = authorName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
       li.innerHTML = '<div class="comment-header">'
-        + '<span class="comment-author">' + authorName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</span>'
+        + '<span class="comment-author">' + safeAuthor + '</span>'
         + '<time class="comment-date">' + now + '</time>'
+        + '<button type="button" class="comment-reply-btn" data-reply-id="' + data.id + '" data-reply-name="' + safeAuthor + '">\\u21a9 ${safeReplyAction}</button>'
         + '</div>'
         + '<div class="comment-body"><p>' + body.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</p></div>';
 
@@ -153,6 +168,7 @@ export function buildArtalkClientScript(
         commentList.insertBefore(li, commentList.firstChild);
       }
 
+      updateCommentCount();
       form.elements['content'].value = '';
       if (textarea) { textarea.style.height = 'auto'; }
     })
@@ -285,8 +301,24 @@ export function buildArtalkClientScript(
             li.innerHTML = '<div class="comment-header">'
               + '<span class="comment-author">' + authorName + '</span>'
               + '<time class="comment-date">' + dateStr + '</time>'
+              + '<button type="button" class="comment-reply-btn" data-reply-id="' + c.id + '" data-reply-name="' + authorName + '">\\u21a9 ${safeReplyAction}</button>'
               + '</div>'
               + '<div class="comment-body">' + c.content + '</div>';
+
+            if (c.rid > 0) {
+              var parentLi = document.getElementById('comment-' + c.rid);
+              if (parentLi) {
+                var repliesOl = parentLi.querySelector('.comment-replies');
+                if (!repliesOl) {
+                  repliesOl = document.createElement('ol');
+                  repliesOl.className = 'comment-replies';
+                  parentLi.appendChild(repliesOl);
+                }
+                repliesOl.insertBefore(li, null);
+                added++;
+                continue;
+              }
+            }
 
             if (!commentList) {
               commentList = document.createElement('ol');
@@ -295,17 +327,12 @@ export function buildArtalkClientScript(
               if (formEl) formEl.after(commentList);
               anchor = null;
             }
-            // Newest first: insert before the anchor (first build-time comment)
             commentList.insertBefore(li, anchor);
             added++;
           }
 
           if (added > 0) {
-            var total = (commentList ? commentList.children.length : 0);
-            var summarySpan = details.querySelector('summary span');
-            if (summarySpan) {
-              summarySpan.textContent = total === 1 ? '${safeCountOne}' : '${safeCountMany}'.replace('{n}', total);
-            }
+            updateCommentCount();
           }
         })
         .catch(function() { /* silent — static comments still visible */ });

@@ -250,4 +250,65 @@ describe("buildArtalkClientScript", () => {
       expect(appendCount).toBe(0);
     });
   });
+
+  // ==========================================================================
+  // Bug fix: comment count update after submission
+  // ==========================================================================
+
+  describe("comment count update after submission", () => {
+    it("has an updateCommentCount helper function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function updateCommentCount()");
+    });
+
+    it("counts all .comment-item elements including nested replies", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("querySelectorAll('.comment-item').length");
+    });
+
+    it("does not use commentList.children.length for counting", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).not.toContain("commentList.children.length");
+    });
+
+    it("calls updateCommentCount after form submission", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The form submit handler should call updateCommentCount()
+      // It should appear in the .then() block after DOM insertion
+      expect(script).toMatch(/form\.elements\['content'\]\.value\s*=\s*''[\s\S]*updateCommentCount|updateCommentCount[\s\S]*form\.elements\['content'\]\.value\s*=\s*''/);
+    });
+  });
+
+  // ==========================================================================
+  // Bug fix: reply nesting in stale-while-revalidate
+  // ==========================================================================
+
+  describe("reply nesting in onToggle hydration", () => {
+    it("checks c.rid to route replies under their parent", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("c.rid > 0");
+    });
+
+    it("finds parent comment by ID for reply nesting", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("getElementById('comment-' + c.rid)");
+    });
+
+    it("creates comment-replies ol for nested replies", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The onToggle handler should create .comment-replies containers
+      // for nesting replies under their parent, just like the form submit handler
+      const replyOlMatches = (script.match(/comment-replies/g) || []).length;
+      // Should appear in both the form submit handler AND the onToggle handler
+      expect(replyOlMatches).toBeGreaterThanOrEqual(2);
+    });
+
+    it("adds reply button to dynamically hydrated comments", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // The onToggle hydration should add reply buttons to new comments
+      // comment-reply-btn should appear in both form submission and hydration paths
+      const replyBtnMatches = (script.match(/comment-reply-btn/g) || []).length;
+      expect(replyBtnMatches).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

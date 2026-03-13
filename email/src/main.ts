@@ -204,10 +204,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const config = ctx.config as PluginConfig;
   const slots: Record<string, EnhanceContent> = {};
 
-  console.log("[email] enhance called, config keys:", Object.keys(config || {}), "api_key:", config?.api_key ? "present" : "missing");
-
   if (!config.api_key) {
-    console.warn("[email] enhance: no api_key in config, returning success=false");
     return { success: false, slots };
   }
 

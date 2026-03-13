@@ -10,6 +10,30 @@
 import { escapeForSingleQuotedJs } from "../client-js";
 import { translations, type Lang } from "../i18n";
 
+/** Minimal comment shape used by sortForInsertion */
+export interface HydrationComment {
+  id: number;
+  rid: number;
+  date: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Reorder comments from date_desc (newest-first) to insertion-safe order
+ * where parents appear before their children.
+ *
+ * The Artalk API returns comments sorted by date descending. When hydrating
+ * the DOM, we need to insert parent comments before their replies so that
+ * `getElementById('comment-' + c.rid)` finds the parent. Simply reversing
+ * the array (oldest-first) achieves this because a parent is always older
+ * than its replies.
+ */
+export function sortForInsertion(
+  comments: HydrationComment[]
+): HydrationComment[] {
+  return [...comments].reverse();
+}
+
 /** Map plugin Lang to BCP-47 locale for client-side date formatting */
 const LANG_TO_LOCALE: Record<Lang, string> = {
   en: "en-US",
@@ -293,10 +317,25 @@ export function buildArtalkClientScript(
         // Anchor = first build-time comment. Hydrated comments go before it
         // to maintain newest-first order (API returns date_desc).
         var anchor = commentList ? commentList.firstChild : null;
+
+        // Pass 1: collect new comments (API returns newest-first)
+        var newComments = [];
         for (var i = 0; i < list.length; i++) {
           var c = list[i];
           if (new Date(c.date).getTime() <= builtAtMs) break;
           if (document.getElementById('comment-' + c.id)) continue;
+          newComments.push(c);
+        }
+
+        // Reverse to oldest-first so parents are inserted before children.
+        // This fixes reply threading: a parent is always older than its
+        // replies, so reversing guarantees getElementById finds the parent
+        // when we process a reply.
+        newComments.reverse();
+
+        // Pass 2: insert into DOM (oldest-first = parents before children)
+        for (var i = 0; i < newComments.length; i++) {
+          var c = newComments[i];
 
           var li = document.createElement('li');
           li.className = 'comment-item';

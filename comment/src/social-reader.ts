@@ -8,19 +8,16 @@
  * - source→output URL mapping (path-based, legacy)
  * - uid→output URL mapping (uid-based, preferred)
  *
- * NOTE: listFiles() from moss-api skips hidden directories (.moss/),
- * so we discover social files by trying known source names rather than listing.
+ * Sources are discovered dynamically via listSocialFiles() which reads
+ * all .json files in .moss/social/. No hardcoded source list needed.
  */
 
-import { readFile } from "@symbiosis-lab/moss-api";
+import { readFile, listSocialFiles } from "@symbiosis-lab/moss-api";
 import type {
   NormalizedComment,
   GenericSocialFile,
   GenericSocialComment,
 } from "./types";
-
-/** Default social source names to try loading */
-const DEFAULT_SOCIAL_SOURCES = ["matters", "webmention", "activitypub"];
 
 /**
  * Build a mapping from relative source .md path to output URL path
@@ -175,9 +172,8 @@ export async function getCommentFetchTimestamp(): Promise<string> {
 /**
  * Load comments from .moss/social/*.json files.
  *
- * Since listFiles() skips hidden directories (.moss/), we discover
- * social files by trying known source names (DEFAULT_SOCIAL_SOURCES)
- * plus any additional sources passed as parameter.
+ * Discovers all social source files dynamically via listSocialFiles(),
+ * then merges with any additional sources passed as parameter.
  *
  * Returns a Map keyed by article key (source .md path) with
  * NormalizedComment[] sorted by date descending (newest first).
@@ -190,14 +186,22 @@ export async function loadAllComments(
 ): Promise<Map<string, NormalizedComment[]>> {
   const result = new Map<string, NormalizedComment[]>();
 
-  // Try each known social source
-  const sources = [...DEFAULT_SOCIAL_SOURCES, ...(extraSources || [])];
-  const tried = new Set<string>();
+  // Discover all social sources dynamically
+  let discoveredSources: string[];
+  try {
+    discoveredSources = await listSocialFiles();
+  } catch {
+    discoveredSources = [];
+  }
+
+  // Merge discovered + extra sources (deduped)
+  const sourceSet = new Set(discoveredSources);
+  if (extraSources) {
+    for (const s of extraSources) sourceSet.add(s);
+  }
+  const sources = Array.from(sourceSet);
 
   for (const source of sources) {
-    if (tried.has(source)) continue;
-    tried.add(source);
-
     const filePath = `.moss/social/${source}.json`;
     let data: GenericSocialFile;
     try {

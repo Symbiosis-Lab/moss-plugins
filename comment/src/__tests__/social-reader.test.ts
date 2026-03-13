@@ -1,17 +1,18 @@
 /**
- * Tests for social-reader buildUidToUrlMap
+ * Tests for social-reader
  *
- * Validates that buildUidToUrlMap correctly reads article-map.json
- * and builds a uid -> url_path mapping. Also tests backward
- * compatibility with buildSourceToUrlMap still working.
+ * Covers buildUidToUrlMap, buildSourceToUrlMap (backward compat),
+ * loadAllComments sort order, and dynamic source discovery via listSocialFiles.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockReadFile = vi.hoisted(() => vi.fn());
+const mockListSocialFiles = vi.hoisted(() => vi.fn());
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   readFile: mockReadFile,
+  listSocialFiles: mockListSocialFiles,
 }));
 
 import {
@@ -23,6 +24,7 @@ import {
 describe("buildUidToUrlMap", () => {
   beforeEach(() => {
     mockReadFile.mockReset();
+    mockListSocialFiles.mockReset();
   });
 
   it("returns empty map when article-map.json does not exist", async () => {
@@ -121,6 +123,7 @@ describe("buildUidToUrlMap", () => {
 describe("buildSourceToUrlMap still works (backward compatibility)", () => {
   beforeEach(() => {
     mockReadFile.mockReset();
+    mockListSocialFiles.mockReset();
     // Set up project path context for buildSourceToUrlMap
     (globalThis as any).__MOSS_INTERNAL_CONTEXT__ = {
       project_path: "/Users/test/site",
@@ -150,6 +153,8 @@ describe("buildSourceToUrlMap still works (backward compatibility)", () => {
 describe("loadAllComments sort order", () => {
   beforeEach(() => {
     mockReadFile.mockReset();
+    mockListSocialFiles.mockReset();
+    mockListSocialFiles.mockResolvedValue([]);
   });
 
   it("sorts comments newest-first (descending by date)", async () => {
@@ -179,5 +184,145 @@ describe("loadAllComments sort order", () => {
     expect(comments![0].id).toBe("new");
     expect(comments![1].id).toBe("mid");
     expect(comments![2].id).toBe("old");
+  });
+});
+
+describe("loadAllComments dynamic discovery", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockListSocialFiles.mockReset();
+  });
+
+  it("discovers sources from listSocialFiles", async () => {
+    mockListSocialFiles.mockResolvedValue(["douban", "matters"]);
+
+    const doubanData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "d1", content: "Great post!", createdAt: "2024-01-01T00:00:00Z", author: { name: "Alice" } },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.includes("douban.json")) return JSON.stringify(doubanData);
+      throw new Error("not found");
+    });
+
+    const result = await loadAllComments();
+    const comments = result.get("posts/hello.md");
+
+    expect(comments).toBeDefined();
+    expect(comments!.length).toBe(1);
+    expect(comments![0].id).toBe("d1");
+    expect(comments![0].source).toBe("douban");
+  });
+
+  it("merges discovered sources with extraSources", async () => {
+    mockListSocialFiles.mockResolvedValue(["douban"]);
+
+    const doubanData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "d1", content: "From douban", createdAt: "2024-01-01T00:00:00Z", author: { name: "Alice" } },
+          ],
+        },
+      },
+    };
+
+    const commentData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "c1", content: "From comment", createdAt: "2024-02-01T00:00:00Z", author: { name: "Bob" } },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.includes("douban.json")) return JSON.stringify(doubanData);
+      if (path.includes("comment.json")) return JSON.stringify(commentData);
+      throw new Error("not found");
+    });
+
+    const result = await loadAllComments(["comment"]);
+    const comments = result.get("posts/hello.md");
+
+    expect(comments).toBeDefined();
+    expect(comments!.length).toBe(2);
+    // Both sources are present
+    const sources = comments!.map((c) => c.source);
+    expect(sources).toContain("douban");
+    expect(sources).toContain("comment");
+  });
+
+  it("deduplicates sources", async () => {
+    mockListSocialFiles.mockResolvedValue(["comment", "matters"]);
+
+    const commentData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "c1", content: "A comment", createdAt: "2024-01-01T00:00:00Z", author: { name: "Alice" } },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.includes("comment.json")) return JSON.stringify(commentData);
+      throw new Error("not found");
+    });
+
+    const result = await loadAllComments(["comment"]);
+    const comments = result.get("posts/hello.md");
+
+    expect(comments).toBeDefined();
+    // "comment" appears in both discovered and extraSources, but should only be read once
+    expect(comments!.length).toBe(1);
+    // Verify readFile was called only once for comment.json (not twice)
+    const commentCalls = mockReadFile.mock.calls.filter(
+      (call: string[]) => call[0] === ".moss/social/comment.json"
+    );
+    expect(commentCalls.length).toBe(1);
+  });
+
+  it("falls back to empty when listSocialFiles fails", async () => {
+    mockListSocialFiles.mockRejectedValue(new Error("Tauri not available"));
+
+    const commentData = {
+      articles: {
+        "posts/hello.md": {
+          comments: [
+            { id: "c1", content: "A comment", createdAt: "2024-01-01T00:00:00Z", author: { name: "Alice" } },
+          ],
+        },
+      },
+    };
+
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.includes("comment.json")) return JSON.stringify(commentData);
+      throw new Error("not found");
+    });
+
+    // Should still work with just extraSources
+    const result = await loadAllComments(["comment"]);
+    const comments = result.get("posts/hello.md");
+
+    expect(comments).toBeDefined();
+    expect(comments!.length).toBe(1);
+    expect(comments![0].id).toBe("c1");
+  });
+
+  it("works with no sources when both discovery and extraSources are empty", async () => {
+    mockListSocialFiles.mockResolvedValue([]);
+
+    const result = await loadAllComments();
+
+    expect(result.size).toBe(0);
   });
 });

@@ -83,7 +83,7 @@ function formatDate(isoDate: string, lang: Lang = "en"): string {
  * Render a single comment as an <li> element.
  * Author name is a clickable link when URL is available.
  */
-function renderComment(comment: NormalizedComment, lang: Lang = "en", showReply: boolean = false): string {
+function renderComment(comment: NormalizedComment, lang: Lang = "en", serverConfigured: boolean = false): string {
   const t = translations[lang];
   const authorName = escapeHtml(comment.author.name);
   const authorHtml = comment.author.url
@@ -93,6 +93,7 @@ function renderComment(comment: NormalizedComment, lang: Lang = "en", showReply:
   const dateStr = formatDate(comment.date, lang);
   const contentHtml = sanitizeHtml(comment.content_html);
 
+  const showReply = serverConfigured && comment.source === "comment";
   const replyBtn = showReply
     ? `<button type="button" class="comment-reply-btn" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.author.name)}">↩ ${t.reply_action}</button>`
     : "";
@@ -112,7 +113,7 @@ function renderComment(comment: NormalizedComment, lang: Lang = "en", showReply:
  * Top-level comments (no replyToId) go in the root list.
  * Replies are nested inside their parent's <li>.
  */
-function renderCommentList(comments: NormalizedComment[], lang: Lang = "en", showReply: boolean = false): string {
+function renderCommentList(comments: NormalizedComment[], lang: Lang = "en", serverConfigured: boolean = false): string {
   // Separate top-level and replies
   const topLevel: NormalizedComment[] = [];
   const repliesByParent = new Map<string, NormalizedComment[]>();
@@ -128,7 +129,7 @@ function renderCommentList(comments: NormalizedComment[], lang: Lang = "en", sho
   }
 
   function renderWithReplies(comment: NormalizedComment): string {
-    let html = renderComment(comment, lang, showReply);
+    let html = renderComment(comment, lang, serverConfigured);
     const replies = repliesByParent.get(comment.id);
     if (replies && replies.length > 0) {
       html += `\n  <ol class="comment-replies">`;
@@ -145,7 +146,7 @@ function renderCommentList(comments: NormalizedComment[], lang: Lang = "en", sho
     // All comments are replies to something not in our set — render flat
     let html = "";
     for (const comment of comments) {
-      html += renderComment(comment, lang, showReply) + "\n</li>";
+      html += renderComment(comment, lang, serverConfigured) + "\n</li>";
     }
     return html;
   }

@@ -20,7 +20,7 @@ function makeComment(overrides: Partial<NormalizedComment> = {}): NormalizedComm
     content_html: "<p>Test comment</p>",
     date: "2025-06-15T10:00:00.000Z",
     author: { name: "Alice", url: "" },
-    source: "artalk" as const,
+    source: "comment",
     ...overrides,
   };
 }
@@ -293,9 +293,11 @@ describe("data-built-at attribute", () => {
 // ============================================================================
 
 describe("edge cases", () => {
-  it("returns empty string when no comments and no server URL", () => {
+  it("renders section wrapper even when no comments and no server URL", () => {
     const html = renderCommentSection([], "posts/test/", "", "");
-    expect(html).toBe("");
+    expect(html).toContain('<section class="moss-comments"');
+    expect(html).not.toContain("comment-form-submit");
+    expect(html).not.toContain("comment-list");
   });
 
   it("includes comment count in summary that counts top-level + replies", () => {
@@ -316,5 +318,59 @@ describe("edge cases", () => {
     expect(html).toContain("1 comment");
     expect(html).toContain("comment-list");
     expect(html).not.toContain("comment-form-submit");
+  });
+});
+
+// ============================================================================
+// Per-comment reply button visibility
+// ============================================================================
+
+describe("per-comment reply button visibility", () => {
+  it("shows reply button on server-sourced comments when server is configured", () => {
+    const comments = [makeComment({ id: "c1", source: "comment" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain("comment-reply-btn");
+  });
+
+  it("hides reply button on matters-sourced comments even when server is configured", () => {
+    const comments = [makeComment({ id: "c1", source: "matters" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).not.toContain("comment-reply-btn");
+  });
+
+  it("hides reply button on webmention-sourced comments even when server is configured", () => {
+    const comments = [makeComment({ id: "c1", source: "webmention" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).not.toContain("comment-reply-btn");
+  });
+
+  it("hides reply button on activitypub-sourced comments even when server is configured", () => {
+    const comments = [makeComment({ id: "c1", source: "activitypub" })];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).not.toContain("comment-reply-btn");
+  });
+
+  it("hides all reply buttons when server is not configured", () => {
+    const comments = [makeComment({ id: "c1", source: "comment" })];
+    const html = renderCommentSection(comments, "posts/test/", "", "");
+    expect(html).not.toContain("comment-reply-btn");
+  });
+
+  it("mixed sources: only server comments get reply buttons", () => {
+    const comments = [
+      makeComment({ id: "c1", source: "comment" }),
+      makeComment({ id: "c2", source: "matters", author: { name: "Bob", url: "" } }),
+    ];
+    const html = renderCommentSection(comments, "posts/test/", serverUrl, submitScript, "artalk");
+    // Both comments should be rendered
+    expect(html).toContain('id="comment-c1"');
+    expect(html).toContain('id="comment-c2"');
+    // c1 (server) should have reply btn, c2 (matters) should not
+    const c1Start = html.indexOf('id="comment-c1"');
+    const c2Start = html.indexOf('id="comment-c2"');
+    const c1Section = html.substring(c1Start, c2Start);
+    const c2Section = html.substring(c2Start);
+    expect(c1Section).toContain("comment-reply-btn");
+    expect(c2Section).not.toContain("comment-reply-btn");
   });
 });

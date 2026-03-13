@@ -12,7 +12,7 @@
  */
 
 import { readFile, readPluginFile, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
-import { loadAllComments } from "./social-reader";
+import { loadAllComments, getCommentFetchTimestamp } from "./social-reader";
 import { renderCommentSection } from "./render";
 import { getSubmitScriptBuilder } from "./providers";
 import { fetchWalineComments, fetchAllArtalkComments, detectProvider } from "./fetcher";
@@ -198,6 +198,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
 
   // 2. Load comments from .moss/social/*.json
   const commentsByKey = await loadAllComments(["comment"]);
+  const fetchedAt = await getCommentFetchTimestamp();
 
   // 3. Build uid/path mappings from article_map in context
   const articleMap = ctx.article_map as { articles?: Record<string, { source_path?: string; url_path: string; uid?: string }> } | undefined;
@@ -276,6 +277,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
       submitScript,
       providerName,
       lang,
+      fetchedAt,
     );
 
     if (commentHtml) {

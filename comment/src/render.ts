@@ -231,7 +231,8 @@ export function renderCommentSection(
   serverUrl: string,
   submitScript: string,
   provider: string = "waline",
-  lang: Lang = "en"
+  lang: Lang = "en",
+  fetchedAt: string = ""
 ): string {
   const hasComments = comments.length > 0;
   const hasForm = !!serverUrl;
@@ -254,7 +255,7 @@ export function renderCommentSection(
   // sorted by date descending and stops when it hits a comment older than
   // this timestamp. Comments newer than data-built-at were posted after the
   // last static build and need to be injected into the DOM dynamically.
-  const builtAt = new Date().toISOString();
+  const builtAt = fetchedAt || new Date().toISOString();
 
   return `<section class="moss-comments" id="moss-comments" data-built-at="${builtAt}">
   <details>

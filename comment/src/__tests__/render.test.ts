@@ -286,6 +286,36 @@ describe("data-built-at attribute", () => {
     // The attribute should be on the <section> tag itself
     expect(html).toMatch(/<section class="moss-comments"[^>]*data-built-at="/);
   });
+
+  it("uses fetchedAt timestamp when provided", () => {
+    const fetchedAt = "2026-03-13T14:13:00.543Z";
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "en", fetchedAt);
+    expect(html).toContain(`data-built-at="${fetchedAt}"`);
+  });
+
+  it("falls back to current time when fetchedAt is not provided", () => {
+    const before = new Date().toISOString();
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    const after = new Date().toISOString();
+
+    const match = html.match(/data-built-at="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const timestamp = match![1];
+    expect(timestamp >= before).toBe(true);
+    expect(timestamp <= after).toBe(true);
+  });
+
+  it("falls back to current time when fetchedAt is empty string", () => {
+    const before = new Date().toISOString();
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk", "en", "");
+    const after = new Date().toISOString();
+
+    const match = html.match(/data-built-at="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const timestamp = match![1];
+    expect(timestamp >= before).toBe(true);
+    expect(timestamp <= after).toBe(true);
+  });
 });
 
 // ============================================================================

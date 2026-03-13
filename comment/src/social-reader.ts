@@ -156,6 +156,23 @@ function normalizeComments(
 }
 
 /**
+ * Get the timestamp when server comments were last fetched.
+ *
+ * Reads the updatedAt field from .moss/social/comment.json.
+ * This is set by the process hook when it fetches from the comment server.
+ * Returns empty string if the file doesn't exist or has no timestamp.
+ */
+export async function getCommentFetchTimestamp(): Promise<string> {
+  try {
+    const content = await readFile(".moss/social/comment.json");
+    const data = JSON.parse(content) as GenericSocialFile;
+    return data.updatedAt || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Load comments from .moss/social/*.json files.
  *
  * Since listFiles() skips hidden directories (.moss/), we discover

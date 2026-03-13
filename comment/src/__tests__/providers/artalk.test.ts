@@ -170,14 +170,19 @@ describe("buildArtalkClientScript", () => {
       expect(script).toContain("1条评论");
     });
 
-    it("listens for toggle event on details element", () => {
+    it("does NOT use toggle event listener (eager hydration on page load)", () => {
       const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
-      expect(script).toContain("addEventListener('toggle'");
+      expect(script).not.toContain("addEventListener('toggle'");
+      expect(script).not.toContain("removeEventListener('toggle'");
+      expect(script).not.toContain("onToggle");
     });
 
-    it("removes toggle listener after first fire (fire once)", () => {
+    it("fetches immediately when builtAtMs is set (no event gate)", () => {
       const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
-      expect(script).toContain("removeEventListener('toggle'");
+      // The fetch should be inside `if (builtAtMs)` but NOT inside any event handler
+      // Verify the fetch call is NOT wrapped in an addEventListener callback
+      expect(script).toContain("if (builtAtMs)");
+      expect(script).toContain("fetch(");
     });
 
     it("constructs fetch URL with page_key and site_name params", () => {
@@ -283,7 +288,7 @@ describe("buildArtalkClientScript", () => {
   // Bug fix: reply nesting in stale-while-revalidate
   // ==========================================================================
 
-  describe("reply nesting in onToggle hydration", () => {
+  describe("reply nesting in hydration", () => {
     it("checks c.rid to route replies under their parent", () => {
       const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
       expect(script).toContain("c.rid > 0");

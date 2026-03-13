@@ -202,7 +202,6 @@ export async function loadAllComments(
   const sources = Array.from(sourceSet);
 
   for (const source of sources) {
-
     const filePath = `.moss/social/${source}.json`;
     let data: GenericSocialFile;
     try {

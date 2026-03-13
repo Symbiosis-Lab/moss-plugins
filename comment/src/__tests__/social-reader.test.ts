@@ -1,9 +1,8 @@
 /**
- * Tests for social-reader buildUidToUrlMap
+ * Tests for social-reader
  *
- * Validates that buildUidToUrlMap correctly reads article-map.json
- * and builds a uid -> url_path mapping. Also tests backward
- * compatibility with buildSourceToUrlMap still working.
+ * Covers buildUidToUrlMap, buildSourceToUrlMap (backward compat),
+ * loadAllComments sort order, and dynamic source discovery via listSocialFiles.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

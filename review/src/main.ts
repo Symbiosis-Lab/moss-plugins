@@ -9,7 +9,7 @@
  *   Declares CSS, per-page review headers and colophons for template injection.
  */
 
-import { readFile, writeFile, readPluginFile, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
+import { readFile, writeFile, readPluginFile, downloadAsset, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
 import { fetchNeoDBItem } from "./neodb";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
@@ -52,6 +52,38 @@ function parseFrontmatter(markdown: string): ParsedFrontmatter {
   if (coverMatch) result.cover = coverMatch[1].trim().replace(/^["']|["']$/g, "");
 
   return result;
+}
+
+// ============================================================================
+// Frontmatter update (boundary-aware)
+// ============================================================================
+
+/**
+ * Update or insert a `cover:` field in the markdown frontmatter.
+ * Uses boundary-aware replacement: finds `---` delimiters, modifies only
+ * the frontmatter section, leaves the body untouched byte-for-byte.
+ *
+ * Returns the updated markdown, or null if no frontmatter block was found.
+ */
+export function updateFrontmatterCover(markdown: string, coverPath: string): string | null {
+  const fmMatch = markdown.match(/^(---\n)([\s\S]*?\n)(---)/);
+  if (!fmMatch) return null;
+
+  const opening = fmMatch[1]; // "---\n"
+  const yaml = fmMatch[2];    // frontmatter content (ends with \n)
+  const closing = fmMatch[3]; // "---"
+  const body = markdown.slice(fmMatch[0].length); // everything after closing ---
+
+  let updatedYaml: string;
+  if (/^cover:\s/m.test(yaml)) {
+    // Replace existing cover line
+    updatedYaml = yaml.replace(/^cover:\s.*$/m, `cover: ${coverPath}`);
+  } else {
+    // Insert cover after opening --- (prepend to yaml block)
+    updatedYaml = `cover: ${coverPath}\n${yaml}`;
+  }
+
+  return opening + updatedYaml + closing + body;
 }
 
 // ============================================================================
@@ -158,6 +190,26 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       writer_rating: fm.rating ?? null,
       fetched_at: new Date().toISOString(),
     };
+
+    // 6. Download cover image and update frontmatter
+    if (item.cover_image_url && !fm.cover) {
+      try {
+        const dlResult = await downloadAsset(item.cover_image_url, "assets/covers");
+        if (dlResult.ok && dlResult.actualPath) {
+          // Update social entry to use local path
+          reviewEntry.cover_url = dlResult.actualPath;
+
+          // Update frontmatter with local cover path
+          const updated = updateFrontmatterCover(markdown, dlResult.actualPath);
+          if (updated) {
+            await writeFile(sourcePath, updated);
+          }
+        }
+      } catch (err) {
+        console.log(`[warn] Review: Failed to download cover for "${item.title}": ${err}`);
+        // Continue with remote URL — non-fatal
+      }
+    }
 
     upsertReviewEntry(socialData, uid, reviewEntry);
     fetchCount++;

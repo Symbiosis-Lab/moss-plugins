@@ -1109,6 +1109,40 @@ export async function fetchAllArticlesSince(since?: string): Promise<{
 // Syndication Functions (Draft/Collection Creation)
 // ============================================================================
 
+export const SINGLE_FILE_UPLOAD_MUTATION = `
+mutation SingleFileUpload($input: SingleFileUploadInput!) {
+  singleFileUpload(input: $input) {
+    id
+    path
+  }
+}
+`;
+
+/**
+ * Upload a cover image to Matters by URL
+ *
+ * Uses the singleFileUpload mutation with a URL parameter so Matters
+ * fetches the image from the published site directly.
+ *
+ * @param url - Full URL of the cover image on the published site
+ * @returns The Matters asset ID to pass as `cover` in createDraft
+ */
+export async function uploadCoverByUrl(url: string): Promise<string> {
+  interface SingleFileUploadResponse {
+    singleFileUpload: { id: string; path: string };
+  }
+
+  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
+    input: {
+      url,
+      type: "cover",
+      entityType: "draft",
+    },
+  });
+
+  return data.singleFileUpload.id;
+}
+
 /**
  * Create or update a draft on Matters
  */

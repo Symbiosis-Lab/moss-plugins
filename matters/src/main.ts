@@ -27,6 +27,7 @@ import {
   fetchArticleComments,
   createDraft,
   fetchDraft,
+  uploadCoverByUrl,
   apiConfig,
 } from "./api";
 import { syncToLocalFiles, scanLocalArticles } from "./sync";
@@ -580,13 +581,16 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
  * Syndicate a single article to Matters.town
  *
  * Workflow:
- * 1. Create draft via API
- * 2. Open draft in browser for user to review
- * 3. Poll for publish state change
- * 4. On publish: close browser, update local frontmatter
- * 5. On timeout: close browser, leave draft for later
+ * 1. Upload cover image if present in frontmatter
+ * 2. Create draft via API
+ * 3. Open draft in browser for user to review
+ * 4. Poll for publish state change
+ * 5. On publish: close browser, update local frontmatter
+ * 6. On timeout: close browser, leave draft for later
+ *
+ * Exported for unit testing.
  */
-async function syndicateArticle(
+export async function syndicateArticle(
   article: ArticleInfo,
   siteUrl: string,
   userName: string,
@@ -606,11 +610,25 @@ async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml);
   }
 
-  // Step 1: Create draft via API
+  // Step 1: Upload cover if present in frontmatter
+  let coverAssetId: string | undefined;
+  const coverPath = article.frontmatter.cover as string | undefined;
+  if (coverPath) {
+    const coverUrl = `${siteUrl.replace(/\/$/, "")}/${coverPath.replace(/^\//, "")}`;
+    try {
+      coverAssetId = await uploadCoverByUrl(coverUrl);
+      console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
+    } catch (error) {
+      console.warn(`    ⚠️ Cover upload failed, continuing without cover: ${error}`);
+    }
+  }
+
+  // Step 2: Create draft via API
   const draft = await createDraft({
     title: article.title,
     content,
     tags: article.tags,
+    ...(coverAssetId !== undefined ? { cover: coverAssetId } : {}),
   });
 
   console.log(`    📝 Draft created with ID: ${draft.id}`);
@@ -618,16 +636,16 @@ async function syndicateArticle(
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
-  // Step 2: Open draft in browser for user review
+  // Step 3: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   await openBrowser(draftPageUrl);
 
-  // Step 3: Poll for publish state change (10 min timeout)
+  // Step 4: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
 
   if (publishedArticle) {
-    // Step 4: Article was published - update local frontmatter
+    // Step 5: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
@@ -643,7 +661,7 @@ async function syndicateArticle(
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 5: Timeout - draft left for later
+  // Step 6: Timeout - draft left for later
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
   await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
   return { draftId: draft.id };

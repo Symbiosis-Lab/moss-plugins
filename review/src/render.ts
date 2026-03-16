@@ -2,6 +2,7 @@
  * HTML rendering for review header and colophon
  */
 
+import { sourceDisplayName } from "./sources";
 import type { ReviewSocialEntry } from "./types";
 
 /**
@@ -68,10 +69,11 @@ export function renderColophon(entry: ReviewSocialEntry): string {
     sections.push(`<div class="review-rating">${stars}</div>`);
   }
 
-  // NeoDB community rating (1-10 scale)
+  // Community rating (1-10 scale) — use source display name
   if (entry.community_rating !== null && entry.community_rating_count > 0) {
+    const sourceName = entry.source ? sourceDisplayName(entry.source) : "NeoDB";
     sections.push(
-      `<div class="review-community-rating">NeoDB ${entry.community_rating.toFixed(1)}/10 · ${entry.community_rating_count} ratings</div>`
+      `<div class="review-community-rating">${sourceName} ${entry.community_rating.toFixed(1)}/10 · ${entry.community_rating_count} ratings</div>`
     );
   }
 
@@ -100,7 +102,7 @@ export function renderColophon(entry: ReviewSocialEntry): string {
 
   // Ordered: Douban first (Chinese audience), then NeoDB, then Western sources
   if (urls.douban) links.push(`<a href="${escapeAttr(urls.douban)}" rel="noopener">Douban</a>`);
-  links.push(`<a href="${escapeAttr(urls.neodb)}" rel="noopener">NeoDB</a>`);
+  if (urls.neodb) links.push(`<a href="${escapeAttr(urls.neodb)}" rel="noopener">NeoDB</a>`);
   if (urls.goodreads) links.push(`<a href="${escapeAttr(urls.goodreads)}" rel="noopener">Goodreads</a>`);
   if (urls.openlibrary) links.push(`<a href="${escapeAttr(urls.openlibrary)}" rel="noopener">Open Library</a>`);
   if (urls.imdb) links.push(`<a href="${escapeAttr(urls.imdb)}" rel="noopener">IMDB</a>`);

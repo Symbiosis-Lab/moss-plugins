@@ -2,15 +2,17 @@
  * Review Plugin for moss
  *
  * process hook (pre-build):
- *   Reads article-map.json, finds pages with neodb: frontmatter,
- *   fetches metadata from NeoDB, downloads covers, writes .moss/social/review.json.
+ *   Reads article-map.json, finds pages with review_of: frontmatter,
+ *   fetches metadata from NeoDB/Douban/TMDB/Goodreads, downloads covers,
+ *   writes .moss/social/review.json.
  *
  * enhance (slot content):
  *   Declares CSS, per-page review headers and colophons for template injection.
  */
 
 import { readFile, writeFile, readPluginFile, downloadAsset, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
-import { fetchNeoDBItem } from "./neodb";
+import { fetchReviewItem } from "./fetch";
+import { detectSource } from "./sources";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
 import { renderHeader, renderColophon } from "./render";
 import type {
@@ -26,11 +28,11 @@ const REVIEW_CSS_FILENAME = "review.css";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ============================================================================
-// Frontmatter parsing (minimal — just extract neodb + rating)
+// Frontmatter parsing (minimal — just extract review_of + rating)
 // ============================================================================
 
 interface ParsedFrontmatter {
-  neodb?: string;
+  review_of?: string;
   rating?: number;
   cover?: string;
 }
@@ -42,8 +44,17 @@ function parseFrontmatter(markdown: string): ParsedFrontmatter {
   const yaml = match[1];
   const result: ParsedFrontmatter = {};
 
-  const neodbMatch = yaml.match(/^neodb:\s*(.+)$/m);
-  if (neodbMatch) result.neodb = neodbMatch[1].trim().replace(/^["']|["']$/g, "");
+  const reviewOfMatch = yaml.match(/^review_of:\s*(.+)$/m);
+  if (reviewOfMatch) {
+    result.review_of = reviewOfMatch[1].trim().replace(/^["']|["']$/g, "");
+  } else {
+    // Fallback: support deprecated `neodb:` field
+    const neodbMatch = yaml.match(/^neodb:\s*(.+)$/m);
+    if (neodbMatch) {
+      result.review_of = neodbMatch[1].trim().replace(/^["']|["']$/g, "");
+      console.log("[warn] Review: `neodb:` frontmatter field is deprecated, use `review_of:` instead");
+    }
+  }
 
   const ratingMatch = yaml.match(/^rating:\s*(.+)$/m);
   if (ratingMatch) result.rating = parseFloat(ratingMatch[1].trim());
@@ -127,7 +138,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
   // 2. Load existing social data
   const socialData = await loadReviewSocialData();
 
-  // 3. For each article, check if it has neodb frontmatter
+  // 3. For each article, check if it has review_of frontmatter
   let fetchCount = 0;
 
   for (const [_key, entry] of Object.entries(articleMap.articles)) {
@@ -144,13 +155,13 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
     }
 
     const fm = parseFrontmatter(markdown);
-    if (!fm.neodb) continue;
+    if (!fm.review_of) continue;
 
     const uid = entry.uid;
     const existingEntry = socialData.articles[uid];
 
     // Check cache: skip if URL unchanged and fetched within TTL
-    if (existingEntry && existingEntry.neodb_url === fm.neodb && existingEntry.fetched_at) {
+    if (existingEntry && existingEntry.source_url === fm.review_of && existingEntry.fetched_at) {
       const age = Date.now() - new Date(existingEntry.fetched_at).getTime();
       if (age < CACHE_TTL_MS) {
         // Still update writer_rating if changed
@@ -161,21 +172,22 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       }
     }
 
-    // 4. Fetch from NeoDB
-    const item = await fetchNeoDBItem(fm.neodb);
+    // 4. Fetch from detected source
+    const item = await fetchReviewItem(fm.review_of, ctx.config);
     if (!item) {
       // Network error — use cached data if available
       if (existingEntry) {
         if (fm.rating !== undefined) existingEntry.writer_rating = fm.rating;
         continue;
       }
-      console.log(`[warn] Review: Failed to fetch ${fm.neodb}, no cache available`);
+      console.log(`[warn] Review: Failed to fetch ${fm.review_of}, no cache available`);
       continue;
     }
 
     // 5. Build social entry
     const reviewEntry: ReviewSocialEntry = {
-      neodb_url: fm.neodb,
+      source_url: fm.review_of,
+      source: item.source,
       category: item.category,
       title: item.title,
       creator: item.creator,

@@ -3,7 +3,8 @@ import { renderStars, renderHeader, renderColophon } from "../render";
 import type { ReviewSocialEntry } from "../types";
 
 const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntry => ({
-  neodb_url: "https://neodb.social/book/abc",
+  source_url: "https://neodb.social/book/abc",
+  source: "neodb",
   category: "book",
   title: "Seeing Like a State",
   creator: ["James C. Scott"],
@@ -133,5 +134,26 @@ describe("renderColophon", () => {
       publisher: null, year: null, pages: null, isbn: null,
     }));
     expect(html).not.toContain('class="review-biblio"');
+  });
+
+  it("renders TMDB source name for tmdb entries", () => {
+    const html = renderColophon(makeEntry({
+      source: "tmdb",
+      community_rating: 7.5,
+      community_rating_count: 1200,
+      external_urls: { tmdb: "https://www.themoviedb.org/movie/12345" },
+    }));
+    expect(html).toContain("TMDB 7.5/10");
+    expect(html).toContain("1200 ratings");
+    expect(html).not.toContain("NeoDB 7.5/10");
+  });
+
+  it("renders Douban source name for douban entries", () => {
+    const html = renderColophon(makeEntry({
+      source: "douban",
+      community_rating: 9.0,
+      community_rating_count: 500,
+    }));
+    expect(html).toContain("Douban 9.0/10");
   });
 });

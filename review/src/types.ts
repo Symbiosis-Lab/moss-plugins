@@ -2,12 +2,14 @@
  * Types for the Review plugin
  */
 
+import type { ReviewSource } from "./sources";
+
 // ============================================================================
-// NeoDB Types
+// Review Item (unified across sources)
 // ============================================================================
 
-/** Normalized item from any NeoDB category */
-export interface NeoDBItem {
+/** Normalized item from any review source (NeoDB, Douban, TMDB, Goodreads) */
+export interface ReviewItem {
   id: string;
   uuid: string;
   category: string;
@@ -18,10 +20,11 @@ export interface NeoDBItem {
   publisher: string | null; // pub_house for books, label for albums
   pages: number | null;
   isbn: string | null;
-  rating: number | null;    // NeoDB community rating, 1-10 scale
+  rating: number | null;    // community rating, 1-10 scale
   rating_count: number;
+  source: ReviewSource;
   external_urls: {
-    neodb: string;
+    neodb?: string;
     douban?: string;
     goodreads?: string;
     openlibrary?: string;
@@ -36,7 +39,8 @@ export interface NeoDBItem {
 
 /** Entry in .moss/social/review.json, keyed by uid */
 export interface ReviewSocialEntry {
-  neodb_url: string;
+  source_url: string;
+  source: ReviewSource;
   category: string;
   title: string;
   creator: string[];
@@ -46,9 +50,9 @@ export interface ReviewSocialEntry {
   isbn: string | null;
   community_rating: number | null;
   community_rating_count: number;
-  cover_url: string | null;     // remote cover image URL
+  cover_url: string | null;
   external_urls: {
-    neodb: string;
+    neodb?: string;
     douban?: string;
     goodreads?: string;
     openlibrary?: string;

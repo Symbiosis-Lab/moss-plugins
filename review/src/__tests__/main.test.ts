@@ -40,7 +40,7 @@ describe("process hook", () => {
     expect(result.message).toContain("No article map");
   });
 
-  it("fetches NeoDB data for articles with neodb frontmatter", async () => {
+  it("fetches NeoDB data for articles with review_of frontmatter", async () => {
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
         return Promise.resolve(JSON.stringify({
@@ -55,7 +55,7 @@ describe("process hook", () => {
       }
       if (path === "reading/test.md") {
         return Promise.resolve(
-          "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody"
+          "---\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody"
         );
       }
       if (path === ".moss/social/review.json") {
@@ -89,7 +89,7 @@ describe("process hook", () => {
   });
 
   it("downloads cover and updates frontmatter when cover_image_url exists", async () => {
-    const mdContent = "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody text here";
+    const mdContent = "---\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody text here";
 
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
@@ -139,7 +139,7 @@ describe("process hook", () => {
     // Should have written updated frontmatter to the source file
     expect(mockWriteFile).toHaveBeenCalledWith(
       "reading/test.md",
-      "---\ncover: assets/covers/cover.jpg\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody text here"
+      "---\ncover: assets/covers/cover.jpg\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody text here"
     );
 
     // Social data should use local path
@@ -152,7 +152,7 @@ describe("process hook", () => {
   });
 
   it("skips cover download when frontmatter already has cover", async () => {
-    const mdContent = "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\ncover: my-custom-cover.jpg\n---\nBody";
+    const mdContent = "---\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\ncover: my-custom-cover.jpg\n---\nBody";
 
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
@@ -190,7 +190,7 @@ describe("process hook", () => {
   });
 
   it("continues gracefully when cover download fails", async () => {
-    const mdContent = "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\n---\nBody";
+    const mdContent = "---\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\n---\nBody";
 
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
@@ -241,7 +241,7 @@ describe("process hook", () => {
   });
 
   it("skips cover download when download returns ok: false", async () => {
-    const mdContent = "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\n---\nBody";
+    const mdContent = "---\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\n---\nBody";
 
     mockReadFile.mockImplementation((path: string) => {
       if (path === ".moss/article-map.json") {
@@ -293,15 +293,15 @@ describe("process hook", () => {
 
 describe("updateFrontmatterCover", () => {
   it("inserts cover after opening --- when no cover exists", () => {
-    const md = "---\ntitle: Test\nneodb: https://neodb.social/book/abc\n---\nBody text";
+    const md = "---\ntitle: Test\nreview_of: https://neodb.social/book/abc\n---\nBody text";
     const result = updateFrontmatterCover(md, "assets/covers/cover.jpg");
-    expect(result).toBe("---\ncover: assets/covers/cover.jpg\ntitle: Test\nneodb: https://neodb.social/book/abc\n---\nBody text");
+    expect(result).toBe("---\ncover: assets/covers/cover.jpg\ntitle: Test\nreview_of: https://neodb.social/book/abc\n---\nBody text");
   });
 
   it("replaces existing cover line", () => {
-    const md = "---\ntitle: Test\ncover: old-cover.jpg\nneodb: https://neodb.social/book/abc\n---\nBody text";
+    const md = "---\ntitle: Test\ncover: old-cover.jpg\nreview_of: https://neodb.social/book/abc\n---\nBody text";
     const result = updateFrontmatterCover(md, "assets/covers/new-cover.jpg");
-    expect(result).toBe("---\ntitle: Test\ncover: assets/covers/new-cover.jpg\nneodb: https://neodb.social/book/abc\n---\nBody text");
+    expect(result).toBe("---\ntitle: Test\ncover: assets/covers/new-cover.jpg\nreview_of: https://neodb.social/book/abc\n---\nBody text");
   });
 
   it("preserves body byte-for-byte", () => {
@@ -315,6 +315,70 @@ describe("updateFrontmatterCover", () => {
     const md = "No frontmatter here, just body text.";
     const result = updateFrontmatterCover(md, "assets/covers/cover.jpg");
     expect(result).toBeNull();
+  });
+});
+
+describe("backward compat: deprecated neodb frontmatter field", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockFetchUrl.mockReset();
+    mockDownloadAsset.mockReset();
+  });
+
+  it("processes articles with old neodb: field", async () => {
+    mockReadFile.mockImplementation((path: string) => {
+      if (path === ".moss/article-map.json") {
+        return Promise.resolve(JSON.stringify({
+          articles: {
+            "reading/test": {
+              source_path: "reading/test.md",
+              url_path: "reading/test/",
+              uid: "abc12345",
+            },
+          },
+        }));
+      }
+      if (path === "reading/test.md") {
+        return Promise.resolve(
+          "---\ntitle: Test\nneodb: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody"
+        );
+      }
+      if (path === ".moss/social/review.json") {
+        return Promise.reject(new Error("Not found"));
+      }
+      return Promise.reject(new Error("Unknown file: " + path));
+    });
+
+    mockFetchUrl.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => JSON.stringify(bookFixture),
+    });
+
+    mockDownloadAsset.mockResolvedValue({
+      ok: true,
+      status: 200,
+      actualPath: "assets/covers/cover.jpg",
+      bytesWritten: 1024,
+      contentType: "image/jpeg",
+    });
+
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const result = await process(makeProcessCtx());
+    expect(result.success).toBe(true);
+
+    // Social data should be written with source_url and source fields
+    const socialWriteCall = mockWriteFile.mock.calls.find(
+      (c: string[]) => c[0] === ".moss/social/review.json"
+    );
+    expect(socialWriteCall).toBeDefined();
+    const socialData = JSON.parse(socialWriteCall![1]);
+    expect(socialData.articles.abc12345.source_url).toBe(
+      "https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp"
+    );
+    expect(socialData.articles.abc12345.source).toBe("neodb");
   });
 });
 

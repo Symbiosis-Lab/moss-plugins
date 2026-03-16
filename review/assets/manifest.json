@@ -1,7 +1,7 @@
 {
   "name": "review",
-  "version": "0.1.0",
-  "description": "Enrich review posts with metadata from NeoDB",
+  "version": "0.2.0",
+  "description": "Enrich review posts with metadata from NeoDB, Douban, TMDB, and Goodreads",
   "display_name": "Reviews",
   "author": "moss team",
   "entry": "main.bundle.js",
@@ -17,5 +17,21 @@
   "global_name": "ReviewPlugin",
   "icon": "icon.svg",
   "config": {},
-  "config_schema": {}
+  "config_schema": {},
+  "contributes": {
+    "frontmatter": {
+      "fields": {
+        "review_of": {
+          "type": "string",
+          "widget": "text-input",
+          "description": "URL of item being reviewed (NeoDB, Douban, TMDB, Goodreads)"
+        },
+        "rating": {
+          "type": "integer",
+          "widget": "number-input",
+          "description": "Your rating (1-5 stars)"
+        }
+      }
+    }
+  }
 }

@@ -68,6 +68,7 @@ describe("fetchNeoDBItem", () => {
     expect(item!.category).toBe("book");
     expect(item!.title).toBeTruthy();
     expect(item!.creator).toBeInstanceOf(Array);
+    expect(item!.source).toBe("neodb");
     expect(item!.external_urls.neodb).toContain("neodb.social");
   });
 
@@ -82,6 +83,7 @@ describe("fetchNeoDBItem", () => {
 
     expect(item).not.toBeNull();
     expect(item!.category).toBe("movie");
+    expect(item!.source).toBe("neodb");
     expect(item!.external_urls.neodb).toContain("neodb.social");
   });
 

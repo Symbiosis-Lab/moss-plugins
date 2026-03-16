@@ -9,7 +9,7 @@ import { readFile, writeFile } from "@symbiosis-lab/moss-api";
 import type { ReviewSocialFile, ReviewSocialEntry } from "./types";
 
 const SOCIAL_FILE_PATH = ".moss/social/review.json";
-const SCHEMA_VERSION = "1.0.0";
+const SCHEMA_VERSION = "2.0.0";
 
 function createEmpty(): ReviewSocialFile {
   return {
@@ -24,6 +24,22 @@ export async function loadReviewSocialData(): Promise<ReviewSocialFile> {
     const content = await readFile(SOCIAL_FILE_PATH);
     const data = JSON.parse(content) as ReviewSocialFile;
     if (!data.articles) return createEmpty();
+
+    // Migrate v1 → v2: rename neodb_url → source_url, add source field
+    if (data.schemaVersion === "1.0.0") {
+      for (const entry of Object.values(data.articles)) {
+        const legacy = entry as any;
+        if (legacy.neodb_url && !entry.source_url) {
+          entry.source_url = legacy.neodb_url;
+          delete legacy.neodb_url;
+        }
+        if (!entry.source) {
+          entry.source = 'neodb';
+        }
+      }
+      data.schemaVersion = SCHEMA_VERSION;
+    }
+
     return data;
   } catch {
     return createEmpty();

@@ -11,16 +11,14 @@ describe("addCanonicalLinkToContent", () => {
   it("appends markdown canonical link for markdown content", () => {
     const result = addCanonicalLinkToContent("# Hello\n\nContent.", canonicalUrl, false);
     expect(result).toContain("---");
-    expect(result).toContain(`[${canonicalUrl}](${canonicalUrl})`);
-    expect(result).toContain("Originally published at");
+    expect(result).toContain(`[Original link](${canonicalUrl})`);
     expect(result).not.toContain("<hr>");
   });
 
   it("appends HTML canonical link for HTML content", () => {
     const result = addCanonicalLinkToContent("<h1>Hello</h1><p>Content.</p>", canonicalUrl, true);
     expect(result).toContain("<hr>");
-    expect(result).toContain(`<a href="${canonicalUrl}">`);
-    expect(result).toContain("Originally published at");
+    expect(result).toContain(`<a href="${canonicalUrl}">Original link</a>`);
     expect(result).not.toContain("---\n");
   });
 

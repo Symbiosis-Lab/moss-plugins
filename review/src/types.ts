@@ -50,7 +50,6 @@ export interface ReviewSocialEntry {
   isbn: string | null;
   community_rating: number | null;
   community_rating_count: number;
-  cover_url: string | null;
   external_urls: {
     neodb?: string;
     douban?: string;

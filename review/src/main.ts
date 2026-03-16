@@ -232,7 +232,6 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       isbn: item.isbn,
       community_rating: item.rating,
       community_rating_count: item.rating_count,
-      cover_url: item.cover_image_url,
       external_urls: item.external_urls,
       writer_rating: fm.rating ?? null,
       fetched_at: new Date().toISOString(),
@@ -243,9 +242,6 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       try {
         const dlResult = await downloadAsset(item.cover_image_url, coverDir);
         if (dlResult.ok && dlResult.actualPath) {
-          // Update social entry to use local path
-          reviewEntry.cover_url = dlResult.actualPath;
-
           // Update frontmatter with local cover path
           const updated = updateFrontmatterCover(markdown, dlResult.actualPath);
           if (updated) {
@@ -308,14 +304,21 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     return { success: true, slots };
   }
 
-  // 3. Build uid->urlPath map from article_map in context
-  const articleMap = ctx.article_map as { articles?: Record<string, { url_path: string; uid?: string }> } | undefined;
+  // 3. Build uid->urlPath and uid->cover maps from article_map in context
+  const articleMap = ctx.article_map as { articles?: Record<string, { url_path: string; uid?: string; frontmatter?: Record<string, any> }> } | undefined;
   const articles = articleMap?.articles || {};
 
   const uidToUrl = new Map<string, string>();
+  const uidToCover = new Map<string, string>();
   for (const [_key, entry] of Object.entries(articles)) {
     if (entry.uid && entry.url_path) {
       uidToUrl.set(entry.uid, entry.url_path);
+    }
+    if (entry.uid && entry.frontmatter?.cover) {
+      const cover = entry.frontmatter.cover as string;
+      if (!cover.startsWith("http://") && !cover.startsWith("https://")) {
+        uidToCover.set(entry.uid, cover);
+      }
     }
   }
 
@@ -327,12 +330,14 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     const urlPath = uidToUrl.get(uid);
     if (!urlPath) continue;
 
-    const headerHtml = renderHeader(entry);
+    const coverUrl = uidToCover.get(uid) ?? null;
+
+    const headerHtml = renderHeader(entry, coverUrl);
     if (headerHtml) {
       headerPages[urlPath] = headerHtml;
     }
 
-    const colophonHtml = renderColophon(entry);
+    const colophonHtml = renderColophon(entry, coverUrl);
     if (colophonHtml) {
       colophonPages[urlPath] = colophonHtml;
     }

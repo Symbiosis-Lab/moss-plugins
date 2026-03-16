@@ -27,7 +27,6 @@ const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntr
   isbn: "978-0-000-00000-0",
   community_rating: 8.0,
   community_rating_count: 100,
-  cover_url: null,
   external_urls: { neodb: "https://neodb.social/book/abc" },
   writer_rating: 4,
   fetched_at: "2026-03-10T00:00:00.000Z",

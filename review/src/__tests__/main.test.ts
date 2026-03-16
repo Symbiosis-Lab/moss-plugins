@@ -142,13 +142,13 @@ describe("process hook", () => {
       "---\ncover: assets/covers/cover.jpg\ntitle: Test\nreview_of: https://neodb.social/book/2ZSdZMnRJZKYD8QFRNNwrp\nrating: 4\n---\nBody text here"
     );
 
-    // Social data should use local path
+    // Social data should not contain cover_url (cover is in frontmatter, not review.json)
     const socialWriteCall = mockWriteFile.mock.calls.find(
       (c: string[]) => c[0] === ".moss/social/review.json"
     );
     expect(socialWriteCall).toBeDefined();
     const socialData = JSON.parse(socialWriteCall![1]);
-    expect(socialData.articles.abc12345.cover_url).toBe("assets/covers/cover.jpg");
+    expect(socialData.articles.abc12345.cover_url).toBeUndefined();
   });
 
   it("skips cover download when frontmatter already has cover", async () => {
@@ -229,15 +229,13 @@ describe("process hook", () => {
     // Should still succeed — cover download failure is non-fatal
     expect(result.success).toBe(true);
 
-    // Social data should still be saved with remote URL
+    // Social data should not contain cover_url
     const socialWriteCall = mockWriteFile.mock.calls.find(
       (c: string[]) => c[0] === ".moss/social/review.json"
     );
     expect(socialWriteCall).toBeDefined();
     const socialData = JSON.parse(socialWriteCall![1]);
-    expect(socialData.articles.abc12345.cover_url).toBe(
-      "https://neodb.social/m/book/2021/09/16a8df666c-7506-45ff-b0e9-0344407335e0.jpg"
-    );
+    expect(socialData.articles.abc12345.cover_url).toBeUndefined();
   });
 
   it("skips cover download when download returns ok: false", async () => {

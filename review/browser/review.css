@@ -36,30 +36,54 @@
   margin: 0 0.15em;
 }
 
-/* Colophon */
+/* Colophon — card layout with cover + details */
 .review-colophon {
+  display: flex;
+  gap: 1.25rem;
   margin-top: 3rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--moss-color-border, #e0e0e0);
+  padding: 1.25rem;
+  background: var(--moss-color-surface, #f8f8f8);
+  border-radius: 8px;
   font-size: 0.9em;
   color: var(--moss-color-muted, #666);
+}
+
+.review-colophon-cover {
+  width: 120px;
+  height: auto;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.review-colophon-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.review-colophon-title {
+  font-weight: 600;
+  color: var(--moss-color-text, #333);
+  font-size: 1.05em;
+}
+
+.review-colophon-identity {
+  font-size: 0.95em;
 }
 
 .review-rating {
   font-size: 1.2em;
   color: var(--moss-color-accent, #c9a84c);
-  margin-bottom: 0.5rem;
   letter-spacing: 0.05em;
 }
 
 .review-community-rating {
   font-size: 0.85em;
-  margin-bottom: 0.5rem;
 }
 
 .review-biblio {
-  margin-bottom: 0.75rem;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .review-links a {
@@ -71,9 +95,14 @@
   text-decoration: underline;
 }
 
-/* Mobile: stack cover above meta */
+/* Mobile: stack cover above details */
 @media (max-width: 32rem) {
   .review-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .review-colophon {
     flex-direction: column;
     align-items: flex-start;
   }

@@ -22,10 +22,24 @@ export function renderStars(rating: number | null): string {
 }
 
 /**
+ * Resolve a cover path to a root-relative src attribute.
+ * Local paths get "/" prepended (matching PathResolver.resolve_url() pattern).
+ * External URLs pass through unchanged.
+ */
+function resolveCoverSrc(coverUrl: string): string {
+  if (coverUrl.startsWith("http://") || coverUrl.startsWith("https://")) {
+    return coverUrl;
+  }
+  return "/" + coverUrl.replace(/^\//, "");
+}
+
+/**
  * Render the book header: cover image + creator + year.
  * Injected after <h1> in the article.
+ *
+ * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
  */
-export function renderHeader(entry: ReviewSocialEntry): string {
+export function renderHeader(entry: ReviewSocialEntry, coverUrl: string | null): string {
   const hasCreator = entry.creator.length > 0;
   const hasYear = entry.year !== null;
 
@@ -34,14 +48,9 @@ export function renderHeader(entry: ReviewSocialEntry): string {
 
   const parts: string[] = [];
 
-  // Cover image — resolve to root-relative path.
-  // cover_url is project-relative (e.g., "图片/foo.jpg") from downloadAsset().
-  // The build pipeline's PathResolver.resolve_url() prepends "/" for the same reason:
-  // without it, the browser resolves relative to the page URL, not the site root.
-  if (entry.cover_url) {
-    const coverSrc = entry.cover_url.startsWith("http://") || entry.cover_url.startsWith("https://")
-      ? entry.cover_url
-      : "/" + entry.cover_url.replace(/^\//, "");
+  // Cover image
+  if (coverUrl) {
+    const coverSrc = resolveCoverSrc(coverUrl);
     parts.push(
       `<img class="review-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
     );
@@ -63,30 +72,29 @@ export function renderHeader(entry: ReviewSocialEntry): string {
 }
 
 /**
- * Render the colophon: rating, bibliographic details, outbound links.
+ * Render the colophon: card with cover, title, metadata, rating, and links.
  * Injected before </article>.
+ *
+ * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
  */
-export function renderColophon(entry: ReviewSocialEntry): string {
-  const sections: string[] = [];
+export function renderColophon(entry: ReviewSocialEntry, coverUrl: string | null): string {
+  // Details column
+  const details: string[] = [];
 
-  // Writer's rating stars
-  const stars = renderStars(entry.writer_rating);
-  if (stars) {
-    sections.push(`<div class="review-rating">${stars}</div>`);
+  // Title
+  details.push(`<div class="review-colophon-title">${escapeHtml(entry.title)}</div>`);
+
+  // Creator + year line
+  const identityParts: string[] = [];
+  if (entry.creator.length > 0) identityParts.push(escapeHtml(entry.creator.join(", ")));
+  if (entry.year !== null) identityParts.push(String(entry.year));
+  if (identityParts.length > 0) {
+    details.push(`<div class="review-colophon-identity">${identityParts.join(" · ")}</div>`);
   }
 
-  // Community rating (1-10 scale) — use source display name
-  if (entry.community_rating !== null && entry.community_rating_count > 0) {
-    const sourceName = entry.source ? sourceDisplayName(entry.source) : "NeoDB";
-    sections.push(
-      `<div class="review-community-rating">${sourceName} ${entry.community_rating.toFixed(1)}/10 · ${entry.community_rating_count} ratings</div>`
-    );
-  }
-
-  // Bibliographic details
+  // Bibliographic details (publisher, pages, ISBN)
   const biblioParts: string[] = [];
   if (entry.publisher) biblioParts.push(escapeHtml(entry.publisher));
-  if (entry.year !== null) biblioParts.push(String(entry.year));
   if (entry.pages !== null) biblioParts.push(`${entry.pages} pages`);
 
   const hasBiblio = biblioParts.length > 0;
@@ -96,17 +104,30 @@ export function renderColophon(entry: ReviewSocialEntry): string {
     let biblioHtml = "";
     if (hasBiblio) biblioHtml += biblioParts.join(" · ");
     if (hasIsbn) {
-      if (hasBiblio) biblioHtml += "<br>";
+      if (hasBiblio) biblioHtml += " · ";
       biblioHtml += `ISBN ${escapeHtml(entry.isbn!)}`;
     }
-    sections.push(`<div class="review-biblio">${biblioHtml}</div>`);
+    details.push(`<div class="review-biblio">${biblioHtml}</div>`);
+  }
+
+  // Writer's rating stars
+  const stars = renderStars(entry.writer_rating);
+  if (stars) {
+    details.push(`<div class="review-rating">${stars}</div>`);
+  }
+
+  // Community rating (1-10 scale)
+  if (entry.community_rating !== null && entry.community_rating_count > 0) {
+    const sourceName = entry.source ? sourceDisplayName(entry.source) : "NeoDB";
+    details.push(
+      `<div class="review-community-rating">${sourceName} ${entry.community_rating.toFixed(1)}/10 · ${entry.community_rating_count} ratings</div>`
+    );
   }
 
   // Outbound links
   const links: string[] = [];
   const urls = entry.external_urls;
 
-  // Ordered: Douban first (Chinese audience), then NeoDB, then Western sources
   if (urls.douban) links.push(`<a href="${escapeAttr(urls.douban)}" rel="noopener">Douban</a>`);
   if (urls.neodb) links.push(`<a href="${escapeAttr(urls.neodb)}" rel="noopener">NeoDB</a>`);
   if (urls.goodreads) links.push(`<a href="${escapeAttr(urls.goodreads)}" rel="noopener">Goodreads</a>`);
@@ -114,9 +135,23 @@ export function renderColophon(entry: ReviewSocialEntry): string {
   if (urls.imdb) links.push(`<a href="${escapeAttr(urls.imdb)}" rel="noopener">IMDB</a>`);
   if (urls.tmdb) links.push(`<a href="${escapeAttr(urls.tmdb)}" rel="noopener">TMDB</a>`);
 
-  sections.push(`<nav class="review-links">${links.join('<span class="review-sep"> · </span>')}</nav>`);
+  if (links.length > 0) {
+    details.push(`<nav class="review-links">${links.join('<span class="review-sep"> · </span>')}</nav>`);
+  }
 
-  return `<footer class="review-colophon">\n  ${sections.join("\n  ")}\n</footer>`;
+  // Assemble card
+  const cardParts: string[] = [];
+
+  if (coverUrl) {
+    const coverSrc = resolveCoverSrc(coverUrl);
+    cardParts.push(
+      `<img class="review-colophon-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy">`
+    );
+  }
+
+  cardParts.push(`<div class="review-colophon-details">\n    ${details.join("\n    ")}\n  </div>`);
+
+  return `<footer class="review-colophon">\n  ${cardParts.join("\n  ")}\n</footer>`;
 }
 
 function escapeHtml(s: string): string {

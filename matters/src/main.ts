@@ -28,6 +28,7 @@ import {
   createDraft,
   fetchDraft,
   uploadCoverByUrl,
+  uploadEmbedByUrl,
   apiConfig,
 } from "./api";
 import { syncToLocalFiles, scanLocalArticles } from "./sync";
@@ -619,7 +620,12 @@ export async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
   }
 
-  // Step 4: Upload cover if present in frontmatter
+  // Step 4: Upload local images to Matters CDN — only for HTML content
+  if (isHtml) {
+    content = await uploadAndReplaceLocalImages(content, siteUrl);
+  }
+
+  // Step 5: Upload cover if present in frontmatter
   let coverAssetId: string | undefined;
   const coverPath = article.frontmatter.cover as string | undefined;
   if (coverPath) {
@@ -632,7 +638,7 @@ export async function syndicateArticle(
     }
   }
 
-  // Step 5: Create draft via API (with optional summary from description)
+  // Step 6: Create draft via API (with optional summary from description)
   const summary = article.frontmatter.description as string | undefined;
   const draft = await createDraft({
     title: article.title,
@@ -647,16 +653,16 @@ export async function syndicateArticle(
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
-  // Step 6: Open draft in browser for user review
+  // Step 7: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   await openBrowser(draftPageUrl);
 
-  // Step 7: Poll for publish state change (10 min timeout)
+  // Step 8: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
 
   if (publishedArticle) {
-    // Step 8: Article was published - update local frontmatter
+    // Step 9: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
@@ -672,7 +678,7 @@ export async function syndicateArticle(
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 9: Timeout - draft left for later
+  // Step 10: Timeout - draft left for later
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
   await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
   return { draftId: draft.id };
@@ -833,4 +839,60 @@ export function addCanonicalLinkToContent(
   }
   const canonicalNotice = `\n\n---\n\n[${linkText}](${canonicalUrl})\n`;
   return content + canonicalNotice;
+}
+
+/**
+ * Upload all local/relative images in HTML content to Matters CDN
+ * and replace their src attributes with CDN URLs.
+ *
+ * - Skips absolute URLs (http://, https://, data:)
+ * - Deduplicates: same src used multiple times is only uploaded once
+ * - Graceful failure: warns on upload error, leaves original src unchanged
+ *
+ * @param content - HTML content containing img tags
+ * @param siteUrl - Base URL of the published site (e.g., "https://example.com")
+ * @returns HTML content with local image srcs replaced by CDN URLs
+ */
+export async function uploadAndReplaceLocalImages(content: string, siteUrl: string): Promise<string> {
+  // Collect all img src values
+  const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
+  const localSrcs = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = imgSrcRegex.exec(content)) !== null) {
+    const src = match[1];
+    // Skip absolute URLs and data URIs
+    if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) {
+      continue;
+    }
+    localSrcs.add(src);
+  }
+
+  if (localSrcs.size === 0) {
+    return content;
+  }
+
+  // Upload each unique local src and build a replacement map
+  const replacements = new Map<string, string>();
+
+  for (const src of localSrcs) {
+    const absoluteUrl = `${siteUrl.replace(/\/$/, "")}/${src.replace(/^\//, "")}`;
+    try {
+      const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
+      replacements.set(src, cdnUrl);
+      console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
+    } catch (error) {
+      console.warn(`    ⚠️ Image upload failed for ${src}, leaving unchanged: ${error}`);
+    }
+  }
+
+  // Replace all occurrences of each local src with its CDN URL
+  let result = content;
+  for (const [originalSrc, cdnUrl] of replacements) {
+    // Escape special regex characters in the src
+    const escaped = originalSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`src="${escaped}"`, "g"), `src="${cdnUrl}"`);
+  }
+
+  return result;
 }

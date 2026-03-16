@@ -1144,6 +1144,31 @@ export async function uploadCoverByUrl(url: string): Promise<string> {
 }
 
 /**
+ * Upload an embed image to Matters by URL
+ *
+ * Uses the singleFileUpload mutation with a URL parameter so Matters
+ * fetches the image from the published site directly.
+ *
+ * @param url - Full URL of the image on the published site
+ * @returns The Matters CDN URL (path) of the uploaded image
+ */
+export async function uploadEmbedByUrl(url: string): Promise<string> {
+  interface SingleFileUploadResponse {
+    singleFileUpload: { id: string; path: string };
+  }
+
+  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
+    input: {
+      url,
+      type: "embed",
+      entityType: "draft",
+    },
+  });
+
+  return data.singleFileUpload.path;
+}
+
+/**
  * Create or update a draft on Matters
  */
 export async function createDraft(input: PutDraftInput): Promise<MattersDraftWithArticle> {

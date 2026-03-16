@@ -225,6 +225,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
       source: item.source,
       category: item.category,
       title: item.title,
+      subtitle: item.subtitle,
       creator: item.creator,
       year: item.year,
       publisher: item.publisher,

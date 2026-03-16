@@ -34,7 +34,7 @@ function resolveCoverSrc(coverUrl: string): string {
 }
 
 /**
- * Render the book header: cover image + creator + year.
+ * Render the book header: cover image + title + subtitle + creator + year.
  * Injected after <h1> in the article.
  *
  * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
@@ -48,31 +48,37 @@ export function renderHeader(entry: ReviewSocialEntry, coverUrl: string | null):
 
   const parts: string[] = [];
 
-  // Cover image
+  // Cover image — no width attribute; CSS controls sizing for future-proofing
   if (coverUrl) {
     const coverSrc = resolveCoverSrc(coverUrl);
     parts.push(
-      `<img class="review-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
+      `<img class="review-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy">`
     );
   }
 
-  // Meta line
+  // Meta column: title, subtitle, creator · year
   const metaParts: string[] = [];
-  if (hasCreator) {
-    metaParts.push(`<span class="review-creator">${escapeHtml(entry.creator.join(", "))}</span>`);
-  }
-  if (hasYear) {
-    metaParts.push(`<span class="review-year">${entry.year}</span>`);
+
+  metaParts.push(`<div class="review-meta-title">${escapeHtml(entry.title)}</div>`);
+
+  if (entry.subtitle) {
+    metaParts.push(`<div class="review-meta-subtitle">${escapeHtml(entry.subtitle)}</div>`);
   }
 
-  const metaHtml = metaParts.join('<span class="review-sep"> · </span>');
-  parts.push(`<div class="review-meta">${metaHtml}</div>`);
+  const creatorYearParts: string[] = [];
+  if (hasCreator) creatorYearParts.push(escapeHtml(entry.creator.join(", ")));
+  if (hasYear) creatorYearParts.push(String(entry.year));
+  if (creatorYearParts.length > 0) {
+    metaParts.push(`<div class="review-meta-creator">${creatorYearParts.join(" · ")}</div>`);
+  }
+
+  parts.push(`<div class="review-meta">\n    ${metaParts.join("\n    ")}\n  </div>`);
 
   return `<div class="review-header">\n  ${parts.join("\n  ")}\n</div>`;
 }
 
 /**
- * Render the colophon: card with cover, title, metadata, rating, and links.
+ * Render the colophon: card with cover, title, subtitle, metadata, rating, and links.
  * Injected before </article>.
  *
  * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
@@ -83,6 +89,11 @@ export function renderColophon(entry: ReviewSocialEntry, coverUrl: string | null
 
   // Title
   details.push(`<div class="review-colophon-title">${escapeHtml(entry.title)}</div>`);
+
+  // Subtitle
+  if (entry.subtitle) {
+    details.push(`<div class="review-colophon-subtitle">${escapeHtml(entry.subtitle)}</div>`);
+  }
 
   // Creator + year line
   const identityParts: string[] = [];

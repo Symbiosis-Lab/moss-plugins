@@ -1,34 +1,48 @@
 /* Review plugin — header and colophon styles
  * Uses moss design tokens. Works in light and dark mode.
+ * Side-by-side layout on all screen sizes (matches collection-cover pattern).
  */
 
+/* Header — cover + title/subtitle/creator */
 .review-header {
   display: flex;
+  gap: var(--moss-space-lg, 2rem);
   align-items: flex-start;
-  gap: 12px;
   margin: 1rem 0 2rem;
 }
 
 .review-cover {
-  width: 80px;
+  width: 150px;
+  max-width: 30%;
   height: auto;
   object-fit: cover;
-  border-radius: 2px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
 .review-meta {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0;
-  font-size: 0.95em;
-  color: var(--moss-color-muted, #666);
-  padding-top: 4px;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-top: 0.25rem;
 }
 
-.review-creator {
-  font-weight: 500;
+.review-meta-title {
+  font-weight: 600;
+  font-size: 1.05em;
+  color: var(--moss-color-text, #333);
+}
+
+.review-meta-subtitle {
+  font-size: 0.9em;
+  color: var(--moss-color-muted, #666);
+}
+
+.review-meta-creator {
+  font-size: 0.9em;
+  color: var(--moss-color-muted, #666);
 }
 
 .review-sep {
@@ -36,10 +50,11 @@
   margin: 0 0.15em;
 }
 
-/* Colophon — card layout with cover + details */
+/* Colophon — card with cover + details */
 .review-colophon {
   display: flex;
-  gap: 1.25rem;
+  gap: var(--moss-space-lg, 2rem);
+  align-items: flex-start;
   margin-top: 3rem;
   padding: 1.25rem;
   background: var(--moss-color-surface, #f8f8f8);
@@ -49,7 +64,8 @@
 }
 
 .review-colophon-cover {
-  width: 120px;
+  width: 150px;
+  max-width: 30%;
   height: auto;
   object-fit: cover;
   border-radius: 4px;
@@ -57,6 +73,8 @@
 }
 
 .review-colophon-details {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -66,6 +84,11 @@
   font-weight: 600;
   color: var(--moss-color-text, #333);
   font-size: 1.05em;
+}
+
+.review-colophon-subtitle {
+  font-size: 0.9em;
+  color: var(--moss-color-muted, #666);
 }
 
 .review-colophon-identity {
@@ -93,17 +116,4 @@
 
 .review-links a:hover {
   text-decoration: underline;
-}
-
-/* Mobile: stack cover above details */
-@media (max-width: 32rem) {
-  .review-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .review-colophon {
-    flex-direction: column;
-    align-items: flex-start;
-  }
 }

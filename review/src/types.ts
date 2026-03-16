@@ -14,6 +14,7 @@ export interface ReviewItem {
   uuid: string;
   category: string;
   title: string;
+  subtitle: string | null;
   cover_image_url: string | null;
   creator: string[];        // normalized: author, director, or artist
   year: number | null;      // normalized from pub_year, year, release_year
@@ -43,6 +44,7 @@ export interface ReviewSocialEntry {
   source: ReviewSource;
   category: string;
   title: string;
+  subtitle: string | null;
   creator: string[];
   year: number | null;
   publisher: string | null;

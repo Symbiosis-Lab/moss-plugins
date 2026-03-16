@@ -149,6 +149,8 @@ describe("process hook", () => {
     expect(socialWriteCall).toBeDefined();
     const socialData = JSON.parse(socialWriteCall![1]);
     expect(socialData.articles.abc12345.cover_url).toBeUndefined();
+    // Social data should include subtitle from NeoDB
+    expect(socialData.articles.abc12345.subtitle).toBe("Facing the Future with Time-Tested Tools");
   });
 
   it("skips cover download when frontmatter already has cover", async () => {

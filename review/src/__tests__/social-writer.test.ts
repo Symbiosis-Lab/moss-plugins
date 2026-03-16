@@ -20,6 +20,7 @@ const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntr
   source: "neodb",
   category: "book",
   title: "Test Book",
+  subtitle: "A Subtitle",
   creator: ["Author"],
   year: 2020,
   publisher: "Publisher",

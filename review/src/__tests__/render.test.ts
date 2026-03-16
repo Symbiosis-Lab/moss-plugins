@@ -7,6 +7,7 @@ const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntr
   source: "neodb",
   category: "book",
   title: "Seeing Like a State",
+  subtitle: "How Certain Schemes to Improve the Human Condition Have Failed",
   creator: ["James C. Scott"],
   year: 1998,
   publisher: "Yale University Press",
@@ -48,12 +49,20 @@ describe("renderStars", () => {
 });
 
 describe("renderHeader", () => {
-  it("renders cover + creator + year", () => {
+  it("renders cover + title + subtitle + creator + year", () => {
     const html = renderHeader(makeEntry(), "图片/cover.jpg");
     expect(html).toContain('class="review-header"');
     expect(html).toContain('class="review-cover"');
+    expect(html).toContain('class="review-meta-title"');
+    expect(html).toContain("Seeing Like a State");
+    expect(html).toContain("How Certain Schemes");
     expect(html).toContain("James C. Scott");
     expect(html).toContain("1998");
+  });
+
+  it("does not include width attribute on cover image", () => {
+    const html = renderHeader(makeEntry(), "图片/cover.jpg");
+    expect(html).not.toContain('width=');
   });
 
   it("omits cover when coverUrl is null", () => {
@@ -70,12 +79,23 @@ describe("renderHeader", () => {
   it("shows only creator when no year", () => {
     const html = renderHeader(makeEntry({ year: null }), null);
     expect(html).toContain("James C. Scott");
-    expect(html).not.toContain("·");
+    expect(html).toContain('class="review-meta-creator"');
   });
 
   it("joins multiple creators with comma", () => {
     const html = renderHeader(makeEntry({ creator: ["Alice", "Bob"] }), null);
     expect(html).toContain("Alice, Bob");
+  });
+
+  it("omits subtitle when null", () => {
+    const html = renderHeader(makeEntry({ subtitle: null }), null);
+    expect(html).not.toContain("review-meta-subtitle");
+  });
+
+  it("renders subtitle when present", () => {
+    const html = renderHeader(makeEntry(), null);
+    expect(html).toContain('class="review-meta-subtitle"');
+    expect(html).toContain("How Certain Schemes");
   });
 
   it("prepends / to local cover path for root-relative resolution", () => {
@@ -101,11 +121,13 @@ describe("renderHeader", () => {
 });
 
 describe("renderColophon", () => {
-  it("renders card with title, rating, biblio, and links", () => {
+  it("renders card with title, subtitle, rating, biblio, and links", () => {
     const html = renderColophon(makeEntry(), "图片/cover.jpg");
     expect(html).toContain('class="review-colophon"');
     expect(html).toContain('class="review-colophon-title"');
     expect(html).toContain("Seeing Like a State");
+    expect(html).toContain('class="review-colophon-subtitle"');
+    expect(html).toContain("How Certain Schemes");
     expect(html).toContain("★★★★☆"); // rating 4
     expect(html).toContain("NeoDB 8.2/10");
     expect(html).toContain("45 ratings");
@@ -128,6 +150,11 @@ describe("renderColophon", () => {
     expect(html).not.toContain("review-colophon-cover");
     expect(html).toContain("Seeing Like a State");
     expect(html).toContain("review-colophon-details");
+  });
+
+  it("omits subtitle when null", () => {
+    const html = renderColophon(makeEntry({ subtitle: null }), null);
+    expect(html).not.toContain("review-colophon-subtitle");
   });
 
   it("renders creator and year in identity line", () => {

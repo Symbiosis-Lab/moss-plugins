@@ -68,6 +68,7 @@ function normalize(raw: any, mediaType: 'movie' | 'tv', originalUrl: string): Re
     uuid: "",
     category: mediaType,
     title,
+    subtitle: raw.tagline || null,
     cover_image_url: coverUrl,
     creator,
     year: year ? parseInt(year) : null,

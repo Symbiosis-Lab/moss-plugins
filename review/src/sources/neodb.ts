@@ -81,6 +81,7 @@ function normalize(raw: any, base: string, originalUrl: string): ReviewItem {
     uuid: raw.uuid || "",
     category: raw.category || "",
     title: raw.display_title || raw.title || "",
+    subtitle: raw.subtitle || null,
     cover_image_url: coverUrl,
     creator,
     year,

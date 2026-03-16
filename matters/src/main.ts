@@ -28,6 +28,7 @@ import {
   createDraft,
   fetchDraft,
   uploadCoverByUrl,
+  uploadEmbedByUrl,
   apiConfig,
 } from "./api";
 import { syncToLocalFiles, scanLocalArticles } from "./sync";
@@ -35,7 +36,14 @@ import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { overallProgress } from "./progress";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
-import { readFile, writeFile, showToast } from "@symbiosis-lab/moss-api";
+import {
+  readFile,
+  writeFile,
+  showToast,
+  readPluginFile,
+  writePluginFile,
+  pluginFileExists,
+} from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
   initializeDomain,
@@ -44,6 +52,78 @@ import {
   articleUrl,
   isMattersUrl,
 } from "./domain";
+
+// ============================================================================
+// Draft Tracking
+// ============================================================================
+
+/**
+ * Draft entry stored in drafts.json
+ */
+export interface DraftEntry {
+  draftId: string;
+  createdAt: string;
+}
+
+/**
+ * Map of source_path -> draft entry
+ */
+export type DraftMap = Record<string, DraftEntry>;
+
+const DRAFTS_FILE = "drafts.json";
+
+/**
+ * Read the draft tracking map from plugin storage.
+ * Returns empty object if file not found or invalid.
+ */
+export async function getDraftMap(): Promise<DraftMap> {
+  try {
+    const exists = await pluginFileExists(DRAFTS_FILE);
+    if (!exists) return {};
+    const content = await readPluginFile(DRAFTS_FILE);
+    return JSON.parse(content) as DraftMap;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write the draft tracking map to plugin storage.
+ */
+export async function saveDraftMap(map: DraftMap): Promise<void> {
+  const content = JSON.stringify(map, null, 2);
+  await writePluginFile(DRAFTS_FILE, content);
+}
+
+/**
+ * Look up a tracked draft ID for a source path.
+ * Returns undefined if no draft is tracked.
+ */
+export async function getDraftId(sourcePath: string): Promise<string | undefined> {
+  const map = await getDraftMap();
+  return map[sourcePath]?.draftId;
+}
+
+/**
+ * Persist a draft ID for a source path.
+ */
+export async function saveDraftId(sourcePath: string, draftId: string): Promise<void> {
+  const map = await getDraftMap();
+  map[sourcePath] = {
+    draftId,
+    createdAt: new Date().toISOString(),
+  };
+  await saveDraftMap(map);
+}
+
+/**
+ * Remove a tracked draft for a source path (e.g., after publish).
+ */
+export async function removeDraftId(sourcePath: string): Promise<void> {
+  const map = await getDraftMap();
+  delete map[sourcePath];
+  await saveDraftMap(map);
+}
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -520,6 +600,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
 
     const config = context.config || {};
     const addCanonicalLink = config.add_canonical_link ?? true;
+    const lang = context.project_info.lang ?? "en";
 
     // Syndicate articles sequentially (one at a time for user review)
     let published = 0;
@@ -530,6 +611,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       try {
         const result = await syndicateArticle(article, siteUrl, userName, {
           addCanonicalLink: addCanonicalLink as boolean,
+          lang,
         });
 
         if (result.publishedUrl) {
@@ -594,7 +676,7 @@ export async function syndicateArticle(
   article: ArticleInfo,
   siteUrl: string,
   userName: string,
-  options: { addCanonicalLink: boolean }
+  options: { addCanonicalLink: boolean; lang: string }
 ): Promise<{ draftId: string; publishedUrl?: string }> {
   console.log(`  → Syndicating: ${article.title}`);
 
@@ -603,14 +685,26 @@ export async function syndicateArticle(
 
   const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
+  // Step 1: Get content
   const { content: articleContent, isHtml } = getArticleContent(article);
   let content = articleContent;
 
-  if (options.addCanonicalLink) {
-    content = addCanonicalLinkToContent(content, canonicalUrl, isHtml);
+  // Step 2: Normalize HTML (headings + image wrapping) — only for HTML content
+  if (isHtml) {
+    content = normalizeHtmlForMatters(content);
   }
 
-  // Step 1: Upload cover if present in frontmatter
+  // Step 3: Add canonical link with lang
+  if (options.addCanonicalLink) {
+    content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
+  }
+
+  // Step 4: Upload local images to Matters CDN — only for HTML content
+  if (isHtml) {
+    content = await uploadAndReplaceLocalImages(content, siteUrl);
+  }
+
+  // Step 5: Upload cover if present in frontmatter
   let coverAssetId: string | undefined;
   const coverPath = article.frontmatter.cover as string | undefined;
   if (coverPath) {
@@ -623,29 +717,52 @@ export async function syndicateArticle(
     }
   }
 
-  // Step 2: Create draft via API
-  const draft = await createDraft({
+  // Step 6: Check for existing tracked draft
+  const existingDraftId = article.source_path ? await getDraftId(article.source_path) : undefined;
+  if (existingDraftId) {
+    console.log(`    📋 Found existing draft ID: ${existingDraftId}`);
+  }
+
+  // Step 7: Create/update draft via API (with optional summary from description)
+  const summary = article.frontmatter.description as string | undefined;
+  const draftInput = {
     title: article.title,
     content,
     tags: article.tags,
+    ...(existingDraftId ? { id: existingDraftId } : {}),
     ...(coverAssetId !== undefined ? { cover: coverAssetId } : {}),
-  });
+    ...(summary ? { summary } : {}),
+  };
 
-  console.log(`    📝 Draft created with ID: ${draft.id}`);
+  let draft;
+  try {
+    draft = await createDraft(draftInput);
+  } catch (error) {
+    if (existingDraftId) {
+      // Stale draft ID — fall back to creating a new draft without id
+      console.warn(`    ⚠️ Existing draft ${existingDraftId} failed, creating new draft: ${error}`);
+      const { id: _removed, ...inputWithoutId } = draftInput;
+      draft = await createDraft(inputWithoutId);
+    } else {
+      throw error;
+    }
+  }
+
+  console.log(`    📝 Draft ${existingDraftId ? "updated" : "created"} with ID: ${draft.id}`);
 
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
-  // Step 3: Open draft in browser for user review
+  // Step 8: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   await openBrowser(draftPageUrl);
 
-  // Step 4: Poll for publish state change (10 min timeout)
+  // Step 9: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
 
   if (publishedArticle) {
-    // Step 5: Article was published - update local frontmatter
+    // Step 10: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
@@ -658,10 +775,27 @@ export async function syndicateArticle(
       console.log(`    📝 Updated frontmatter with syndicated URL`);
     }
 
+    // Remove draft from tracking (published successfully)
+    if (article.source_path) {
+      try {
+        await removeDraftId(article.source_path);
+      } catch (err) {
+        console.warn(`    ⚠️ Failed to remove draft tracking: ${err}`);
+      }
+    }
+
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 6: Timeout - draft left for later
+  // Step 11: Timeout - save draft ID for reuse next time
+  if (article.source_path) {
+    try {
+      await saveDraftId(article.source_path, draft.id);
+      console.log(`    💾 Draft ID saved for reuse`);
+    } catch (err) {
+      console.warn(`    ⚠️ Failed to save draft tracking: ${err}`);
+    }
+  }
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
   await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
   return { draftId: draft.id };
@@ -761,16 +895,121 @@ export function getArticleContent(article: ArticleInfo): { content: string; isHt
 }
 
 /**
+ * Normalize HTML content for Matters.town compatibility.
+ *
+ * Matters only accepts h2 and h3 headings. This function:
+ * - Downgrades h1 → h2
+ * - Keeps h2 and h3 unchanged
+ * - Collapses h4, h5, h6 → h3 (to prevent removal by Matters)
+ *
+ * Also wraps standalone <img> tags (not already inside a <figure>)
+ * in <figure class="image"><img ...><figcaption></figcaption></figure>
+ * as required by Matters' content format.
+ */
+export function normalizeHtmlForMatters(html: string): string {
+  let result = html;
+
+  // Step 1: Collapse h4, h5, h6 → h3 (process these BEFORE h1 to avoid double-shifting)
+  result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (match, slash, attrs) => {
+    return `<${slash}h3${attrs || ""}>`;
+  });
+
+  // Step 2: Downgrade h1 → h2
+  result = result.replace(/<(\/?)h1(\s[^>]*)?>/gi, (match, slash, attrs) => {
+    return `<${slash}h2${attrs || ""}>`;
+  });
+
+  // Step 3: Wrap standalone <img> tags in <figure class="image">
+  // Match <img ...> tags that are NOT preceded by <figure (with possible attributes)
+  result = result.replace(/<img\s[^>]*>/gi, (imgTag, offset) => {
+    // Look backwards from the img tag to check if it's inside a <figure>
+    const preceding = result.substring(Math.max(0, offset - 200), offset);
+    // Check if there's an unclosed <figure before this img
+    const lastFigureOpen = preceding.lastIndexOf("<figure");
+    const lastFigureClose = preceding.lastIndexOf("</figure");
+    if (lastFigureOpen > lastFigureClose) {
+      // Inside a <figure> — don't wrap
+      return imgTag;
+    }
+    return `<figure class="image">${imgTag}<figcaption></figcaption></figure>`;
+  });
+
+  return result;
+}
+
+/**
  * Add canonical link to article content
+ *
+ * @param lang - Language code; when starting with "zh", uses Chinese text
  */
 export function addCanonicalLinkToContent(
   content: string,
   canonicalUrl: string,
-  isHtml: boolean = false
+  isHtml: boolean = false,
+  lang?: string
 ): string {
+  const isZh = lang?.startsWith("zh") ?? false;
+  const linkText = isZh ? "原文链接" : "Original link";
+
   if (isHtml) {
-    return content + `<hr><p><em>Originally published at <a href="${canonicalUrl}">${canonicalUrl}</a></em></p>`;
+    return content + `<hr><p><a href="${canonicalUrl}">${linkText}</a></p>`;
   }
-  const canonicalNotice = `\n\n---\n\n*Originally published at [${canonicalUrl}](${canonicalUrl})*\n`;
+  const canonicalNotice = `\n\n---\n\n[${linkText}](${canonicalUrl})\n`;
   return content + canonicalNotice;
+}
+
+/**
+ * Upload all local/relative images in HTML content to Matters CDN
+ * and replace their src attributes with CDN URLs.
+ *
+ * - Skips absolute URLs (http://, https://, data:)
+ * - Deduplicates: same src used multiple times is only uploaded once
+ * - Graceful failure: warns on upload error, leaves original src unchanged
+ *
+ * @param content - HTML content containing img tags
+ * @param siteUrl - Base URL of the published site (e.g., "https://example.com")
+ * @returns HTML content with local image srcs replaced by CDN URLs
+ */
+export async function uploadAndReplaceLocalImages(content: string, siteUrl: string): Promise<string> {
+  // Collect all img src values
+  const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
+  const localSrcs = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = imgSrcRegex.exec(content)) !== null) {
+    const src = match[1];
+    // Skip absolute URLs and data URIs
+    if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) {
+      continue;
+    }
+    localSrcs.add(src);
+  }
+
+  if (localSrcs.size === 0) {
+    return content;
+  }
+
+  // Upload each unique local src and build a replacement map
+  const replacements = new Map<string, string>();
+
+  for (const src of localSrcs) {
+    const absoluteUrl = `${siteUrl.replace(/\/$/, "")}/${src.replace(/^\//, "")}`;
+    try {
+      const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
+      replacements.set(src, cdnUrl);
+      console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
+    } catch (error) {
+      console.warn(`    ⚠️ Image upload failed for ${src}, leaving unchanged: ${error}`);
+    }
+  }
+
+  // Replace all occurrences of each local src with its CDN URL
+  let result = content;
+  for (const [originalSrc, cdnUrl] of replacements) {
+    // Escape special regex characters in the src
+    const escaped = originalSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`src="${escaped}"`, "g"), `src="${cdnUrl}"`);
+  }
+
+  return result;
 }

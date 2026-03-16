@@ -9,6 +9,11 @@
  * - normalizeHtmlForMatters heading transformation and image wrapping
  * - addCanonicalLinkToContent with lang parameter
  * - syndicateArticle passing summary and lang
+ * - Draft tracking: getDraftMap, saveDraftMap, getDraftId, saveDraftId, removeDraftId
+ * - syndicateArticle reusing existing draft
+ * - syndicateArticle falling back on API error with stale draft ID
+ * - syndicateArticle removing draft on publish
+ * - syndicateArticle saving draft on timeout/no-publish
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -27,6 +32,9 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   showToast: vi.fn().mockResolvedValue(undefined),
   openBrowser: vi.fn().mockResolvedValue({ closed: new Promise(() => {}) }),
   closeBrowser: vi.fn().mockResolvedValue(undefined),
+  readPluginFile: vi.fn(),
+  writePluginFile: vi.fn().mockResolvedValue(undefined),
+  pluginFileExists: vi.fn(),
 }));
 
 // Mock the api module
@@ -72,8 +80,20 @@ vi.mock("../converter", () => ({
 }));
 
 // Now import the modules under test
-import { syndicateArticle, normalizeHtmlForMatters, addCanonicalLinkToContent, uploadAndReplaceLocalImages } from "../main";
+import {
+  syndicateArticle,
+  normalizeHtmlForMatters,
+  addCanonicalLinkToContent,
+  uploadAndReplaceLocalImages,
+  getDraftMap,
+  saveDraftMap,
+  getDraftId,
+  saveDraftId,
+  removeDraftId,
+  type DraftMap,
+} from "../main";
 import { uploadCoverByUrl, uploadEmbedByUrl, createDraft, fetchDraft, SINGLE_FILE_UPLOAD_MUTATION } from "../api";
+import { readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Test Helpers
@@ -788,5 +808,413 @@ describe("syndicateArticle - local image upload", () => {
     expect(callArgs.content).toContain('src="images/photo.jpg"');
 
     vi.restoreAllMocks();
+  });
+});
+
+// ============================================================================
+// Tests: Draft tracking functions
+// ============================================================================
+
+describe("Draft tracking - getDraftMap", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns empty object when file does not exist", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    const map = await getDraftMap();
+    expect(map).toEqual({});
+  });
+
+  it("returns parsed map when file exists", async () => {
+    const stored: DraftMap = {
+      "articles/review.md": { draftId: "abc123", createdAt: "2026-03-16T10:00:00Z" },
+    };
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(JSON.stringify(stored));
+
+    const map = await getDraftMap();
+    expect(map).toEqual(stored);
+  });
+
+  it("returns empty object on parse error", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue("not valid json {{{");
+
+    const map = await getDraftMap();
+    expect(map).toEqual({});
+  });
+
+  it("returns empty object when readPluginFile throws", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockRejectedValue(new Error("read error"));
+
+    const map = await getDraftMap();
+    expect(map).toEqual({});
+  });
+});
+
+describe("Draft tracking - saveDraftMap", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("writes JSON to plugin storage", async () => {
+    const map: DraftMap = {
+      "posts/test.md": { draftId: "draft-1", createdAt: "2026-03-16T10:00:00Z" },
+    };
+
+    await saveDraftMap(map);
+
+    expect(writePluginFile).toHaveBeenCalledWith(
+      "drafts.json",
+      JSON.stringify(map, null, 2)
+    );
+  });
+
+  it("writes empty object for empty map", async () => {
+    await saveDraftMap({});
+
+    expect(writePluginFile).toHaveBeenCalledWith(
+      "drafts.json",
+      JSON.stringify({}, null, 2)
+    );
+  });
+});
+
+describe("Draft tracking - getDraftId", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns draftId when entry exists for sourcePath", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "draft-abc", createdAt: "2026-03-16T10:00:00Z" },
+      })
+    );
+
+    const id = await getDraftId("posts/test.md");
+    expect(id).toBe("draft-abc");
+  });
+
+  it("returns undefined when no entry for sourcePath", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/other.md": { draftId: "draft-abc", createdAt: "2026-03-16T10:00:00Z" },
+      })
+    );
+
+    const id = await getDraftId("posts/test.md");
+    expect(id).toBeUndefined();
+  });
+
+  it("returns undefined when drafts file is empty", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    const id = await getDraftId("posts/test.md");
+    expect(id).toBeUndefined();
+  });
+});
+
+describe("Draft tracking - saveDraftId", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("adds entry to empty map", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    await saveDraftId("posts/test.md", "draft-new");
+
+    expect(writePluginFile).toHaveBeenCalledTimes(1);
+    const written = JSON.parse(vi.mocked(writePluginFile).mock.calls[0][1]);
+    expect(written["posts/test.md"].draftId).toBe("draft-new");
+    expect(written["posts/test.md"].createdAt).toBeDefined();
+  });
+
+  it("adds entry to existing map without overwriting others", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/existing.md": { draftId: "draft-old", createdAt: "2026-01-01T00:00:00Z" },
+      })
+    );
+
+    await saveDraftId("posts/new.md", "draft-new");
+
+    const written = JSON.parse(vi.mocked(writePluginFile).mock.calls[0][1]);
+    expect(written["posts/existing.md"].draftId).toBe("draft-old");
+    expect(written["posts/new.md"].draftId).toBe("draft-new");
+  });
+
+  it("overwrites existing entry for the same source path", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "draft-old", createdAt: "2026-01-01T00:00:00Z" },
+      })
+    );
+
+    await saveDraftId("posts/test.md", "draft-updated");
+
+    const written = JSON.parse(vi.mocked(writePluginFile).mock.calls[0][1]);
+    expect(written["posts/test.md"].draftId).toBe("draft-updated");
+  });
+});
+
+describe("Draft tracking - removeDraftId", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("removes entry from map", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "draft-abc", createdAt: "2026-01-01T00:00:00Z" },
+        "posts/other.md": { draftId: "draft-def", createdAt: "2026-01-02T00:00:00Z" },
+      })
+    );
+
+    await removeDraftId("posts/test.md");
+
+    const written = JSON.parse(vi.mocked(writePluginFile).mock.calls[0][1]);
+    expect(written["posts/test.md"]).toBeUndefined();
+    expect(written["posts/other.md"].draftId).toBe("draft-def");
+  });
+
+  it("no-ops when entry does not exist (still writes the map)", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(JSON.stringify({}));
+
+    await removeDraftId("posts/nonexistent.md");
+
+    expect(writePluginFile).toHaveBeenCalledTimes(1);
+    const written = JSON.parse(vi.mocked(writePluginFile).mock.calls[0][1]);
+    expect(Object.keys(written)).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// Tests: syndicateArticle — draft reuse integration
+// ============================================================================
+
+describe("syndicateArticle - draft tracking integration", () => {
+  const siteUrl = "https://example.com";
+  const userName = "testuser";
+  const options = { addCanonicalLink: false, lang: "en" };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    // Reset sleep to default no-op (timeout tests override it with clock-advancing mock)
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockResolvedValue(undefined);
+
+    // Re-establish SDK mocks (vi.restoreAllMocks() in earlier tests may have wiped them)
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.showToast).mockResolvedValue(undefined);
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+
+    // Re-establish domain mocks
+    const domain = await import("../domain");
+    vi.mocked(domain.draftUrl).mockImplementation((id: string) => `https://matters.town/drafts/${id}`);
+    vi.mocked(domain.articleUrl).mockImplementation((_user: string, slug: string, hash: string) => `https://matters.town/@testuser/${slug}-${hash}`);
+
+    // Default: no existing drafts tracked
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    // Default: createDraft succeeds
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
+
+    // Default: fetchDraft immediately returns published draft
+    vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
+
+    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
+    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+  });
+
+  it("passes existing draft ID to createDraft when one is tracked", async () => {
+    // Set up existing draft tracking
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "existing-draft-99", createdAt: "2026-03-16T10:00:00Z" },
+      })
+    );
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(createDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "existing-draft-99" })
+    );
+  });
+
+  it("does not pass id to createDraft when no draft is tracked", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(createDraft).toHaveBeenCalledWith(
+      expect.not.objectContaining({ id: expect.anything() })
+    );
+  });
+
+  it("falls back to new draft when existing draft ID causes API error", async () => {
+    // Set up existing stale draft tracking
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "stale-draft-id", createdAt: "2026-01-01T00:00:00Z" },
+      })
+    );
+
+    // First call (with id) fails, second call (without id) succeeds
+    vi.mocked(createDraft)
+      .mockRejectedValueOnce(new Error("Draft not found"))
+      .mockResolvedValueOnce(makeDraftResponse("new-draft-456"));
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    const result = await syndicateArticle(article, siteUrl, userName, options);
+
+    // Should have been called twice: once with id, once without
+    expect(createDraft).toHaveBeenCalledTimes(2);
+    expect(createDraft).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({ id: "stale-draft-id" })
+    );
+    expect(createDraft).toHaveBeenNthCalledWith(2,
+      expect.not.objectContaining({ id: expect.anything() })
+    );
+    expect(result.draftId).toBe("new-draft-456");
+  });
+
+  it("throws when createDraft fails and no existing draft to fall back from", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+    vi.mocked(createDraft).mockRejectedValue(new Error("API error"));
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    await expect(
+      syndicateArticle(article, siteUrl, userName, options)
+    ).rejects.toThrow("API error");
+  });
+
+  it("removes draft tracking on successful publish", async () => {
+    // Set up existing draft
+    vi.mocked(pluginFileExists).mockResolvedValue(true);
+    vi.mocked(readPluginFile).mockResolvedValue(
+      JSON.stringify({
+        "posts/test.md": { draftId: "draft-123", createdAt: "2026-03-16T10:00:00Z" },
+        "posts/other.md": { draftId: "draft-other", createdAt: "2026-03-16T10:00:00Z" },
+      })
+    );
+
+    // Draft is published
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+    vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse("draft-123"));
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    const result = await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(result.publishedUrl).toBeDefined();
+
+    // writePluginFile should have been called to remove the draft entry
+    // The last call to writePluginFile should be from removeDraftId
+    const lastWriteCall = vi.mocked(writePluginFile).mock.calls;
+    const lastWritten = JSON.parse(lastWriteCall[lastWriteCall.length - 1][1]);
+    expect(lastWritten["posts/test.md"]).toBeUndefined();
+    // Other entries should be preserved
+    expect(lastWritten["posts/other.md"]).toBeDefined();
+  });
+
+  it("saves draft ID on timeout (no publish)", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+
+    // Draft created but NOT published
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-timeout"));
+
+    // To simulate timeout without OOM: make fetchDraft return published=false
+    // on first call, then return published=true on second call BUT also
+    // override the result to null. Actually the simplest approach: make
+    // fetchDraft return null (the draft was deleted). waitForPublishOrClose
+    // checks draft?.article — null?.article is undefined, so loop continues.
+    //
+    // To break the loop: mock sleep to advance a fake clock.
+    // Each call to sleep() advances fakeTime, and Date.now() reads fakeTime.
+    let fakeTime = 1000;
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockImplementation(async () => {
+      fakeTime += 700000; // Jump past 600s timeout on first sleep
+    });
+    vi.spyOn(Date, "now").mockImplementation(() => fakeTime);
+
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "draft-timeout",
+      title: "Test",
+      content: "<p>Test</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+      publishState: "unpublished" as const,
+    });
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    const result = await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(result.publishedUrl).toBeUndefined();
+
+    // Draft ID should have been saved for reuse
+    const writeCalls = vi.mocked(writePluginFile).mock.calls;
+    expect(writeCalls.length).toBeGreaterThan(0);
+    // Find the call that writes drafts.json
+    const draftWriteCall = writeCalls.find(call => call[0] === "drafts.json");
+    expect(draftWriteCall).toBeDefined();
+    const written = JSON.parse(draftWriteCall![1]);
+    expect(written["posts/test.md"].draftId).toBe("draft-timeout");
+
+    vi.spyOn(Date, "now").mockRestore();
+  });
+
+  it("does not track draft when article has no source_path", async () => {
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-no-path"));
+
+    // Same approach: mock sleep to advance fake clock past timeout
+    let fakeTime = 1000;
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockImplementation(async () => {
+      fakeTime += 700000;
+    });
+    vi.spyOn(Date, "now").mockImplementation(() => fakeTime);
+
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "draft-no-path",
+      title: "Test",
+      content: "<p>Test</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+      publishState: "unpublished" as const,
+    });
+
+    const article = makeArticle({ source_path: "", frontmatter: {} });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    // writePluginFile should NOT have been called with drafts.json
+    const draftWriteCalls = vi.mocked(writePluginFile).mock.calls.filter(
+      call => call[0] === "drafts.json"
+    );
+    expect(draftWriteCalls).toHaveLength(0);
+
+    vi.spyOn(Date, "now").mockRestore();
   });
 });

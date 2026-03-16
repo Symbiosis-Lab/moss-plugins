@@ -36,7 +36,14 @@ import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { overallProgress } from "./progress";
 import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
-import { readFile, writeFile, showToast } from "@symbiosis-lab/moss-api";
+import {
+  readFile,
+  writeFile,
+  showToast,
+  readPluginFile,
+  writePluginFile,
+  pluginFileExists,
+} from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
   initializeDomain,
@@ -45,6 +52,78 @@ import {
   articleUrl,
   isMattersUrl,
 } from "./domain";
+
+// ============================================================================
+// Draft Tracking
+// ============================================================================
+
+/**
+ * Draft entry stored in drafts.json
+ */
+export interface DraftEntry {
+  draftId: string;
+  createdAt: string;
+}
+
+/**
+ * Map of source_path -> draft entry
+ */
+export type DraftMap = Record<string, DraftEntry>;
+
+const DRAFTS_FILE = "drafts.json";
+
+/**
+ * Read the draft tracking map from plugin storage.
+ * Returns empty object if file not found or invalid.
+ */
+export async function getDraftMap(): Promise<DraftMap> {
+  try {
+    const exists = await pluginFileExists(DRAFTS_FILE);
+    if (!exists) return {};
+    const content = await readPluginFile(DRAFTS_FILE);
+    return JSON.parse(content) as DraftMap;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write the draft tracking map to plugin storage.
+ */
+export async function saveDraftMap(map: DraftMap): Promise<void> {
+  const content = JSON.stringify(map, null, 2);
+  await writePluginFile(DRAFTS_FILE, content);
+}
+
+/**
+ * Look up a tracked draft ID for a source path.
+ * Returns undefined if no draft is tracked.
+ */
+export async function getDraftId(sourcePath: string): Promise<string | undefined> {
+  const map = await getDraftMap();
+  return map[sourcePath]?.draftId;
+}
+
+/**
+ * Persist a draft ID for a source path.
+ */
+export async function saveDraftId(sourcePath: string, draftId: string): Promise<void> {
+  const map = await getDraftMap();
+  map[sourcePath] = {
+    draftId,
+    createdAt: new Date().toISOString(),
+  };
+  await saveDraftMap(map);
+}
+
+/**
+ * Remove a tracked draft for a source path (e.g., after publish).
+ */
+export async function removeDraftId(sourcePath: string): Promise<void> {
+  const map = await getDraftMap();
+  delete map[sourcePath];
+  await saveDraftMap(map);
+}
 
 // ============================================================================
 // Browser Utilities (via SDK)
@@ -638,31 +717,52 @@ export async function syndicateArticle(
     }
   }
 
-  // Step 6: Create draft via API (with optional summary from description)
+  // Step 6: Check for existing tracked draft
+  const existingDraftId = article.source_path ? await getDraftId(article.source_path) : undefined;
+  if (existingDraftId) {
+    console.log(`    📋 Found existing draft ID: ${existingDraftId}`);
+  }
+
+  // Step 7: Create/update draft via API (with optional summary from description)
   const summary = article.frontmatter.description as string | undefined;
-  const draft = await createDraft({
+  const draftInput = {
     title: article.title,
     content,
     tags: article.tags,
+    ...(existingDraftId ? { id: existingDraftId } : {}),
     ...(coverAssetId !== undefined ? { cover: coverAssetId } : {}),
     ...(summary ? { summary } : {}),
-  });
+  };
 
-  console.log(`    📝 Draft created with ID: ${draft.id}`);
+  let draft;
+  try {
+    draft = await createDraft(draftInput);
+  } catch (error) {
+    if (existingDraftId) {
+      // Stale draft ID — fall back to creating a new draft without id
+      console.warn(`    ⚠️ Existing draft ${existingDraftId} failed, creating new draft: ${error}`);
+      const { id: _removed, ...inputWithoutId } = draftInput;
+      draft = await createDraft(inputWithoutId);
+    } else {
+      throw error;
+    }
+  }
+
+  console.log(`    📝 Draft ${existingDraftId ? "updated" : "created"} with ID: ${draft.id}`);
 
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
-  // Step 7: Open draft in browser for user review
+  // Step 8: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   await openBrowser(draftPageUrl);
 
-  // Step 8: Poll for publish state change (10 min timeout)
+  // Step 9: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
 
   if (publishedArticle) {
-    // Step 9: Article was published - update local frontmatter
+    // Step 10: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
@@ -675,10 +775,27 @@ export async function syndicateArticle(
       console.log(`    📝 Updated frontmatter with syndicated URL`);
     }
 
+    // Remove draft from tracking (published successfully)
+    if (article.source_path) {
+      try {
+        await removeDraftId(article.source_path);
+      } catch (err) {
+        console.warn(`    ⚠️ Failed to remove draft tracking: ${err}`);
+      }
+    }
+
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 10: Timeout - draft left for later
+  // Step 11: Timeout - save draft ID for reuse next time
+  if (article.source_path) {
+    try {
+      await saveDraftId(article.source_path, draft.id);
+      console.log(`    💾 Draft ID saved for reuse`);
+    } catch (err) {
+      console.warn(`    ⚠️ Failed to save draft tracking: ${err}`);
+    }
+  }
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
   await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
   return { draftId: draft.id };

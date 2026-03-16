@@ -14,7 +14,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   downloadAsset: mockDownloadAsset,
 }));
 
-import { process, updateFrontmatterCover } from "../main";
+import { process, updateFrontmatterCover, detectCoverDirectory } from "../main";
 import type { ProcessContext } from "../types";
 
 import bookFixture from "./fixtures/neodb-book.json";
@@ -315,6 +315,64 @@ describe("updateFrontmatterCover", () => {
     const md = "No frontmatter here, just body text.";
     const result = updateFrontmatterCover(md, "assets/covers/cover.jpg");
     expect(result).toBeNull();
+  });
+});
+
+describe("detectCoverDirectory", () => {
+  it("returns most common image directory from article covers", () => {
+    const articleMap = {
+      articles: {
+        "a": { source_path: "a.md", url_path: "a/", frontmatter: { cover: "图片/img1.jpg" } },
+        "b": { source_path: "b.md", url_path: "b/", frontmatter: { cover: "图片/img2.png" } },
+        "c": { source_path: "c.md", url_path: "c/", frontmatter: { cover: "assets/img3.jpg" } },
+      },
+    };
+    expect(detectCoverDirectory(articleMap)).toBe("图片");
+  });
+
+  it("falls back to assets/covers when no articles have covers", () => {
+    const articleMap = {
+      articles: {
+        "a": { source_path: "a.md", url_path: "a/", frontmatter: { title: "No cover" } },
+      },
+    };
+    expect(detectCoverDirectory(articleMap)).toBe("assets/covers");
+  });
+
+  it("falls back to assets/covers when articles map is empty", () => {
+    expect(detectCoverDirectory({ articles: {} })).toBe("assets/covers");
+  });
+
+  it("ignores external URLs", () => {
+    const articleMap = {
+      articles: {
+        "a": { source_path: "a.md", url_path: "a/", frontmatter: { cover: "https://example.com/cover.jpg" } },
+        "b": { source_path: "b.md", url_path: "b/", frontmatter: { cover: "图片/local.jpg" } },
+      },
+    };
+    expect(detectCoverDirectory(articleMap)).toBe("图片");
+  });
+
+  it("ignores non-image covers (videos, HTML)", () => {
+    const articleMap = {
+      articles: {
+        "a": { source_path: "a.md", url_path: "a/", frontmatter: { cover: "视频/movie.mov" } },
+        "b": { source_path: "b.md", url_path: "b/", frontmatter: { cover: "交互/sketch.html" } },
+        "c": { source_path: "c.md", url_path: "c/", frontmatter: { cover: "图片/photo.jpg" } },
+      },
+    };
+    expect(detectCoverDirectory(articleMap)).toBe("图片");
+  });
+
+  it("handles covers without subdirectory", () => {
+    const articleMap = {
+      articles: {
+        "a": { source_path: "a.md", url_path: "a/", frontmatter: { cover: "cover.jpg" } },
+        "b": { source_path: "b.md", url_path: "b/", frontmatter: { cover: "photo.png" } },
+      },
+    };
+    // Root directory "." should win
+    expect(detectCoverDirectory(articleMap)).toBe(".");
   });
 });
 

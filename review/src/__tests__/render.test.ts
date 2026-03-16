@@ -78,6 +78,27 @@ describe("renderHeader", () => {
     const html = renderHeader(makeEntry({ creator: ["Alice", "Bob"] }));
     expect(html).toContain("Alice, Bob");
   });
+
+  it("prepends / to local cover path for root-relative resolution", () => {
+    const html = renderHeader(makeEntry({ cover_url: "assets/covers/book.jpg" }));
+    expect(html).toContain('src="/assets/covers/book.jpg"');
+  });
+
+  it("prepends / to non-Latin local cover path", () => {
+    const html = renderHeader(makeEntry({ cover_url: "图片/cover.jpg" }));
+    expect(html).toContain('src="/图片/cover.jpg"');
+  });
+
+  it("keeps external URL unchanged", () => {
+    const html = renderHeader(makeEntry({ cover_url: "https://example.com/cover.jpg" }));
+    expect(html).toContain('src="https://example.com/cover.jpg"');
+  });
+
+  it("does not double-prefix already root-relative path", () => {
+    const html = renderHeader(makeEntry({ cover_url: "/assets/covers/book.jpg" }));
+    expect(html).toContain('src="/assets/covers/book.jpg"');
+    expect(html).not.toContain('src="//');
+  });
 });
 
 describe("renderColophon", () => {

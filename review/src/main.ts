@@ -108,6 +108,45 @@ function deriveSourcePath(sourcePath: string, urlPath: string): string | null {
 }
 
 // ============================================================================
+// Adaptive cover directory detection
+// ============================================================================
+
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "avif", "svg"]);
+
+/**
+ * Scan the article-map to find the most common image directory used for covers.
+ * Falls back to "assets/covers" if no pattern is found.
+ *
+ * This lets the plugin download covers to the same directory the user already
+ * uses for their images, rather than creating a new directory convention.
+ */
+export function detectCoverDirectory(articleMap: { articles: Record<string, any> }): string {
+  const dirCounts: Record<string, number> = {};
+
+  for (const entry of Object.values(articleMap.articles)) {
+    const cover: string | undefined = entry.frontmatter?.cover;
+    if (!cover || cover.startsWith("http://") || cover.startsWith("https://")) continue;
+
+    const ext = cover.split(".").pop()?.toLowerCase() ?? "";
+    if (!IMAGE_EXTS.has(ext)) continue;
+
+    const dir = cover.includes("/") ? cover.substring(0, cover.lastIndexOf("/")) : ".";
+    dirCounts[dir] = (dirCounts[dir] || 0) + 1;
+  }
+
+  let bestDir = "assets/covers";
+  let bestCount = 0;
+  for (const [dir, count] of Object.entries(dirCounts)) {
+    if (count > bestCount) {
+      bestDir = dir;
+      bestCount = count;
+    }
+  }
+
+  return bestDir;
+}
+
+// ============================================================================
 // Process Hook
 // ============================================================================
 
@@ -128,7 +167,10 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
     return { success: true, message: "No article map found, skipping" };
   }
 
-  // 2. Load existing social data
+  // 2. Detect where the user stores cover images
+  const coverDir = detectCoverDirectory(articleMap as any);
+
+  // 3. Load existing social data
   const socialData = await loadReviewSocialData();
 
   // 3. For each article, check if it has review_of frontmatter
@@ -199,7 +241,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
     // 6. Download cover image and update frontmatter
     if (item.cover_image_url && !fm.cover) {
       try {
-        const dlResult = await downloadAsset(item.cover_image_url, "assets/covers");
+        const dlResult = await downloadAsset(item.cover_image_url, coverDir);
         if (dlResult.ok && dlResult.actualPath) {
           // Update social entry to use local path
           reviewEntry.cover_url = dlResult.actualPath;

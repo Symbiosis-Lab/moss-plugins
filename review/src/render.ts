@@ -34,10 +34,16 @@ export function renderHeader(entry: ReviewSocialEntry): string {
 
   const parts: string[] = [];
 
-  // Cover image
+  // Cover image — resolve to root-relative path.
+  // cover_url is project-relative (e.g., "图片/foo.jpg") from downloadAsset().
+  // The build pipeline's PathResolver.resolve_url() prepends "/" for the same reason:
+  // without it, the browser resolves relative to the page URL, not the site root.
   if (entry.cover_url) {
+    const coverSrc = entry.cover_url.startsWith("http://") || entry.cover_url.startsWith("https://")
+      ? entry.cover_url
+      : "/" + entry.cover_url.replace(/^\//, "");
     parts.push(
-      `<img class="review-cover" src="${escapeAttr(entry.cover_url)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
+      `<img class="review-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy" width="80">`
     );
   }
 

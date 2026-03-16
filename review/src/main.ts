@@ -47,13 +47,6 @@ function parseFrontmatter(markdown: string): ParsedFrontmatter {
   const reviewOfMatch = yaml.match(/^review_of:\s*(.+)$/m);
   if (reviewOfMatch) {
     result.review_of = reviewOfMatch[1].trim().replace(/^["']|["']$/g, "");
-  } else {
-    // Fallback: support deprecated `neodb:` field
-    const neodbMatch = yaml.match(/^neodb:\s*(.+)$/m);
-    if (neodbMatch) {
-      result.review_of = neodbMatch[1].trim().replace(/^["']|["']$/g, "");
-      console.log("[warn] Review: `neodb:` frontmatter field is deprecated, use `review_of:` instead");
-    }
   }
 
   const ratingMatch = yaml.match(/^rating:\s*(.+)$/m);

@@ -236,10 +236,13 @@ describe("github-deploy", () => {
      * Set up mock sequence for a full successful deploy (existing repo, matching origin).
      * Returns the mock for further customization.
      *
-     * Sequence: rev-parse --git-dir, remote get-url origin, fetch --depth=1,
-     *           .gitignore, rm -f index.lock, find(large files), add -v, diff(changes),
-     *           commit, rev-parse --short HEAD, rev-parse tree, .nojekyll injection,
-     *           rev-parse gh-pages tip, commit-tree, push (both refspecs) --progress
+     * New sequence (incremental deploy):
+     *   rev-parse --git-dir, remote get-url origin, fetch --depth=1,
+     *   .gitignore, rm -f index.lock, git add .moss/site/,
+     *   write-tree --prefix=.moss/site/, .nojekyll injection,
+     *   rev-parse gh-pages tip, commit-tree, push gh-pages,
+     *   then deferred: find(large files), add --all, diff, commit,
+     *   rev-parse --short HEAD, push main
      *
      * listSiteFilesWithSizes is mocked separately (returns [] by default).
      */
@@ -250,19 +253,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, commitSha + "\n"))  // git rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git write-tree --prefix=.moss/site/
         // .nojekyll injection (always happens):
         .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object -w --stdin (.nojekyll)
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modifiedTree\n"))  // mktree (with .nojekyll)
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree (orphan, no parent)
-        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress (both refspecs)
+        .mockResolvedValueOnce(gitResult(true))                    // git push --force gh-pages only
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, commitSha + "\n"))  // git rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // git push main
     }
 
     beforeEach(() => {
@@ -283,19 +289,23 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree (orphan)
-        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages only
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -364,7 +374,7 @@ describe("github-deploy", () => {
       expect(shCall![0].args[1]).toContain("node_modules/");
     });
 
-    it("pushes to both main and gh-pages in a single push with --progress", async () => {
+    it("pushes gh-pages first, then main separately", async () => {
       setupFullDeployMocks();
 
       const onProgress = vi.fn();
@@ -372,32 +382,35 @@ describe("github-deploy", () => {
 
       const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
 
-      // Verify single push with both refspecs
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "ccc333ddd444:refs/heads/gh-pages"],
-        })
-      );
-
-      // Verify only ONE push call total
+      // Verify TWO separate push calls
       const pushCalls = mockExecuteBinary.mock.calls.filter(
         (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
       );
-      expect(pushCalls).toHaveLength(1);
+      expect(pushCalls).toHaveLength(2);
+
+      // First push: gh-pages only (with --force --progress)
+      expect(pushCalls[0][0].args).toEqual([
+        "push", "--force", "--progress", pushUrl,
+        "ccc333ddd444:refs/heads/gh-pages",
+      ]);
+
+      // Second push: main only (no --force, no --progress)
+      expect(pushCalls[1][0].args).toEqual([
+        "push", pushUrl, "HEAD:refs/heads/main",
+      ]);
     });
 
-    it("extracts .moss/site tree and creates orphan commit for gh-pages", async () => {
+    it("extracts .moss/site tree via write-tree and creates orphan commit for gh-pages", async () => {
       setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-      // Verify tree extraction
+      // Verify tree extraction via write-tree --prefix (not rev-parse HEAD:.moss/site)
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["rev-parse", "HEAD:.moss/site"],
+          args: ["write-tree", "--prefix=.moss/site/"],
         })
       );
 
@@ -410,7 +423,9 @@ describe("github-deploy", () => {
       );
     });
 
-    it("returns empty DeployResult for truly empty repo (no commits)", async () => {
+    it("still pushes gh-pages for fresh repo with empty site tree", async () => {
+      // In the new flow, write-tree always succeeds (even empty tree).
+      // gh-pages is always pushed. The deferred source backup may have no changes.
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse --git-dir fails (no .git)
         .mockResolvedValueOnce(gitResult(true))                    // git init
@@ -420,21 +435,31 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "4b825dc\n"))       // write-tree --prefix (empty tree)
+        // .nojekyll injection:
+        .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+        .mockResolvedValueOnce(gitResult(true, ""))                // ls-tree (empty tree — no entries)
+        .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree (just .nojekyll)
+        .mockResolvedValueOnce(gitResult(false))                   // rev-parse gh-pages (no prev)
+        .mockResolvedValueOnce(gitResult(true, "orphan123\n"))     // commit-tree
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
         .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet (no changes)
-        .mockResolvedValueOnce(gitResult(false));                  // rev-parse HEAD fails (no commits)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(true));                   // git diff --cached --quiet (no changes)
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
       expect((result as DeployResult).commitSha).toBe("");
-      expect((result as DeployResult).orphanSha).toBe("");
-      // Should NOT have called push (no commits to push)
+      expect((result as DeployResult).orphanSha).toBe("orphan123");
+      // gh-pages push should still happen
       const pushCalls = mockExecuteBinary.mock.calls.filter(
         (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
       );
-      expect(pushCalls).toHaveLength(0);
+      expect(pushCalls).toHaveLength(1); // gh-pages only, no main push (no source changes)
     });
 
     it("returns commit SHA via rev-parse after commit", async () => {
@@ -461,19 +486,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(false))                   // rev-parse --short HEAD FAILS
-        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git rev-parse HEAD:.moss/site
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "newTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // git commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // git push --force --progress (both refspecs)
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(false));                  // rev-parse --short HEAD FAILS
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -488,19 +516,16 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/'`));  // push fails
+        .mockResolvedValueOnce(gitResult(false, "", `fatal: unable to access 'https://x-access-token:${TOKEN}@github.com/testuser/my-site.git/'`));  // push gh-pages fails
 
       const onProgress = vi.fn();
 
@@ -518,9 +543,9 @@ describe("github-deploy", () => {
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
       expect(onProgress).toHaveBeenCalledWith(0, "Preparing deploy...");
-      expect(onProgress).toHaveBeenCalledWith(5, "Staging files...");
-      expect(onProgress).toHaveBeenCalledWith(15, "Creating commit...");
-      expect(onProgress).toHaveBeenCalledWith(20, "Preparing gh-pages...");
+      expect(onProgress).toHaveBeenCalledWith(1, "Writing .gitignore...");
+      expect(onProgress).toHaveBeenCalledWith(5, "Staging site files...");
+      expect(onProgress).toHaveBeenCalledWith(10, "Preparing gh-pages...");
       expect(onProgress).toHaveBeenCalledWith(25, "Pushing to GitHub...");
       expect(onProgress).toHaveBeenCalledWith(100, "Deployed!");
     });
@@ -537,25 +562,22 @@ describe("github-deploy", () => {
       }
     });
 
-    it("throws on tree extraction failure", async () => {
+    it("throws on write-tree failure", async () => {
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))                    // rev-parse succeeds
         .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(false, "", "fatal: not a valid object name"));  // rev-parse tree fails
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(false, "", "fatal: not a valid object name"));  // write-tree --prefix fails
 
       const onProgress = vi.fn();
 
       await expect(
         deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" })
-      ).rejects.toThrow("Failed to resolve .moss/site tree");
+      ).rejects.toThrow("Failed to write site tree");
     });
 
     it("throws on commit-tree failure", async () => {
@@ -565,12 +587,9 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -601,19 +620,23 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -654,19 +677,23 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
-        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+        .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy site\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -706,7 +733,7 @@ describe("github-deploy", () => {
     // ========================================================================
     // Idempotency: push even when no staged changes (14c — resume after crash)
     // ========================================================================
-    it("pushes even when no staged changes (resume after crash)", async () => {
+    it("pushes gh-pages even when no source changes exist (resume after crash)", async () => {
       const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
       mockExecuteBinary
         .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
@@ -714,40 +741,43 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet SUCCESS (no changes)
-        .mockResolvedValueOnce(gitResult(true))                    // rev-parse HEAD (commits exist from previous deploy)
-        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
         .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-        .mockResolvedValueOnce(gitResult(true));                   // push (both refspecs) --progress
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none)
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(true));                   // git diff --cached --quiet SUCCESS (no changes)
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-      // Returns empty commitSha (no new commit SHA) but push still happened
+      // Returns empty commitSha (no source changes) but orphanSha populated
       expect((result as DeployResult).commitSha).toBe("");
+      expect((result as DeployResult).orphanSha).toBe("bbb222");
 
-      // Verify commit was NOT called (no changes to commit)
+      // Verify commit was NOT called (no source changes to commit)
       const commitCalls = mockExecuteBinary.mock.calls.filter(
         (call) => call[0].binaryPath === "git" && call[0].args[0] === "commit"
       );
       expect(commitCalls).toHaveLength(0);
 
-      // Verify single push with both refspecs
+      // Verify gh-pages push happened (first push)
       expect(mockExecuteBinary).toHaveBeenCalledWith(
         expect.objectContaining({
           binaryPath: "git",
-          args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "bbb222:refs/heads/gh-pages"],
+          args: ["push", "--force", "--progress", pushUrl, "bbb222:refs/heads/gh-pages"],
         })
       );
 
-      // Verify only ONE push call
+      // Only ONE push call (gh-pages only, no main push since no source changes)
       const pushCalls = mockExecuteBinary.mock.calls.filter(
         (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
       );
@@ -845,27 +875,31 @@ describe("github-deploy", () => {
     // ========================================================================
     describe("100MB source file limit", () => {
       it("appends large source files to .gitignore", async () => {
-        // Set up mocks: rev-parse, remote get-url, fetch, .gitignore write, rm lock, find returns large files
+        // Set up mocks with new sequence: site-only staging → gh-pages push → deferred source backup
         mockExecuteBinary
           .mockResolvedValueOnce(gitResult(true))                        // rev-parse --git-dir
           .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))    // remote get-url origin (matches)
           .mockResolvedValueOnce(gitResult(true))                        // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                        // write .gitignore (sh -c)
           .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, "big-model.bin\ndata/huge.csv\n"))  // find large files
-          .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
-          .mockResolvedValueOnce(gitResult(true))                        // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // rev-parse tree
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                        // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // write-tree --prefix=.moss/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))      // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree\n"))           // mktree
           .mockResolvedValueOnce(gitResult(false))                       // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))            // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                       // push (both refspecs)
+          .mockResolvedValueOnce(gitResult(true))                        // push gh-pages
+          // Deferred source backup — find returns large files:
+          .mockResolvedValueOnce(gitResult(true, "big-model.bin\ndata/huge.csv\n"))  // find large files
+          .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
+          .mockResolvedValueOnce(gitResult(true))                        // git add --all
+          .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                       // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -888,20 +922,24 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                        // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                        // write .gitignore (sh -c)
           .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, "large-file.bin\n"))    // find large files
-          .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
-          .mockResolvedValueOnce(gitResult(true))                        // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // rev-parse tree
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                        // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // write-tree --prefix=.moss/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))      // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree\n"))           // mktree
           .mockResolvedValueOnce(gitResult(false))                       // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))            // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                       // push (both refspecs)
+          .mockResolvedValueOnce(gitResult(true))                        // push gh-pages
+          // Deferred source backup — find returns large files:
+          .mockResolvedValueOnce(gitResult(true, "large-file.bin\n"))    // find large files
+          .mockResolvedValueOnce(gitResult(true))                        // append .gitignore (sh -c)
+          .mockResolvedValueOnce(gitResult(true))                        // git add --all
+          .mockResolvedValueOnce(gitResult(false))                       // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))           // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                       // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -951,63 +989,51 @@ describe("github-deploy", () => {
     // Streaming git operations — verbose/progress flags + onStderr
     // ========================================================================
     describe("streaming git operations", () => {
-      it("calls git add with -v flag", async () => {
+      it("calls git add --all without -v flag for source backup", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
+        // The deferred source backup uses git add --all (no -v)
         expect(mockExecuteBinary).toHaveBeenCalledWith(
           expect.objectContaining({
             binaryPath: "git",
-            args: ["add", "--all", "-v"],
+            args: ["add", "--all"],
           })
         );
       });
 
-      it("calls git push with --progress flag and both refspecs", async () => {
+      it("calls git push with --force --progress for gh-pages only", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
         const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+        // First push: gh-pages only
         expect(mockExecuteBinary).toHaveBeenCalledWith(
           expect.objectContaining({
             binaryPath: "git",
-            args: ["push", "--force", "--progress", pushUrl, "HEAD:refs/heads/main", "ccc333ddd444:refs/heads/gh-pages"],
+            args: ["push", "--force", "--progress", pushUrl, "ccc333ddd444:refs/heads/gh-pages"],
           })
         );
       });
 
-      it("passes onStderr callback to git push", async () => {
+      it("passes onStderr callback to gh-pages push", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-        // Find the push call
+        // Find the gh-pages push call
         const pushCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.includes("HEAD:refs/heads/main")
+            call[0].args.includes("ccc333ddd444:refs/heads/gh-pages")
         );
         expect(pushCall).toBeDefined();
         expect(pushCall![0].onStderr).toBeTypeOf("function");
-      });
-
-      it("passes onStderr callback to git add for staging progress", async () => {
-        setupFullDeployMocks();
-
-        const onProgress = vi.fn();
-        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
-
-        // Find the git add call
-        const addCall = mockExecuteBinary.mock.calls.find(
-          (call) => call[0].binaryPath === "git" && call[0].args[0] === "add"
-        );
-        expect(addCall).toBeDefined();
-        expect(addCall![0].onStderr).toBeTypeOf("function");
       });
 
       it("maps push stderr progress to 25-95% range", async () => {
@@ -1016,11 +1042,11 @@ describe("github-deploy", () => {
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-        // Find the push call and invoke its onStderr
+        // Find the gh-pages push call and invoke its onStderr
         const pushCall = mockExecuteBinary.mock.calls.find(
           (call) => call[0].binaryPath === "git" &&
             call[0].args[0] === "push" &&
-            call[0].args.includes("HEAD:refs/heads/main")
+            call[0].args.includes("ccc333ddd444:refs/heads/gh-pages")
         );
         const pushOnStderr = pushCall![0].onStderr;
 
@@ -1049,12 +1075,9 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // rev-parse HEAD:.moss/site
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/site/
           // .nojekyll + CNAME injection steps:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (.nojekyll)
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc123\tindex.html\n"))  // git ls-tree
@@ -1062,7 +1085,14 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true, NEW_TREE + "\n"))   // git mktree (tree with .nojekyll + CNAME)
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, ORPHAN_SHA + "\n")) // git commit-tree (uses NEW tree)
-          .mockResolvedValueOnce(gitResult(true));                   // git push
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({
@@ -1116,12 +1146,9 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // rev-parse HEAD:.moss/site
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (empty .nojekyll)
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc123\tindex.html\n"))  // ls-tree
@@ -1131,7 +1158,14 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true, "newTree123\n"))    // mktree (with .nojekyll only)
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "ccc333ddd444\n"))  // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                   // push
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({
@@ -1165,19 +1199,23 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // rev-parse HEAD:.moss/site
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (empty .nojekyll)
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc123\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, NEW_TREE + "\n"))   // mktree (with .nojekyll)
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, ORPHAN_SHA + "\n")) // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                   // push
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({
@@ -1232,12 +1270,9 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // rev-parse HEAD:.moss/site
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (.nojekyll)
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc123\tindex.html\n"))  // ls-tree
@@ -1247,7 +1282,14 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true, NEW_TREE + "\n"))   // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, ORPHAN_SHA + "\n")) // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                   // push
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc1234] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // push main
 
         const onProgress = vi.fn();
         await deployViaGitPush({
@@ -1290,25 +1332,27 @@ describe("github-deploy", () => {
         expect((result as DeployResult).orphanSha).toBe("ccc333ddd444");
       });
 
-      it("returns empty commitSha when no changes to deploy", async () => {
+      it("returns empty commitSha when no source changes to deploy", async () => {
         mockExecuteBinary
           .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir
           .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet SUCCESS (no changes)
-          .mockResolvedValueOnce(gitResult(true))                    // rev-parse HEAD (commits exist)
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
           // .nojekyll injection:
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse HEAD:.moss/site tree
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "newTree\n"))       // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                   // push
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(true));                   // git diff --cached --quiet SUCCESS (no changes)
 
         const onProgress = vi.fn();
         const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1317,7 +1361,9 @@ describe("github-deploy", () => {
         expect((result as DeployResult).orphanSha).toBe("bbb222");
       });
 
-      it("returns empty strings for truly empty repo (no commits)", async () => {
+      it("returns orphanSha even for fresh repo (write-tree always succeeds)", async () => {
+        // In the new flow, write-tree produces a valid tree even for fresh repos.
+        // gh-pages is always pushed. Only commitSha may be empty (no source changes).
         mockExecuteBinary
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse --git-dir (no .git)
           .mockResolvedValueOnce(gitResult(true))                    // git init
@@ -1327,16 +1373,26 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "4b825dc\n"))       // write-tree --prefix (empty tree)
+          // .nojekyll injection:
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, ""))                // ls-tree (empty)
+          .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
+          .mockResolvedValueOnce(gitResult(false))                   // rev-parse gh-pages (no prev)
+          .mockResolvedValueOnce(gitResult(true, "orphan123\n"))     // commit-tree
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+          // Deferred source backup:
           .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(true))                    // git diff --cached --quiet (no changes)
-          .mockResolvedValueOnce(gitResult(false));                  // rev-parse HEAD fails (no commits)
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(true));                   // git diff --cached --quiet (no changes)
 
         const onProgress = vi.fn();
         const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
         expect((result as DeployResult).commitSha).toBe("");
-        expect((result as DeployResult).orphanSha).toBe("");
+        expect((result as DeployResult).orphanSha).toBe("orphan123");
       });
     });
 
@@ -1356,18 +1412,15 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
-          .mockResolvedValueOnce(gitResult(false, "", corruptPushError))  // push FAILS (corrupt)
+          .mockResolvedValueOnce(gitResult(false, "", corruptPushError))  // push gh-pages FAILS (corrupt)
           // Recovery: rm -rf .git
           .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
           // Retry: full deploy sequence again (needsInit = true since .git was removed)
@@ -1379,18 +1432,22 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main def] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "def5678\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // rev-parse tree
+          // Site-only staging (retry):
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // write-tree --prefix=.moss/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree2\n"))      // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "orphan2\n"))       // commit-tree
-          .mockResolvedValueOnce(gitResult(true));                   // push SUCCEEDS
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages SUCCEEDS
+          // Deferred source backup (retry):
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main def] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "def5678\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // push main SUCCEEDS
 
         const onProgress = vi.fn();
         const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1418,18 +1475,15 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
-          .mockResolvedValueOnce(gitResult(false, "", authError));    // push FAILS (auth error)
+          .mockResolvedValueOnce(gitResult(false, "", authError));    // push gh-pages FAILS (auth error)
 
         const onProgress = vi.fn();
 
@@ -1454,18 +1508,15 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
-          .mockResolvedValueOnce(gitResult(false, "", corruptError)) // push FAILS (corrupt)
+          .mockResolvedValueOnce(gitResult(false, "", corruptError)) // push gh-pages FAILS (corrupt)
           // Recovery: rm -rf .git
           .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
           // Retry: also fails
@@ -1477,18 +1528,15 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(false))                   // git fetch (fails, first deploy)
           .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
-          .mockResolvedValueOnce(gitResult(true, "[main def] Deploy\n"))  // commit
-          .mockResolvedValueOnce(gitResult(true, "def5678\n"))       // rev-parse --short HEAD
-          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // rev-parse tree
+          // Site-only staging (retry):
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // write-tree --prefix=.moss/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
           .mockResolvedValueOnce(gitResult(true, "modTree2\n"))      // mktree
           .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
           .mockResolvedValueOnce(gitResult(true, "orphan2\n"))       // commit-tree
-          .mockResolvedValueOnce(gitResult(false, "", "fatal: some other error"));  // push FAILS again
+          .mockResolvedValueOnce(gitResult(false, "", "fatal: some other error"));  // push gh-pages FAILS again
 
         const onProgress = vi.fn();
 
@@ -1529,18 +1577,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
-        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // git commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // rev-parse HEAD:.moss/site
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // write-tree --prefix=.moss/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(true, "ghPagesTip\n"))    // rev-parse refs/remotes/origin/gh-pages
         .mockResolvedValueOnce(gitResult(true, "orphanSha\n"))     // commit-tree with -p parent
-        .mockResolvedValueOnce(gitResult(true));                   // push
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // git commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1570,18 +1622,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(false))                   // git fetch fails (no remote yet)
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
-        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // rev-parse tree
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // write-tree --prefix=.moss/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no remote)
         .mockResolvedValueOnce(gitResult(true, "orphanSha\n"))     // commit-tree (no parent)
-        .mockResolvedValueOnce(gitResult(true));                   // push
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1597,18 +1653,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large files
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // diff (changes)
-        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // rev-parse HEAD:.moss/site
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(true, "prevGhPagesTip\n"))  // rev-parse refs/remotes/origin/gh-pages
         .mockResolvedValueOnce(gitResult(true, "newOrphanSha\n"))  // commit-tree -p prevGhPagesTip
-        .mockResolvedValueOnce(gitResult(true));                   // push
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large files
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // diff (changes)
+        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1629,18 +1689,22 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // git fetch
         .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
-        .mockResolvedValueOnce(gitResult(true, ""))                // find large files
-        .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
-        .mockResolvedValueOnce(gitResult(false))                   // diff (changes)
-        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
-        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
-        .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // rev-parse HEAD:.moss/site
+        // Site-only staging:
+        .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+        .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
         .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
         .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages FAILS
         .mockResolvedValueOnce(gitResult(true, "orphanSha\n"))     // commit-tree (no -p)
-        .mockResolvedValueOnce(gitResult(true));                   // push
+        .mockResolvedValueOnce(gitResult(true))                    // push gh-pages
+        // Deferred source backup:
+        .mockResolvedValueOnce(gitResult(true, ""))                // find large files
+        .mockResolvedValueOnce(gitResult(true))                    // git add --all
+        .mockResolvedValueOnce(gitResult(false))                   // diff (changes)
+        .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+        .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+        .mockResolvedValueOnce(gitResult(true));                   // push main
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
@@ -1652,6 +1716,204 @@ describe("github-deploy", () => {
           args: ["commit-tree", "modTree", "-m", "Deploy site\n\nGenerated by moss"],
         })
       );
+    });
+  });
+
+  // ==========================================================================
+  // Incremental deploy: site-only staging + deferred source backup
+  // ==========================================================================
+  describe("incremental deploy (site-only staging)", () => {
+    const mockExecuteBinary = vi.mocked(executeBinary);
+    const mockListSiteFilesWithSizes = vi.mocked(listSiteFilesWithSizes);
+    const mockShowToast = vi.mocked(showToast);
+
+    function gitResult(success: boolean, stdout = "", stderr = ""): ExecuteResult {
+      return { success, exitCode: success ? 0 : 1, stdout, stderr };
+    }
+
+    const REPO_MARKER = `https://github.com/${OWNER}/${REPO}.git`;
+
+    beforeEach(() => {
+      mockExecuteBinary.mockReset();
+      mockListSiteFilesWithSizes.mockReset();
+      mockListSiteFilesWithSizes.mockResolvedValue([]);
+      mockShowToast.mockReset();
+      mockShowToast.mockResolvedValue(undefined);
+    });
+
+    /**
+     * Set up mock sequence for incremental deploy (site-only staging).
+     *
+     * New sequence: rev-parse --git-dir, remote get-url origin, fetch --depth=1,
+     *   .gitignore, rm -f index.lock, git add .moss/site/,
+     *   git write-tree --prefix=.moss/site/, .nojekyll injection,
+     *   rev-parse gh-pages tip, commit-tree, push gh-pages ONLY,
+     *   then deferred: find(large files), git add --all, diff, commit, push main
+     */
+    function setupIncrementalDeployMocks(commitSha = "abc1234") {
+      mockExecuteBinary
+          .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir (repo exists)
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin (matches)
+          .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore (sh -c)
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "siteTree123\n"))   // git write-tree --prefix=.moss/site/
+          // .nojekyll injection:
+          .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object -w --stdin (.nojekyll)
+          .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modifiedTree\n"))  // mktree (with .nojekyll)
+          .mockResolvedValueOnce(gitResult(false))                   // rev-parse refs/remotes/origin/gh-pages (no prev)
+          .mockResolvedValueOnce(gitResult(true, "orphan999\n"))     // git commit-tree (orphan, no parent)
+          .mockResolvedValueOnce(gitResult(true))                    // git push gh-pages ONLY
+          // Deferred source backup:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files (none found)
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all
+          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes exist)
+          .mockResolvedValueOnce(gitResult(true, `[main ${commitSha}] Deploy site\n`))  // git commit
+          .mockResolvedValueOnce(gitResult(true, commitSha + "\n"))  // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true));                   // git push main
+      }
+
+      it("stages only .moss/site/ before gh-pages push (not --all)", async () => {
+        setupIncrementalDeployMocks();
+
+        const onProgress = vi.fn();
+        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        // Find all git add calls
+        const addCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "git" && call[0].args[0] === "add"
+        );
+
+        // First add call should be .moss/site/ only (NOT --all)
+        expect(addCalls.length).toBeGreaterThanOrEqual(1);
+        expect(addCalls[0][0].args).toEqual(["add", ".moss/site/"]);
+      });
+
+      it("uses write-tree --prefix to get site tree SHA directly from index", async () => {
+        setupIncrementalDeployMocks();
+
+        const onProgress = vi.fn();
+        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        expect(mockExecuteBinary).toHaveBeenCalledWith(
+          expect.objectContaining({
+            binaryPath: "git",
+            args: ["write-tree", "--prefix=.moss/site/"],
+          })
+        );
+
+        // Should NOT use rev-parse HEAD:.moss/site (old approach)
+        const revParseSiteCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "git" &&
+            call[0].args[0] === "rev-parse" &&
+            call[0].args.includes("HEAD:.moss/site")
+        );
+        expect(revParseSiteCalls).toHaveLength(0);
+      });
+
+      it("pushes gh-pages before staging source files", async () => {
+        setupIncrementalDeployMocks();
+
+        const onProgress = vi.fn();
+        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+
+        // Find the first push call — it should be gh-pages only (no HEAD:refs/heads/main)
+        const pushCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+        );
+        expect(pushCalls.length).toBeGreaterThanOrEqual(1);
+        const firstPush = pushCalls[0][0].args;
+        expect(firstPush).toContain("orphan999:refs/heads/gh-pages");
+        expect(firstPush).not.toContain("HEAD:refs/heads/main");
+
+        // Find the git add --all call — it should come AFTER the first push
+        const addAllIndex = mockExecuteBinary.mock.calls.findIndex(
+          (call) => call[0].binaryPath === "git" &&
+            call[0].args[0] === "add" &&
+            call[0].args.includes("--all")
+        );
+        const firstPushIndex = mockExecuteBinary.mock.calls.findIndex(
+          (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+        );
+        expect(addAllIndex).toBeGreaterThan(firstPushIndex);
+      });
+
+      it("defers source backup to main branch after gh-pages deploy", async () => {
+        setupIncrementalDeployMocks();
+
+        const onProgress = vi.fn();
+        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        const pushUrl = `https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+
+        // Should have two push calls: gh-pages first, then main
+        const pushCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+        );
+        expect(pushCalls).toHaveLength(2);
+
+        // Second push should be main only
+        const secondPush = pushCalls[1][0].args;
+        expect(secondPush).toContain("HEAD:refs/heads/main");
+        expect(secondPush).not.toContain("gh-pages");
+      });
+
+      it("succeeds even when source backup fails", async () => {
+        mockExecuteBinary
+          .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin
+          .mockResolvedValueOnce(gitResult(true))                    // git fetch --depth=1 origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          // Site-only staging:
+          .mockResolvedValueOnce(gitResult(true))                    // git add .moss/site/
+          .mockResolvedValueOnce(gitResult(true, "siteTree123\n"))   // write-tree --prefix=.moss/site/
+          // .nojekyll injection:
+          .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
+          .mockResolvedValueOnce(gitResult(false))                   // rev-parse gh-pages (no prev)
+          .mockResolvedValueOnce(gitResult(true, "orphan999\n"))     // commit-tree
+          .mockResolvedValueOnce(gitResult(true))                    // push gh-pages (succeeds)
+          // Deferred source backup FAILS:
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large files
+          .mockResolvedValueOnce(gitResult(false, "", "fatal: error"));  // git add --all fails
+
+        const onProgress = vi.fn();
+        // Should NOT throw even though source backup failed
+        const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+        expect(result.orphanSha).toBe("orphan999");
+      });
+
+      it("reports Deployed! before starting source backup", async () => {
+        setupIncrementalDeployMocks();
+
+        const onProgress = vi.fn();
+        await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        // "Deployed!" should be called
+        expect(onProgress).toHaveBeenCalledWith(100, "Deployed!");
+
+        // Find the index of the "Deployed!" call and the "git add --all" call
+        const deployedCallIndex = onProgress.mock.calls.findIndex(
+          (call) => call[0] === 100 && call[1] === "Deployed!"
+        );
+        // The source backup git add --all should come after Deployed!
+        const addAllIndex = mockExecuteBinary.mock.calls.findIndex(
+          (call) => call[0].binaryPath === "git" &&
+            call[0].args[0] === "add" &&
+            call[0].args.includes("--all")
+        );
+        const ghPagesPushIndex = mockExecuteBinary.mock.calls.findIndex(
+          (call) => call[0].binaryPath === "git" && call[0].args[0] === "push"
+        );
+        // The git add --all should come AFTER the gh-pages push
+        expect(addAllIndex).toBeGreaterThan(ghPagesPushIndex);
     });
   });
 

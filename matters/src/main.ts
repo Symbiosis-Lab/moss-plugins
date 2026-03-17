@@ -708,7 +708,7 @@ export async function syndicateArticle(
   let coverAssetId: string | undefined;
   const coverPath = article.frontmatter.cover as string | undefined;
   if (coverPath) {
-    const coverUrl = `${siteUrl.replace(/\/$/, "")}/${coverPath.replace(/^\//, "")}`;
+    const coverUrl = new URL(coverPath.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
     try {
       coverAssetId = await uploadCoverByUrl(coverUrl);
       console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
@@ -756,10 +756,10 @@ export async function syndicateArticle(
   // Step 8: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
-  await openBrowser(draftPageUrl);
+  const browserHandle = await openBrowser(draftPageUrl);
 
   // Step 9: Poll for publish state change (10 min timeout)
-  const publishedArticle = await waitForPublishOrClose(draft.id, 600000);
+  const publishedArticle = await waitForPublishOrClose(draft.id, 600000, browserHandle);
 
   if (publishedArticle) {
     // Step 10: Article was published - update local frontmatter
@@ -802,22 +802,40 @@ export async function syndicateArticle(
 }
 
 /**
- * Wait for draft to be published or timeout
+ * Wait for draft to be published, browser to close, or timeout
  *
  * Polls the draft every 5 seconds to check if it has been published.
- * Returns the published article info if published, null on timeout.
+ * Also listens for browser close events to exit immediately when
+ * the user closes the action panel.
+ *
+ * Returns the published article info if published, null on close/timeout.
  */
 async function waitForPublishOrClose(
   draftId: string,
-  timeoutMs: number
+  timeoutMs: number,
+  browserHandle?: BrowserHandle
 ): Promise<{ shortHash: string; slug: string } | null> {
   const startTime = Date.now();
   const pollInterval = 5000; // 5 seconds
+  let browserClosed = false;
+
+  // Listen for browser close
+  if (browserHandle) {
+    browserHandle.closed.then(() => {
+      browserClosed = true;
+    });
+  }
 
   console.log(`    ⏳ Waiting for publish (timeout: ${timeoutMs / 1000}s)...`);
 
   while (Date.now() - startTime < timeoutMs) {
     await sleep(pollInterval);
+
+    // Exit immediately if browser was closed
+    if (browserClosed) {
+      console.log(`    🚪 Browser closed by user`);
+      return null;
+    }
 
     try {
       const draft = await fetchDraft(draftId);
@@ -993,7 +1011,7 @@ export async function uploadAndReplaceLocalImages(content: string, siteUrl: stri
   const replacements = new Map<string, string>();
 
   for (const src of localSrcs) {
-    const absoluteUrl = `${siteUrl.replace(/\/$/, "")}/${src.replace(/^\//, "")}`;
+    const absoluteUrl = new URL(src.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
     try {
       const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
       replacements.set(src, cdnUrl);

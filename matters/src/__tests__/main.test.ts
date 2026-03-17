@@ -1218,3 +1218,162 @@ describe("syndicateArticle - draft tracking integration", () => {
     vi.spyOn(Date, "now").mockRestore();
   });
 });
+
+// ============================================================================
+// Tests: Cover URL encoding for non-ASCII paths
+// ============================================================================
+
+describe("syndicateArticle - cover URL encoding", () => {
+  const siteUrl = "https://example.com";
+  const userName = "testuser";
+  const options = { addCanonicalLink: false, lang: "en" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
+    vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
+    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
+  });
+
+  it("percent-encodes Chinese characters in cover URL path", async () => {
+    const article = makeArticle({
+      frontmatter: { cover: "图片/cover-image.png" },
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    // Chinese characters must be percent-encoded for valid URI
+    const callArgs = vi.mocked(uploadCoverByUrl).mock.calls[0][0];
+    expect(callArgs).toContain("%");
+    expect(callArgs).not.toContain("图片");
+    expect(callArgs).toContain("cover-image.png");
+    expect(callArgs).toMatch(/^https:\/\/example\.com\//);
+  });
+
+  it("does not double-encode already-ASCII cover paths", async () => {
+    const article = makeArticle({
+      frontmatter: { cover: "assets/covers/book.jpg" },
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(uploadCoverByUrl).toHaveBeenCalledWith(
+      "https://example.com/assets/covers/book.jpg"
+    );
+  });
+});
+
+// ============================================================================
+// Tests: uploadAndReplaceLocalImages URL encoding for non-ASCII paths
+// ============================================================================
+
+describe("uploadAndReplaceLocalImages - non-ASCII path encoding", () => {
+  const siteUrl = "https://example.com";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+  });
+
+  it("percent-encodes Chinese characters in image src URLs", async () => {
+    const html = '<img src="图片/photo.png" alt="Photo">';
+
+    await uploadAndReplaceLocalImages(html, siteUrl);
+
+    const callArgs = vi.mocked(uploadEmbedByUrl).mock.calls[0][0];
+    expect(callArgs).toContain("%");
+    expect(callArgs).not.toContain("图片");
+    expect(callArgs).toContain("photo.png");
+  });
+});
+
+// ============================================================================
+// Tests: waitForPublishOrClose detects browser close
+// ============================================================================
+
+describe("syndicateArticle - browser close detection", () => {
+  const siteUrl = "https://example.com";
+  const userName = "testuser";
+  const options = { addCanonicalLink: false, lang: "en" };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockResolvedValue(undefined);
+
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.showToast).mockResolvedValue(undefined);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+
+    const domain = await import("../domain");
+    vi.mocked(domain.draftUrl).mockImplementation((id: string) => `https://matters.town/drafts/${id}`);
+    vi.mocked(domain.articleUrl).mockImplementation((_user: string, slug: string, hash: string) => `https://matters.town/@testuser/${slug}-${hash}`);
+
+    vi.mocked(pluginFileExists).mockResolvedValue(false);
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-close-test"));
+    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
+    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+  });
+
+  it("exits immediately when browser is closed, saves draft for reuse", async () => {
+    const sdk = await import("@symbiosis-lab/moss-api");
+
+    // Simulate browser closing after first sleep call
+    let resolveClose!: (reason: any) => void;
+    const closedPromise = new Promise<any>((resolve) => { resolveClose = resolve; });
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: closedPromise });
+
+    // Draft never gets published (no article field)
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "draft-close-test",
+      title: "Test",
+      content: "<p>Test</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+      publishState: "unpublished" as const,
+    });
+
+    // Track how many times fetchDraft is polled.
+    // Clock does NOT advance past timeout — so if waitForPublishOrClose
+    // doesn't detect browser close, it will poll in an infinite loop.
+    // We cap sleep calls to detect this.
+    let sleepCallCount = 0;
+    const MAX_SLEEP_CALLS = 5;
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockImplementation(async () => {
+      sleepCallCount++;
+      if (sleepCallCount === 1) {
+        // Resolve browser close on first poll iteration
+        resolveClose({ type: "user" });
+        // Yield so the promise can settle
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      if (sleepCallCount > MAX_SLEEP_CALLS) {
+        // Safety valve: prevent infinite loop in current (broken) code.
+        // Force timeout by making Date.now() return a large value.
+        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 999999999);
+      }
+    });
+
+    const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
+
+    const result = await syndicateArticle(article, siteUrl, userName, options);
+
+    // Should NOT have published (browser was closed)
+    expect(result.publishedUrl).toBeUndefined();
+
+    // Key assertion: browser close should stop polling after 1 sleep call.
+    // If the code doesn't detect browser close, it will poll many times
+    // until our safety valve kicks in at MAX_SLEEP_CALLS.
+    expect(sleepCallCount).toBeLessThanOrEqual(2);
+
+    // Draft ID should be saved for reuse
+    const draftWriteCalls = vi.mocked(writePluginFile).mock.calls.filter(
+      call => call[0] === "drafts.json"
+    );
+    expect(draftWriteCalls.length).toBeGreaterThan(0);
+    const written = JSON.parse(draftWriteCalls[draftWriteCalls.length - 1][1]);
+    expect(written["posts/test.md"].draftId).toBe("draft-close-test");
+  });
+});

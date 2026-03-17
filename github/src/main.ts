@@ -260,7 +260,22 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       const match = configToml.match(/^\s*domain\s*=\s*"([^"]+)"/m);
       if (match) domain = match[1];
     } catch {
-      // No config or no domain — deploy without CNAME
+      // No config or no domain
+    }
+
+    // Safety net: if no domain in local config, check GitHub Pages for existing CNAME.
+    // Prevents accidentally stripping a custom domain during re-deploy
+    // (e.g., if local config was lost due to iCloud sync, corruption, or manual edit).
+    if (!domain) {
+      try {
+        const pages = await getPages(owner, repoName, token);
+        if (pages?.cname) {
+          domain = pages.cname;
+          console.log(`   Safety net: preserving existing GitHub Pages CNAME: ${domain}`);
+        }
+      } catch {
+        // Non-fatal — deploy proceeds without CNAME
+      }
     }
 
     try {

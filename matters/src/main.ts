@@ -704,33 +704,19 @@ export async function syndicateArticle(
     content = await uploadAndReplaceLocalImages(content, siteUrl);
   }
 
-  // Step 5: Upload cover if present in frontmatter
-  let coverAssetId: string | undefined;
-  const coverPath = article.frontmatter.cover as string | undefined;
-  if (coverPath) {
-    const coverUrl = new URL(coverPath.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
-    try {
-      coverAssetId = await uploadCoverByUrl(coverUrl);
-      console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
-    } catch (error) {
-      console.warn(`    ⚠️ Cover upload failed, continuing without cover: ${error}`);
-    }
-  }
-
-  // Step 6: Check for existing tracked draft
+  // Step 5: Check for existing tracked draft
   const existingDraftId = article.source_path ? await getDraftId(article.source_path) : undefined;
   if (existingDraftId) {
     console.log(`    📋 Found existing draft ID: ${existingDraftId}`);
   }
 
-  // Step 7: Create/update draft via API (with optional summary from description)
+  // Step 6: Create/update draft via API (with optional summary from description)
   const summary = article.frontmatter.description as string | undefined;
   const draftInput = {
     title: article.title,
     content,
     tags: article.tags,
     ...(existingDraftId ? { id: existingDraftId } : {}),
-    ...(coverAssetId !== undefined ? { cover: coverAssetId } : {}),
     ...(summary ? { summary } : {}),
   };
 
@@ -749,6 +735,21 @@ export async function syndicateArticle(
   }
 
   console.log(`    📝 Draft ${existingDraftId ? "updated" : "created"} with ID: ${draft.id}`);
+
+  // Step 7: Upload cover if present in frontmatter (requires draft ID as entityId)
+  const coverPath = article.frontmatter.cover as string | undefined;
+  if (coverPath) {
+    const coverUrl = new URL(coverPath.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
+    try {
+      const coverAssetId = await uploadCoverByUrl(coverUrl, draft.id);
+      console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
+      // Update draft with cover
+      await createDraft({ id: draft.id, cover: coverAssetId });
+      console.log(`    🖼️ Draft updated with cover`);
+    } catch (error) {
+      console.warn(`    ⚠️ Cover upload failed, continuing without cover: ${error}`);
+    }
+  }
 
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });

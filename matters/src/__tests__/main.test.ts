@@ -162,52 +162,75 @@ describe("syndicateArticle - cover upload", () => {
     vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
   });
 
-  it("uploads cover and passes asset ID to createDraft when frontmatter.cover exists", async () => {
+  it("uploads cover AFTER draft creation and updates draft with cover asset ID", async () => {
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+
     const article = makeArticle({
       frontmatter: { cover: "assets/covers/book.jpg" },
     });
 
     await syndicateArticle(article, siteUrl, userName, options);
 
-    expect(uploadCoverByUrl).toHaveBeenCalledWith("https://example.com/assets/covers/book.jpg");
-    expect(createDraft).toHaveBeenCalledWith(
-      expect.objectContaining({ cover: "asset-abc-123" })
+    // Cover should be uploaded with the draft's entityId
+    expect(uploadCoverByUrl).toHaveBeenCalledWith(
+      "https://example.com/assets/covers/book.jpg",
+      "draft-123"
+    );
+
+    // First createDraft: without cover (draft doesn't exist yet)
+    expect(createDraft).toHaveBeenNthCalledWith(1,
+      expect.not.objectContaining({ cover: expect.anything() })
+    );
+
+    // Second createDraft: updates draft with cover asset ID
+    expect(createDraft).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ id: "draft-123", cover: "asset-abc-123" })
     );
   });
 
   it("resolves cover URL correctly — strips trailing slash from siteUrl", async () => {
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+
     const article = makeArticle({
       frontmatter: { cover: "assets/covers/hero.png" },
     });
 
     await syndicateArticle(article, "https://example.com/", userName, options);
 
-    expect(uploadCoverByUrl).toHaveBeenCalledWith("https://example.com/assets/covers/hero.png");
+    expect(uploadCoverByUrl).toHaveBeenCalledWith(
+      "https://example.com/assets/covers/hero.png",
+      "draft-123"
+    );
   });
 
   it("resolves cover URL correctly — strips leading slash from cover path", async () => {
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+
     const article = makeArticle({
       frontmatter: { cover: "/assets/covers/hero.png" },
     });
 
     await syndicateArticle(article, siteUrl, userName, options);
 
-    expect(uploadCoverByUrl).toHaveBeenCalledWith("https://example.com/assets/covers/hero.png");
+    expect(uploadCoverByUrl).toHaveBeenCalledWith(
+      "https://example.com/assets/covers/hero.png",
+      "draft-123"
+    );
   });
 
-  it("skips cover upload and does not pass cover to createDraft when no cover in frontmatter", async () => {
+  it("skips cover upload and does not update draft when no cover in frontmatter", async () => {
     const article = makeArticle({ frontmatter: {} });
 
     await syndicateArticle(article, siteUrl, userName, options);
 
     expect(uploadCoverByUrl).not.toHaveBeenCalled();
-    expect(createDraft).toHaveBeenCalledWith(
-      expect.not.objectContaining({ cover: expect.anything() })
-    );
+    // Only one createDraft call (no cover update)
+    expect(createDraft).toHaveBeenCalledTimes(1);
   });
 
   it("continues without cover when cover upload fails (graceful failure)", async () => {
     vi.mocked(uploadCoverByUrl).mockRejectedValue(new Error("Upload failed: 500"));
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
 
     const article = makeArticle({
       frontmatter: { cover: "assets/covers/book.jpg" },
@@ -216,8 +239,8 @@ describe("syndicateArticle - cover upload", () => {
     // Should not throw
     await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
 
-    // createDraft should still be called, but without cover
-    expect(createDraft).toHaveBeenCalled();
+    // createDraft should be called once (no cover update since upload failed)
+    expect(createDraft).toHaveBeenCalledTimes(1);
     expect(createDraft).toHaveBeenCalledWith(
       expect.not.objectContaining({ cover: expect.anything() })
     );
@@ -1236,6 +1259,8 @@ describe("syndicateArticle - cover URL encoding", () => {
   });
 
   it("percent-encodes Chinese characters in cover URL path", async () => {
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-cn"));
+
     const article = makeArticle({
       frontmatter: { cover: "图片/cover-image.png" },
     });
@@ -1243,14 +1268,18 @@ describe("syndicateArticle - cover URL encoding", () => {
     await syndicateArticle(article, siteUrl, userName, options);
 
     // Chinese characters must be percent-encoded for valid URI
-    const callArgs = vi.mocked(uploadCoverByUrl).mock.calls[0][0];
-    expect(callArgs).toContain("%");
-    expect(callArgs).not.toContain("图片");
-    expect(callArgs).toContain("cover-image.png");
-    expect(callArgs).toMatch(/^https:\/\/example\.com\//);
+    const callArgs = vi.mocked(uploadCoverByUrl).mock.calls[0];
+    expect(callArgs[0]).toContain("%");
+    expect(callArgs[0]).not.toContain("图片");
+    expect(callArgs[0]).toContain("cover-image.png");
+    expect(callArgs[0]).toMatch(/^https:\/\/example\.com\//);
+    // Must include entityId
+    expect(callArgs[1]).toBe("draft-cn");
   });
 
   it("does not double-encode already-ASCII cover paths", async () => {
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-ascii"));
+
     const article = makeArticle({
       frontmatter: { cover: "assets/covers/book.jpg" },
     });
@@ -1258,7 +1287,8 @@ describe("syndicateArticle - cover URL encoding", () => {
     await syndicateArticle(article, siteUrl, userName, options);
 
     expect(uploadCoverByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/covers/book.jpg"
+      "https://example.com/assets/covers/book.jpg",
+      "draft-ascii"
     );
   });
 });

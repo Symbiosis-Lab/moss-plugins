@@ -1125,9 +1125,10 @@ mutation SingleFileUpload($input: SingleFileUploadInput!) {
  * fetches the image from the published site directly.
  *
  * @param url - Full URL of the cover image on the published site
- * @returns The Matters asset ID to pass as `cover` in createDraft
+ * @param entityId - Draft ID to attach the cover to (required by Matters API)
+ * @returns The Matters asset ID to pass as `cover` in putDraft
  */
-export async function uploadCoverByUrl(url: string): Promise<string> {
+export async function uploadCoverByUrl(url: string, entityId: string): Promise<string> {
   interface SingleFileUploadResponse {
     singleFileUpload: { id: string; path: string };
   }
@@ -1137,6 +1138,7 @@ export async function uploadCoverByUrl(url: string): Promise<string> {
       url,
       type: "cover",
       entityType: "draft",
+      entityId,
     },
   });
 

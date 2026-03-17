@@ -5,7 +5,8 @@
  * "Choose repository name" form because no progress updates are sent during showBrowserForm().
  *
  * Solution: Wrap showBrowserForm with a progress heartbeat that sends updates
- * every 30 seconds to keep the inactivity timer alive.
+ * every DEPLOY_HEARTBEAT_INTERVAL_MS (10s) to keep the inactivity timer alive
+ * and the progress panel visible (must be < STALE_TIMEOUT_MS of 15s).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -114,18 +115,18 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mockReportProgress).not.toHaveBeenCalled(); // No progress yet
 
-    // Fast-forward: 30s -> first heartbeat
-    await vi.advanceTimersByTimeAsync(30000);
+    // Fast-forward: 10s -> first heartbeat
+    await vi.advanceTimersByTimeAsync(10000);
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
     expect(mockReportProgress).toHaveBeenCalledWith("setup", 0, 6, "Setting up GitHub repository...");
 
-    // Fast-forward: 60s -> second heartbeat
-    await vi.advanceTimersByTimeAsync(30000);
+    // Fast-forward: 20s -> second heartbeat
+    await vi.advanceTimersByTimeAsync(10000);
     expect(mockReportProgress).toHaveBeenCalledTimes(2);
     expect(mockReportProgress).toHaveBeenNthCalledWith(2, "setup", 0, 6, "Setting up GitHub repository...");
 
-    // Fast-forward: 75s -> user submits form
-    await vi.advanceTimersByTimeAsync(15000);
+    // Fast-forward: 25s -> user submits form
+    await vi.advanceTimersByTimeAsync(5000);
 
     // User submits form via event
     eventHandler!({ action: "custom-domain", repoName: "my-website" });
@@ -148,7 +149,7 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
   it("clears heartbeat interval when form is submitted", async () => {
     vi.useFakeTimers();
 
-    // User submits form after 35 seconds (should trigger 1 heartbeat, then clear)
+    // User submits form after 15 seconds (should trigger 1 heartbeat, then clear)
     let eventHandler: ((payload: unknown) => void) | null = null;
     mockOnEvent.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
       if (eventName === "github:deploy-choice") {
@@ -166,8 +167,8 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Start the repo setup
     const resultPromise = ensureGitHubRepo();
 
-    // Fast-forward: 35s -> first heartbeat happens
-    await vi.advanceTimersByTimeAsync(35000);
+    // Fast-forward: 15s -> first heartbeat happens at 10s
+    await vi.advanceTimersByTimeAsync(15000);
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
 
     // User submits form (should clear interval)
@@ -180,15 +181,15 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Reset mock to track future calls
     mockReportProgress.mockClear();
 
-    // Fast-forward another 30s - NO more heartbeats should occur
-    await vi.advanceTimersByTimeAsync(30000);
+    // Fast-forward another 10s - NO more heartbeats should occur
+    await vi.advanceTimersByTimeAsync(10000);
     expect(mockReportProgress).not.toHaveBeenCalled();
   });
 
   it("clears heartbeat interval when form is cancelled", async () => {
     vi.useFakeTimers();
 
-    // User cancels form after 35 seconds (timeout without event)
+    // User cancels form after 15 seconds (timeout without event)
     mockOnEvent.mockImplementation(async () => {
       return vi.fn(); // Don't trigger event handler (simulates cancellation)
     });
@@ -196,12 +197,12 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Start the repo setup (will timeout after 300s but we'll test before that)
     const resultPromise = ensureGitHubRepo();
 
-    // Fast-forward: 35s -> first heartbeat happens
-    await vi.advanceTimersByTimeAsync(35000);
+    // Fast-forward: 15s -> first heartbeat happens at 10s
+    await vi.advanceTimersByTimeAsync(15000);
     expect(mockReportProgress).toHaveBeenCalledTimes(1);
 
     // Fast-forward to timeout (300s total)
-    await vi.advanceTimersByTimeAsync(265000);
+    await vi.advanceTimersByTimeAsync(285000);
 
     // Wait for completion
     await vi.runAllTimersAsync();
@@ -212,8 +213,8 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Reset mock to track future calls
     mockReportProgress.mockClear();
 
-    // Fast-forward another 30s - NO more heartbeats should occur
-    await vi.advanceTimersByTimeAsync(30000);
+    // Fast-forward another 10s - NO more heartbeats should occur
+    await vi.advanceTimersByTimeAsync(10000);
     expect(mockReportProgress).not.toHaveBeenCalled();
   });
 
@@ -238,14 +239,15 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Start the repo setup
     const resultPromise = ensureGitHubRepo();
 
-    // Fast-forward: 120s in 30s increments to simulate heartbeats
-    await vi.advanceTimersByTimeAsync(30000); // 30s - 1st heartbeat
-    await vi.advanceTimersByTimeAsync(30000); // 60s - 2nd heartbeat
-    await vi.advanceTimersByTimeAsync(30000); // 90s - 3rd heartbeat
-    await vi.advanceTimersByTimeAsync(30000); // 120s - 4th heartbeat
+    // Fast-forward: 120s in 10s increments to simulate heartbeats
+    await vi.advanceTimersByTimeAsync(10000); // 10s - 1st heartbeat
+    await vi.advanceTimersByTimeAsync(10000); // 20s - 2nd heartbeat
+    await vi.advanceTimersByTimeAsync(10000); // 30s - 3rd heartbeat
+    await vi.advanceTimersByTimeAsync(10000); // 40s - 4th heartbeat
+    await vi.advanceTimersByTimeAsync(80000); // 120s total
 
-    // Verify 4 heartbeats occurred (every 30s for 120s)
-    expect(mockReportProgress).toHaveBeenCalledTimes(4);
+    // Verify 12 heartbeats occurred (every 10s for 120s)
+    expect(mockReportProgress).toHaveBeenCalledTimes(12);
 
     // User finally submits form
     eventHandler!({ action: "custom-domain", repoName: "slow-user" });
@@ -282,10 +284,10 @@ describe("Phase 3: Progress Heartbeat During Interactive Form", () => {
     // Start the repo setup
     const resultPromise = ensureGitHubRepo();
 
-    // Trigger 3 heartbeats
-    await vi.advanceTimersByTimeAsync(30000);
-    await vi.advanceTimersByTimeAsync(30000);
-    await vi.advanceTimersByTimeAsync(30000);
+    // Trigger 3 heartbeats (10s each)
+    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(10000);
 
     expect(mockReportProgress).toHaveBeenCalledTimes(3);
 

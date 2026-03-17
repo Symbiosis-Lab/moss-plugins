@@ -16,6 +16,7 @@ import { reportProgress } from "./utils";
 import { getToken, getTokenFromGit, storeToken } from "./token";
 import { getAuthenticatedUser, checkRepoExists, createRepository, getRepoSshUrl } from "./github-api";
 import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
+import { DEPLOY_HEARTBEAT_INTERVAL_MS } from "./constants";
 
 /**
  * Result from the repo setup flow
@@ -185,10 +186,10 @@ async function showBrowserWithProgress<T>(
   progressMessage: string,
   timeoutMs: number = 300000
 ): Promise<T | null> {
-  // Start heartbeat interval (every 30 seconds)
+  // Start heartbeat interval — must be < progress panel STALE_TIMEOUT_MS (15s)
   const heartbeat = setInterval(async () => {
     await reportProgress("setup", 0, 6, progressMessage);
-  }, 30000);
+  }, DEPLOY_HEARTBEAT_INTERVAL_MS);
 
   let unlisten: (() => void) | null = null;
 

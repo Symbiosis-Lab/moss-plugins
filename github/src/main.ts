@@ -18,6 +18,7 @@ import { promptLogin, validateToken, hasRequiredScopes } from "./auth";
 import { ensureGitHubRepo } from "./repo-setup";
 import { checkPagesStatus, requestPagesBuild, setCustomDomain, ensurePagesSource, getPages, enforceHttps } from "./github-api";
 import { getToken, getTokenFromGit, storeToken } from "./token";
+import { DEPLOY_HEARTBEAT_INTERVAL_MS } from "./constants";
 
 // ============================================================================
 // GitHub Pages DNS Configuration
@@ -243,13 +244,14 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Phase 2: Verify repository exists (fail fast with clear error)
     await verifyRepoExists(owner, repoName, token);
 
-    // Heartbeat safety net: report progress every 30s to prevent inactivity timeout
+    // Heartbeat safety net: report progress periodically to prevent inactivity timeout
+    // and keep the progress panel visible (must be < STALE_TIMEOUT_MS of 15s).
     // Tracks current phase so heartbeat message is informative, not generic
     let deployResult: DeployResult = { commitSha: "", orphanSha: "" };
     let currentPhase = "Deploying...";
     const heartbeat = setInterval(() => {
       reportProgress("deploying", 5, 10, currentPhase);
-    }, 30_000);
+    }, DEPLOY_HEARTBEAT_INTERVAL_MS);
 
     // Read custom domain from config so CNAME file is included in gh-pages
     let domain: string | undefined;

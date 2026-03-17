@@ -609,6 +609,15 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
 
     for (const article of articlesToSyndicate) {
       try {
+        // Verify article is actually live at its deployed URL before syndicating.
+        // Prevents publishing broken links (e.g., new article not yet deployed,
+        // or GitHub Pages build failed).
+        const live = await isArticleLive(siteUrl, article.url_path);
+        if (!live) {
+          console.log(`    ⏭ Skipping ${article.title} — not yet live at ${siteUrl}/${article.url_path}`);
+          continue;
+        }
+
         const result = await syndicateArticle(article, siteUrl, userName, {
           addCanonicalLink: addCanonicalLink as boolean,
           lang,
@@ -652,6 +661,27 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       success: false,
       message: `Syndication failed: ${error}`,
     };
+  }
+}
+
+/**
+ * Check if an article is live at its deployed URL.
+ *
+ * Sends a HEAD request to the derived URL. Returns true if the server
+ * responds with a 2xx status, false otherwise (404, network error, etc.).
+ *
+ * Used before syndication to avoid publishing links to articles that
+ * haven't been deployed yet (e.g., new articles during concurrent syndication).
+ */
+export async function isArticleLive(siteUrl: string, articleUrlPath: string): Promise<boolean> {
+  const base = siteUrl.replace(/\/$/, "");
+  const path = articleUrlPath.replace(/^\//, "");
+  const fullUrl = `${base}/${path}`;
+  try {
+    const response = await fetch(fullUrl, { method: "HEAD" });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 

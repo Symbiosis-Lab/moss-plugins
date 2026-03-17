@@ -7,14 +7,14 @@
  *   writes .moss/social/review.json.
  *
  * enhance (slot content):
- *   Declares CSS, per-page review headers and colophons for template injection.
+ *   Declares CSS and per-page review colophons for template injection.
  */
 
 import { readFile, writeFile, readPluginFile, downloadAsset, type EnhanceContext, type EnhanceResult, type EnhanceContent } from "@symbiosis-lab/moss-api";
 import { fetchReviewItem } from "./fetch";
 import { detectSource } from "./sources";
 import { loadReviewSocialData, saveReviewSocialData, upsertReviewEntry } from "./social-writer";
-import { renderHeader, renderColophon } from "./render";
+import { renderColophon } from "./render";
 import type {
   ProcessContext,
   HookResult,
@@ -278,8 +278,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
  * enhance - Declare content for template slots.
  *
  * Returns:
- * - "head-end": static CSS for review header/colophon
- * - "after-title": per-page review headers (cover + creator + year)
+ * - "head-end": static CSS for review colophon
  * - "before-article-end": per-page review colophons (rating, biblio, links)
  */
 export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
@@ -323,8 +322,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     }
   }
 
-  // 4. Build per-page header and colophon HTML
-  const headerPages: Record<string, string> = {};
+  // 4. Build per-page colophon HTML
   const colophonPages: Record<string, string> = {};
 
   for (const [uid, entry] of Object.entries(socialData.articles)) {
@@ -333,19 +331,10 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
 
     const coverUrl = uidToCover.get(uid) ?? null;
 
-    const headerHtml = renderHeader(entry, coverUrl);
-    if (headerHtml) {
-      headerPages[urlPath] = headerHtml;
-    }
-
     const colophonHtml = renderColophon(entry, coverUrl);
     if (colophonHtml) {
       colophonPages[urlPath] = colophonHtml;
     }
-  }
-
-  if (Object.keys(headerPages).length > 0) {
-    slots["after-title"] = { type: "per-page", pages: headerPages };
   }
 
   if (Object.keys(colophonPages).length > 0) {

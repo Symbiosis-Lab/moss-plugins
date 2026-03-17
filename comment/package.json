@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm run clean && npm run bundle && npm run copy-assets",
     "dev": "npm run clean && npm run copy-assets && concurrently \"npm run bundle -- --watch\" \"npm run watch-assets\"",
-    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=CommentPlugin --define:process.env={} --outfile=dist/main.bundle.js",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=CommentPlugin --outfile=dist/main.bundle.js",
     "clean": "rm -rf dist && mkdir -p dist",
     "copy-assets": "cp assets/* dist/ && cp browser/moss-comments.css dist/",
     "watch-assets": "chokidar 'assets/**/*' 'browser/**/*' -c 'npm run copy-assets'",
@@ -23,7 +23,6 @@
   "license": "MIT",
   "devDependencies": {
     "@symbiosis-lab/moss-api": "workspace:*",
-    "@types/sanitize-html": "^2.16.0",
     "chokidar-cli": "^3.0.0",
     "concurrently": "^8.2.0",
     "esbuild": "^0.27.0",
@@ -31,6 +30,6 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "sanitize-html": "^2.17.0"
+    "dompurify": "^3.2.4"
   }
 }

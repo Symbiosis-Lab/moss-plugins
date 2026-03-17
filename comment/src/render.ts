@@ -9,7 +9,7 @@
 
 import type { NormalizedComment } from "./types";
 import { translations, type Lang } from "./i18n";
-import sanitizeHtmlLib from 'sanitize-html';
+import DOMPurify from 'dompurify';
 
 // ============================================================================
 // SVG Icon (Lucide)
@@ -39,19 +39,15 @@ export function escapeHtml(text: string): string {
 
 /**
  * Sanitizes HTML content to prevent XSS attacks.
- * Uses sanitize-html library for robust, battle-tested sanitization.
+ * Uses DOMPurify for robust, browser-native sanitization.
  */
 export function sanitizeHtml(html: string): string {
-  return sanitizeHtmlLib(html, {
-    allowedTags: [
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
       'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li',
       'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
     ],
-    allowedAttributes: {
-      'a': ['href', 'title']
-    },
-    allowedSchemes: ['http', 'https', 'mailto'],
-    disallowedTagsMode: 'discard'
+    ALLOWED_ATTR: ['href', 'title'],
   });
 }
 

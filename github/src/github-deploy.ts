@@ -156,6 +156,26 @@ export async function getOriginOwnerRepo(gitPath: string = "git"): Promise<{ own
 /** GitHub's per-file size limit: 100 MB */
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
+/**
+ * Patterns in git error output that indicate corrupt local objects.
+ * These errors cannot be fixed by retrying — the .git directory must
+ * be wiped and reinitialized. Common cause: iCloud sync corrupting
+ * .git/objects/ files.
+ */
+const CORRUPT_GIT_PATTERNS = [
+  "Could not read",
+  "Failed to traverse parents",
+  "bad object",
+  "corrupt",
+];
+
+/**
+ * Check if a git error message indicates corrupt local git state.
+ */
+export function looksLikeCorruptGit(errorMsg: string): boolean {
+  return CORRUPT_GIT_PATTERNS.some(p => errorMsg.includes(p));
+}
+
 // ============================================================================
 // Git Push Deploy
 // ============================================================================
@@ -267,197 +287,220 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
     );
   }
 
-  // ── 1. Init git repo if needed, reinit if target repo changed ────────
-  // IDEMPOTENT: detect repo change and reinitialize .git so switching
-  // deploy targets doesn't push to the wrong remote.
-  const check = await git(["rev-parse", "--git-dir"]);
-  let needsInit = !check.success;
+  // Inner function containing the full init → add → commit → push sequence.
+  // Extracted so we can retry once on corrupt git state.
+  async function attemptDeploy(): Promise<DeployResult> {
+    // ── 1. Init git repo if needed, reinit if target repo changed ────────
+    // IDEMPOTENT: detect repo change and reinitialize .git so switching
+    // deploy targets doesn't push to the wrong remote.
+    const check = await git(["rev-parse", "--git-dir"]);
+    let needsInit = !check.success;
 
-  if (check.success) {
-    const originUrl = await git(["remote", "get-url", "origin"]);
-    if (!originUrl.success || originUrl.stdout.trim() !== repoMarker) {
-      // Origin missing or pointing at a different repo — wipe and reinit
-      const rm = await executeBinary({
-        binaryPath: "rm", args: ["-rf", ".git"],
-        workingDir: ".", timeoutMs: 10_000, env: {},
-      });
-      if (!rm.success) throw new Error(`Failed to remove stale .git: ${rm.stderr}`);
-      needsInit = true;
+    if (check.success) {
+      const originUrl = await git(["remote", "get-url", "origin"]);
+      if (!originUrl.success || originUrl.stdout.trim() !== repoMarker) {
+        // Origin missing or pointing at a different repo — wipe and reinit
+        const rm = await executeBinary({
+          binaryPath: "rm", args: ["-rf", ".git"],
+          workingDir: ".", timeoutMs: 10_000, env: {},
+        });
+        if (!rm.success) throw new Error(`Failed to remove stale .git: ${rm.stderr}`);
+        needsInit = true;
+      }
     }
-  }
 
-  if (needsInit) {
-    await git(["init"]);
-    await git(["config", "user.email", "moss@symbiosis-lab.com"]);
-    await git(["config", "user.name", "moss"]);
-    await git(["remote", "add", "origin", repoMarker]);
-  }
+    if (needsInit) {
+      await git(["init"]);
+      await git(["config", "user.email", "moss@symbiosis-lab.com"]);
+      await git(["config", "user.name", "moss"]);
+      await git(["remote", "add", "origin", repoMarker]);
+    }
 
-  // ── Ensure .gitignore: exclude .moss/* except .moss/site/ ─────────────
-  onProgress(1, "Writing .gitignore...");
-  await executeBinary({
-    binaryPath: "sh",
-    args: ["-c", 'printf "node_modules/\\n.DS_Store\\n.moss/*\\n!.moss/site/\\n" > .gitignore'],
-    workingDir: ".",
-    timeoutMs: 5_000,
-    env: {},
-  });
-
-  // IDEMPOTENT: remove stale lock from crashed git add
-  await executeBinary({
-    binaryPath: "rm", args: ["-f", ".git/index.lock"],
-    workingDir: ".", timeoutMs: 5_000, env: {},
-  });
-
-  // ── Check for source files >100MB and append to .gitignore ────────────
-  onProgress(2, "Checking file sizes...");
-  const findResult = await executeBinary({
-    binaryPath: "find",
-    args: [
-      ".", "-not", "-path", "./.moss/*", "-not", "-path", "./.git/*",
-      "-type", "f", "-size", "+100M",
-    ],
-    workingDir: ".",
-    timeoutMs: 30_000,
-    env: {},
-  });
-
-  const largeSourceFiles = findResult.stdout
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    // Strip leading "./" from find output
-    .map((l) => l.startsWith("./") ? l.slice(2) : l);
-
-  if (largeSourceFiles.length > 0) {
-    // Append large files to .gitignore so git add skips them
-    const escapedFiles = largeSourceFiles.map((f) => f.replace(/'/g, "'\\''")).join("\\n");
+    // ── Ensure .gitignore: exclude .moss/* except .moss/site/ ─────────────
+    onProgress(1, "Writing .gitignore...");
     await executeBinary({
       binaryPath: "sh",
-      args: ["-c", `printf "\\n${escapedFiles}\\n" >> .gitignore`],
+      args: ["-c", 'printf "node_modules/\\n.DS_Store\\n.moss/*\\n!.moss/site/\\n" > .gitignore'],
       workingDir: ".",
       timeoutMs: 5_000,
       env: {},
     });
 
-    // Show warning toast
-    const fileList = largeSourceFiles
-      .map((f) => `&nbsp;&nbsp;${f}`)
-      .join("<br>");
-    await showToast({
-      variant: "warning",
-      message: `Skipped ${largeSourceFiles.length} file(s) exceeding 100 MB:<br>${fileList}`,
-      duration: 10_000,
+    // IDEMPOTENT: remove stale lock from crashed git add
+    await executeBinary({
+      binaryPath: "rm", args: ["-f", ".git/index.lock"],
+      workingDir: ".", timeoutMs: 5_000, env: {},
     });
-  }
 
-  onProgress(3, "Checking file sizes...");
-
-  // ── 2. Stage everything (source + .moss/site/) ───────────────────────
-  onProgress(5, "Staging files...");
-  await git(["add", "--all", "-v"], (line) => {
-    // git add -v outputs "add '<filename>'" lines to stderr
-    const match = line.match(/add '(.+)'/);
-    if (match) {
-      onProgress(5, `Staging ${match[1]}`);
-    }
-  });
-
-  // ── 3. Check for changes and commit if needed ──────────────────────
-  const diff = await git(["diff", "--cached", "--quiet"]);
-  const hasChanges = !diff.success;
-  let sha = "";
-
-  if (hasChanges) {
-    onProgress(15, "Creating commit...");
-    const commit = await git(["commit", "-m", "Deploy site\n\nGenerated by moss"]);
-    if (!commit.success) throw new Error(`git commit failed: ${sanitize(commit.stderr, token)}`);
-    const revParse = await git(["rev-parse", "--short", "HEAD"]);
-    sha = revParse.success ? revParse.stdout.trim() : "";
-  } else {
-    // IDEMPOTENT: check if there are any commits to push.
-    // First-ever init with no files = nothing to push.
-    const hasCommits = await git(["rev-parse", "HEAD"]);
-    if (!hasCommits.success) return { commitSha: "", orphanSha: "" };
-  }
-
-  // ── 4. Extract .moss/site/ tree and create orphan commit for gh-pages ─
-  onProgress(20, "Preparing gh-pages...");
-  const tree = await git(["rev-parse", "HEAD:.moss/site"]);
-  if (!tree.success) throw new Error(`Failed to resolve .moss/site tree: ${sanitize(tree.stderr, token)}`);
-
-  // Inject .nojekyll (always) and CNAME (when domain is set) into the
-  // gh-pages tree. Without .nojekyll, GitHub runs Jekyll which may skip
-  // files starting with underscores or fail to trigger the Pages pipeline.
-  // Without CNAME, each force-push removes the custom domain setting.
-  // Both are injected in a single ls-tree → modify → mktree pass.
-  let treeSha = tree.stdout.trim();
-  {
-    // Create empty .nojekyll blob
-    const nojekyllHash = await executeBinary({
-      binaryPath: options.gitPath,
-      args: ["hash-object", "-w", "--stdin"],
+    // ── Check for source files >100MB and append to .gitignore ────────────
+    onProgress(2, "Checking file sizes...");
+    const findResult = await executeBinary({
+      binaryPath: "find",
+      args: [
+        ".", "-not", "-path", "./.moss/*", "-not", "-path", "./.git/*",
+        "-type", "f", "-size", "+100M",
+      ],
       workingDir: ".",
-      timeoutMs: 5_000,
-      env: { GIT_TERMINAL_PROMPT: "0" },
-      stdin: "",
+      timeoutMs: 30_000,
+      env: {},
     });
 
-    if (nojekyllHash.success) {
-      const lsTree = await git(["ls-tree", treeSha]);
-      if (lsTree.success) {
-        // Filter out existing .nojekyll and CNAME entries to avoid duplicates
-        // (user's site may already contain these files)
-        const filteredEntries = lsTree.stdout.trimEnd().split("\n")
-          .filter(line => !line.endsWith("\t.nojekyll") && !line.endsWith("\tCNAME"))
-          .join("\n");
-        let treeEntries = filteredEntries
-          + "\n100644 blob " + nojekyllHash.stdout.trim() + "\t.nojekyll\n";
+    const largeSourceFiles = findResult.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+      // Strip leading "./" from find output
+      .map((l) => l.startsWith("./") ? l.slice(2) : l);
 
-        // Additionally inject CNAME when domain is configured
-        if (options.domain) {
-          const cnameHash = await executeBinary({
+    if (largeSourceFiles.length > 0) {
+      // Append large files to .gitignore so git add skips them
+      const escapedFiles = largeSourceFiles.map((f) => f.replace(/'/g, "'\\''")).join("\\n");
+      await executeBinary({
+        binaryPath: "sh",
+        args: ["-c", `printf "\\n${escapedFiles}\\n" >> .gitignore`],
+        workingDir: ".",
+        timeoutMs: 5_000,
+        env: {},
+      });
+
+      // Show warning toast
+      const fileList = largeSourceFiles
+        .map((f) => `&nbsp;&nbsp;${f}`)
+        .join("<br>");
+      await showToast({
+        variant: "warning",
+        message: `Skipped ${largeSourceFiles.length} file(s) exceeding 100 MB:<br>${fileList}`,
+        duration: 10_000,
+      });
+    }
+
+    onProgress(3, "Checking file sizes...");
+
+    // ── 2. Stage everything (source + .moss/site/) ───────────────────────
+    onProgress(5, "Staging files...");
+    await git(["add", "--all", "-v"], (line) => {
+      // git add -v outputs "add '<filename>'" lines to stderr
+      const match = line.match(/add '(.+)'/);
+      if (match) {
+        onProgress(5, `Staging ${match[1]}`);
+      }
+    });
+
+    // ── 3. Check for changes and commit if needed ──────────────────────
+    const diff = await git(["diff", "--cached", "--quiet"]);
+    const hasChanges = !diff.success;
+    let sha = "";
+
+    if (hasChanges) {
+      onProgress(15, "Creating commit...");
+      const commit = await git(["commit", "-m", "Deploy site\n\nGenerated by moss"]);
+      if (!commit.success) throw new Error(`git commit failed: ${sanitize(commit.stderr, token)}`);
+      const revParse = await git(["rev-parse", "--short", "HEAD"]);
+      sha = revParse.success ? revParse.stdout.trim() : "";
+    } else {
+      // IDEMPOTENT: check if there are any commits to push.
+      // First-ever init with no files = nothing to push.
+      const hasCommits = await git(["rev-parse", "HEAD"]);
+      if (!hasCommits.success) return { commitSha: "", orphanSha: "" };
+    }
+
+    // ── 4. Extract .moss/site/ tree and create orphan commit for gh-pages ─
+    onProgress(20, "Preparing gh-pages...");
+    const tree = await git(["rev-parse", "HEAD:.moss/site"]);
+    if (!tree.success) throw new Error(`Failed to resolve .moss/site tree: ${sanitize(tree.stderr, token)}`);
+
+    // Inject .nojekyll (always) and CNAME (when domain is set) into the
+    // gh-pages tree. Without .nojekyll, GitHub runs Jekyll which may skip
+    // files starting with underscores or fail to trigger the Pages pipeline.
+    // Without CNAME, each force-push removes the custom domain setting.
+    // Both are injected in a single ls-tree → modify → mktree pass.
+    let treeSha = tree.stdout.trim();
+    {
+      // Create empty .nojekyll blob
+      const nojekyllHash = await executeBinary({
+        binaryPath: options.gitPath,
+        args: ["hash-object", "-w", "--stdin"],
+        workingDir: ".",
+        timeoutMs: 5_000,
+        env: { GIT_TERMINAL_PROMPT: "0" },
+        stdin: "",
+      });
+
+      if (nojekyllHash.success) {
+        const lsTree = await git(["ls-tree", treeSha]);
+        if (lsTree.success) {
+          // Filter out existing .nojekyll and CNAME entries to avoid duplicates
+          // (user's site may already contain these files)
+          const filteredEntries = lsTree.stdout.trimEnd().split("\n")
+            .filter(line => !line.endsWith("\t.nojekyll") && !line.endsWith("\tCNAME"))
+            .join("\n");
+          let treeEntries = filteredEntries
+            + "\n100644 blob " + nojekyllHash.stdout.trim() + "\t.nojekyll\n";
+
+          // Additionally inject CNAME when domain is configured
+          if (options.domain) {
+            const cnameHash = await executeBinary({
+              binaryPath: options.gitPath,
+              args: ["hash-object", "-w", "--stdin"],
+              workingDir: ".",
+              timeoutMs: 5_000,
+              env: { GIT_TERMINAL_PROMPT: "0" },
+              stdin: options.domain + "\n",
+            });
+            if (cnameHash.success) {
+              treeEntries += "100644 blob " + cnameHash.stdout.trim() + "\tCNAME\n";
+            }
+          }
+
+          const mktree = await executeBinary({
             binaryPath: options.gitPath,
-            args: ["hash-object", "-w", "--stdin"],
+            args: ["mktree"],
             workingDir: ".",
             timeoutMs: 5_000,
             env: { GIT_TERMINAL_PROMPT: "0" },
-            stdin: options.domain + "\n",
+            stdin: treeEntries,
           });
-          if (cnameHash.success) {
-            treeEntries += "100644 blob " + cnameHash.stdout.trim() + "\tCNAME\n";
-          }
+          if (mktree.success) treeSha = mktree.stdout.trim();
         }
-
-        const mktree = await executeBinary({
-          binaryPath: options.gitPath,
-          args: ["mktree"],
-          workingDir: ".",
-          timeoutMs: 5_000,
-          env: { GIT_TERMINAL_PROMPT: "0" },
-          stdin: treeEntries,
-        });
-        if (mktree.success) treeSha = mktree.stdout.trim();
       }
     }
+
+    const orphan = await git(["commit-tree", treeSha, "-m", "Deploy site\n\nGenerated by moss"]);
+    if (!orphan.success) throw new Error(`Failed to create gh-pages commit: ${sanitize(orphan.stderr, token)}`);
+    const orphanSha = orphan.stdout.trim();
+
+    // ── 5. Push main + gh-pages in one command (single connection, no double upload)
+    onProgress(25, "Pushing to GitHub...");
+    const push = await git(
+      [
+        "push", "--force", "--progress", pushUrl,
+        "HEAD:refs/heads/main",
+        `${orphanSha}:refs/heads/gh-pages`,
+      ],
+      (line) => parsePushProgress(line, 25, 95, onProgress, token),
+    );
+    if (!push.success) throw new Error(`git push failed: ${sanitize(push.stderr, token)}`);
+
+    onProgress(100, "Deployed!");
+    return { commitSha: sha, orphanSha };
   }
 
-  const orphan = await git(["commit-tree", treeSha, "-m", "Deploy site\n\nGenerated by moss"]);
-  if (!orphan.success) throw new Error(`Failed to create gh-pages commit: ${sanitize(orphan.stderr, token)}`);
-  const orphanSha = orphan.stdout.trim();
+  // ── Execute with corrupt-git recovery ──────────────────────────────────
+  // If the deploy fails due to corrupt local git objects (common with iCloud
+  // sync), wipe .git and retry once. Since we force-push, no history is needed.
+  try {
+    return await attemptDeploy();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!looksLikeCorruptGit(msg)) throw err;
 
-  // ── 5. Push main + gh-pages in one command (single connection, no double upload)
-  onProgress(25, "Pushing to GitHub...");
-  const push = await git(
-    [
-      "push", "--force", "--progress", pushUrl,
-      "HEAD:refs/heads/main",
-      `${orphanSha}:refs/heads/gh-pages`,
-    ],
-    (line) => parsePushProgress(line, 25, 95, onProgress, token),
-  );
-  if (!push.success) throw new Error(`git push failed: ${sanitize(push.stderr, token)}`);
-
-  onProgress(100, "Deployed!");
-  return { commitSha: sha, orphanSha };
+    // Corrupt git state detected — wipe and retry once
+    onProgress(0, "Recovering from corrupt git state...");
+    console.warn("Corrupt git detected, reinitializing .git");
+    await executeBinary({
+      binaryPath: "rm", args: ["-rf", ".git"],
+      workingDir: ".", timeoutMs: 10_000, env: {},
+    });
+    return await attemptDeploy();
+  }
 }

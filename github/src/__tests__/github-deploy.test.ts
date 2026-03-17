@@ -29,6 +29,7 @@ import {
   deployViaGitPush,
   verifyRepoExists,
   getOriginOwnerRepo,
+  looksLikeCorruptGit,
   type DeployViaGitPushOptions,
   type DeployResult,
 } from "../github-deploy";
@@ -1304,6 +1305,187 @@ describe("github-deploy", () => {
         expect((result as DeployResult).commitSha).toBe("");
         expect((result as DeployResult).orphanSha).toBe("");
       });
+    });
+
+    // ========================================================================
+    // Corrupt git recovery (auto-reinitialize on corrupt .git)
+    // ========================================================================
+    describe("corrupt git recovery", () => {
+      it("retries deploy after wiping corrupt .git when push fails with 'Could not read' error", async () => {
+        const corruptPushError = "error: Could not read 6077fdfa2120f56c44a1504a3d05deac53a83781\n" +
+          "fatal: Failed to traverse parents of commit 6e3a40c7dae586b51d844ecdcec03ec8da841a32\n" +
+          "fatal: the remote end hung up unexpectedly";
+
+        // First attempt: full deploy sequence, push fails with corrupt error
+        mockExecuteBinary
+          .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
+          .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
+          .mockResolvedValueOnce(gitResult(false, "", corruptPushError))  // push FAILS (corrupt)
+          // Recovery: rm -rf .git
+          .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
+          // Retry: full deploy sequence again (needsInit = true since .git was removed)
+          .mockResolvedValueOnce(gitResult(false))                   // rev-parse --git-dir (no .git)
+          .mockResolvedValueOnce(gitResult(true))                    // git init
+          .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+          .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+          .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main def] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "def5678\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // rev-parse tree
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree2\n"))      // mktree
+          .mockResolvedValueOnce(gitResult(true, "orphan2\n"))       // commit-tree
+          .mockResolvedValueOnce(gitResult(true));                   // push SUCCEEDS
+
+        const onProgress = vi.fn();
+        const result = await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
+
+        // Should succeed on retry
+        expect((result as DeployResult).commitSha).toBe("def5678");
+
+        // Verify .git was wiped during recovery
+        const rmCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "rm" && call[0].args.includes("-rf") && call[0].args.includes(".git")
+        );
+        expect(rmCalls.length).toBeGreaterThanOrEqual(1);
+
+        // Verify recovery progress was reported
+        expect(onProgress).toHaveBeenCalledWith(0, expect.stringContaining("Recovering"));
+      });
+
+      it("does NOT retry on non-corruption push failures", async () => {
+        const authError = "fatal: Authentication failed for 'https://github.com/user/repo.git'";
+
+        // Full deploy sequence, push fails with auth error
+        mockExecuteBinary
+          .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+          .mockResolvedValueOnce(gitResult(false))                   // git diff --cached --quiet (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
+          .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
+          .mockResolvedValueOnce(gitResult(false, "", authError));    // push FAILS (auth error)
+
+        const onProgress = vi.fn();
+
+        await expect(
+          deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" })
+        ).rejects.toThrow("git push failed");
+
+        // Should NOT have tried to rm -rf .git for recovery
+        const rmCalls = mockExecuteBinary.mock.calls.filter(
+          (call) => call[0].binaryPath === "rm" && call[0].args.includes("-rf") && call[0].args.includes(".git")
+        );
+        expect(rmCalls).toHaveLength(0);
+      });
+
+      it("throws if retry also fails", async () => {
+        const corruptError = "error: Could not read abc123\nfatal: Failed to traverse parents of commit def456";
+
+        // First attempt fails with corruption
+        mockExecuteBinary
+          .mockResolvedValueOnce(gitResult(true))                    // rev-parse --git-dir
+          .mockResolvedValueOnce(gitResult(true, REPO_MARKER + "\n"))  // remote get-url origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main abc] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "abc1234\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // rev-parse tree
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree\n"))       // mktree
+          .mockResolvedValueOnce(gitResult(true, "orphan1\n"))       // commit-tree
+          .mockResolvedValueOnce(gitResult(false, "", corruptError)) // push FAILS (corrupt)
+          // Recovery: rm -rf .git
+          .mockResolvedValueOnce(gitResult(true))                    // rm -rf .git
+          // Retry: also fails
+          .mockResolvedValueOnce(gitResult(false))                   // rev-parse --git-dir (no .git)
+          .mockResolvedValueOnce(gitResult(true))                    // git init
+          .mockResolvedValueOnce(gitResult(true))                    // git config user.email
+          .mockResolvedValueOnce(gitResult(true))                    // git config user.name
+          .mockResolvedValueOnce(gitResult(true))                    // git remote add origin
+          .mockResolvedValueOnce(gitResult(true))                    // write .gitignore
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
+          .mockResolvedValueOnce(gitResult(true, ""))                // find large source files
+          .mockResolvedValueOnce(gitResult(true))                    // git add --all -v
+          .mockResolvedValueOnce(gitResult(false))                   // git diff (changes)
+          .mockResolvedValueOnce(gitResult(true, "[main def] Deploy\n"))  // commit
+          .mockResolvedValueOnce(gitResult(true, "def5678\n"))       // rev-parse --short HEAD
+          .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // rev-parse tree
+          .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
+          .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
+          .mockResolvedValueOnce(gitResult(true, "modTree2\n"))      // mktree
+          .mockResolvedValueOnce(gitResult(true, "orphan2\n"))       // commit-tree
+          .mockResolvedValueOnce(gitResult(false, "", "fatal: some other error"));  // push FAILS again
+
+        const onProgress = vi.fn();
+
+        await expect(
+          deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" })
+        ).rejects.toThrow("git push failed");
+      });
+    });
+  });
+
+  // ==========================================================================
+  // looksLikeCorruptGit
+  // ==========================================================================
+  describe("looksLikeCorruptGit", () => {
+    it("detects 'Could not read' errors", () => {
+      expect(looksLikeCorruptGit("error: Could not read 6077fdfa2120f56c44a1504a3d05deac53a83781")).toBe(true);
+    });
+
+    it("detects 'Failed to traverse parents' errors", () => {
+      expect(looksLikeCorruptGit("fatal: Failed to traverse parents of commit 6e3a40c")).toBe(true);
+    });
+
+    it("detects 'bad object' errors", () => {
+      expect(looksLikeCorruptGit("fatal: bad object HEAD")).toBe(true);
+    });
+
+    it("detects 'corrupt' in error messages", () => {
+      expect(looksLikeCorruptGit("error: corrupt loose object '6077fdfa'")).toBe(true);
+    });
+
+    it("returns false for authentication errors", () => {
+      expect(looksLikeCorruptGit("fatal: Authentication failed")).toBe(false);
+    });
+
+    it("returns false for rejection errors", () => {
+      expect(looksLikeCorruptGit("error: failed to push some refs to 'https://github.com/...'")).toBe(false);
+    });
+
+    it("returns false for empty string", () => {
+      expect(looksLikeCorruptGit("")).toBe(false);
     });
   });
 });

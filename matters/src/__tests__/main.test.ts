@@ -182,9 +182,9 @@ describe("syndicateArticle - cover upload", () => {
       expect.not.objectContaining({ cover: expect.anything() })
     );
 
-    // Second createDraft: updates draft with cover asset ID
+    // Second createDraft: updates draft with cover asset ID AND preserves title
     expect(createDraft).toHaveBeenNthCalledWith(2,
-      expect.objectContaining({ id: "draft-123", cover: "asset-abc-123" })
+      expect.objectContaining({ id: "draft-123", cover: "asset-abc-123", title: "Test Article" })
     );
   });
 

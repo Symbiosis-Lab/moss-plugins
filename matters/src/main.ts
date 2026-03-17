@@ -774,7 +774,7 @@ export async function syndicateArticle(
       const coverAssetId = await uploadCoverByUrl(coverUrl, draft.id);
       console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
       // Update draft with cover
-      await createDraft({ id: draft.id, cover: coverAssetId });
+      await createDraft({ id: draft.id, title: draft.title, cover: coverAssetId });
       console.log(`    🖼️ Draft updated with cover`);
     } catch (error) {
       console.warn(`    ⚠️ Cover upload failed, continuing without cover: ${error}`);

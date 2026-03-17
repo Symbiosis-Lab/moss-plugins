@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * Tests for i18n infrastructure
  *

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * Tests for comment section rendering
  *

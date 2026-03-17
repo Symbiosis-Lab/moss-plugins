@@ -9,8 +9,6 @@
 
 import type { NormalizedComment } from "./types";
 import { translations, type Lang } from "./i18n";
-import DOMPurify from 'dompurify';
-
 // ============================================================================
 // SVG Icon (Lucide)
 // ============================================================================
@@ -22,7 +20,7 @@ const ICON_MESSAGE_CIRCLE = `<svg class="comments-icon" xmlns="http://www.w3.org
 const ICON_CHEVRON = `<svg class="comments-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
 
 // ============================================================================
-// HTML Sanitization
+// HTML Escaping
 // ============================================================================
 
 /**
@@ -35,20 +33,6 @@ export function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
-}
-
-/**
- * Sanitizes HTML content to prevent XSS attacks.
- * Uses DOMPurify for robust, browser-native sanitization.
- */
-export function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: [
-      'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li',
-      'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
-    ],
-    ALLOWED_ATTR: ['href', 'title'],
-  });
 }
 
 // ============================================================================
@@ -87,7 +71,7 @@ function renderComment(comment: NormalizedComment, lang: Lang = "en", serverConf
     : `<span class="comment-author">${authorName}</span>`;
 
   const dateStr = formatDate(comment.date, lang);
-  const contentHtml = sanitizeHtml(comment.content_html);
+  const contentHtml = comment.content_html;
 
   const showReply = serverConfigured && comment.source === "comment";
   const replyBtn = showReply

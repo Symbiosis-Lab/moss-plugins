@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderStars, renderHeader, renderColophon } from "../render";
+import { renderStars, renderColophon } from "../render";
 import type { ReviewSocialEntry } from "../types";
 
 const makeEntry = (overrides: Partial<ReviewSocialEntry> = {}): ReviewSocialEntry => ({
@@ -48,78 +48,6 @@ describe("renderStars", () => {
   });
 });
 
-describe("renderHeader", () => {
-  it("renders cover + title + subtitle + creator + year", () => {
-    const html = renderHeader(makeEntry(), "图片/cover.jpg");
-    expect(html).toContain('class="review-header"');
-    expect(html).toContain('class="review-cover"');
-    expect(html).toContain('class="review-meta-title"');
-    expect(html).toContain("Seeing Like a State");
-    expect(html).toContain("How Certain Schemes");
-    expect(html).toContain("James C. Scott");
-    expect(html).toContain("1998");
-  });
-
-  it("does not include width attribute on cover image", () => {
-    const html = renderHeader(makeEntry(), "图片/cover.jpg");
-    expect(html).not.toContain('width=');
-  });
-
-  it("omits cover when coverUrl is null", () => {
-    const html = renderHeader(makeEntry(), null);
-    expect(html).not.toContain("<img");
-    expect(html).toContain("James C. Scott");
-  });
-
-  it("returns empty when no creator and no year", () => {
-    const html = renderHeader(makeEntry({ creator: [], year: null }), null);
-    expect(html).toBe("");
-  });
-
-  it("shows only creator when no year", () => {
-    const html = renderHeader(makeEntry({ year: null }), null);
-    expect(html).toContain("James C. Scott");
-    expect(html).toContain('class="review-meta-creator"');
-  });
-
-  it("joins multiple creators with comma", () => {
-    const html = renderHeader(makeEntry({ creator: ["Alice", "Bob"] }), null);
-    expect(html).toContain("Alice, Bob");
-  });
-
-  it("omits subtitle when null", () => {
-    const html = renderHeader(makeEntry({ subtitle: null }), null);
-    expect(html).not.toContain("review-meta-subtitle");
-  });
-
-  it("renders subtitle when present", () => {
-    const html = renderHeader(makeEntry(), null);
-    expect(html).toContain('class="review-meta-subtitle"');
-    expect(html).toContain("How Certain Schemes");
-  });
-
-  it("prepends / to local cover path for root-relative resolution", () => {
-    const html = renderHeader(makeEntry(), "assets/covers/book.jpg");
-    expect(html).toContain('src="/assets/covers/book.jpg"');
-  });
-
-  it("prepends / to non-Latin local cover path", () => {
-    const html = renderHeader(makeEntry(), "图片/cover.jpg");
-    expect(html).toContain('src="/图片/cover.jpg"');
-  });
-
-  it("keeps external URL unchanged", () => {
-    const html = renderHeader(makeEntry(), "https://example.com/cover.jpg");
-    expect(html).toContain('src="https://example.com/cover.jpg"');
-  });
-
-  it("does not double-prefix already root-relative path", () => {
-    const html = renderHeader(makeEntry(), "/assets/covers/book.jpg");
-    expect(html).toContain('src="/assets/covers/book.jpg"');
-    expect(html).not.toContain('src="//');
-  });
-});
-
 describe("renderColophon", () => {
   it("renders card with title, subtitle, rating, biblio, and links", () => {
     const html = renderColophon(makeEntry(), "图片/cover.jpg");
@@ -137,6 +65,14 @@ describe("renderColophon", () => {
     expect(html).toContain("NeoDB");
     expect(html).toContain("Goodreads");
     expect(html).toContain("Open Library");
+  });
+
+  it("opens external links in new tab", () => {
+    const html = renderColophon(makeEntry(), null);
+    expect(html).toContain('target="_blank" rel="noopener">Douban</a>');
+    expect(html).toContain('target="_blank" rel="noopener">NeoDB</a>');
+    expect(html).toContain('target="_blank" rel="noopener">Goodreads</a>');
+    expect(html).toContain('target="_blank" rel="noopener">Open Library</a>');
   });
 
   it("renders cover image in colophon card", () => {

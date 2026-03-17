@@ -1,5 +1,5 @@
 /**
- * HTML rendering for review header and colophon
+ * HTML rendering for review colophon
  */
 
 import { sourceDisplayName } from "./sources";
@@ -34,52 +34,8 @@ function resolveCoverSrc(coverUrl: string): string {
 }
 
 /**
- * Render the book header: cover image + title + subtitle + creator + year.
- * Injected after <h1> in the article.
- *
- * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
- */
-export function renderHeader(entry: ReviewSocialEntry, coverUrl: string | null): string {
-  const hasCreator = entry.creator.length > 0;
-  const hasYear = entry.year !== null;
-
-  // Nothing to show
-  if (!hasCreator && !hasYear) return "";
-
-  const parts: string[] = [];
-
-  // Cover image — no width attribute; CSS controls sizing for future-proofing
-  if (coverUrl) {
-    const coverSrc = resolveCoverSrc(coverUrl);
-    parts.push(
-      `<img class="review-cover" src="${escapeAttr(coverSrc)}" alt="${escapeAttr(entry.title)}" loading="lazy">`
-    );
-  }
-
-  // Meta column: title, subtitle, creator · year
-  const metaParts: string[] = [];
-
-  metaParts.push(`<div class="review-meta-title">${escapeHtml(entry.title)}</div>`);
-
-  if (entry.subtitle) {
-    metaParts.push(`<div class="review-meta-subtitle">${escapeHtml(entry.subtitle)}</div>`);
-  }
-
-  const creatorYearParts: string[] = [];
-  if (hasCreator) creatorYearParts.push(escapeHtml(entry.creator.join(", ")));
-  if (hasYear) creatorYearParts.push(String(entry.year));
-  if (creatorYearParts.length > 0) {
-    metaParts.push(`<div class="review-meta-creator">${creatorYearParts.join(" · ")}</div>`);
-  }
-
-  parts.push(`<div class="review-meta">\n    ${metaParts.join("\n    ")}\n  </div>`);
-
-  return `<div class="review-header">\n  ${parts.join("\n  ")}\n</div>`;
-}
-
-/**
  * Render the colophon: card with cover, title, subtitle, metadata, rating, and links.
- * Injected before </article>.
+ * Injected after the article title.
  *
  * @param coverUrl - Cover image path from article-map frontmatter (source of truth)
  */
@@ -139,12 +95,12 @@ export function renderColophon(entry: ReviewSocialEntry, coverUrl: string | null
   const links: string[] = [];
   const urls = entry.external_urls;
 
-  if (urls.douban) links.push(`<a href="${escapeAttr(urls.douban)}" rel="noopener">Douban</a>`);
-  if (urls.neodb) links.push(`<a href="${escapeAttr(urls.neodb)}" rel="noopener">NeoDB</a>`);
-  if (urls.goodreads) links.push(`<a href="${escapeAttr(urls.goodreads)}" rel="noopener">Goodreads</a>`);
-  if (urls.openlibrary) links.push(`<a href="${escapeAttr(urls.openlibrary)}" rel="noopener">Open Library</a>`);
-  if (urls.imdb) links.push(`<a href="${escapeAttr(urls.imdb)}" rel="noopener">IMDB</a>`);
-  if (urls.tmdb) links.push(`<a href="${escapeAttr(urls.tmdb)}" rel="noopener">TMDB</a>`);
+  if (urls.douban) links.push(`<a href="${escapeAttr(urls.douban)}" target="_blank" rel="noopener">Douban</a>`);
+  if (urls.neodb) links.push(`<a href="${escapeAttr(urls.neodb)}" target="_blank" rel="noopener">NeoDB</a>`);
+  if (urls.goodreads) links.push(`<a href="${escapeAttr(urls.goodreads)}" target="_blank" rel="noopener">Goodreads</a>`);
+  if (urls.openlibrary) links.push(`<a href="${escapeAttr(urls.openlibrary)}" target="_blank" rel="noopener">Open Library</a>`);
+  if (urls.imdb) links.push(`<a href="${escapeAttr(urls.imdb)}" target="_blank" rel="noopener">IMDB</a>`);
+  if (urls.tmdb) links.push(`<a href="${escapeAttr(urls.tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
 
   if (links.length > 0) {
     details.push(`<nav class="review-links">${links.join('<span class="review-sep"> · </span>')}</nav>`);

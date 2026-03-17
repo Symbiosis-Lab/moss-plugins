@@ -279,7 +279,7 @@ export async function process(ctx: ProcessContext): Promise<HookResult> {
  *
  * Returns:
  * - "head-end": static CSS for review colophon
- * - "before-article-end": per-page review colophons (rating, biblio, links)
+ * - "after-title": per-page review colophons (cover, rating, biblio, links)
  */
 export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const slots: Record<string, EnhanceContent> = {};
@@ -338,7 +338,7 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   }
 
   if (Object.keys(colophonPages).length > 0) {
-    slots["before-article-end"] = { type: "per-page", pages: colophonPages };
+    slots["after-title"] = { type: "per-page", pages: colophonPages };
   }
 
   return { success: true, slots };

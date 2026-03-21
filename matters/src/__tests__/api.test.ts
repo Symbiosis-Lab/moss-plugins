@@ -17,6 +17,7 @@ import {
   clearTokenCache,
   getAccessToken,
   fetchAllDraftsSince,
+  fetchArticleComments,
 } from "../api";
 import type { MattersDraft } from "../types";
 
@@ -410,5 +411,102 @@ describe("fetchAllDraftsSince", () => {
     // Only draft-3 is strictly after
     expect(result).toHaveLength(1);
     expect(ids).toContain("draft-3");
+  });
+});
+
+describe("fetchArticleComments", () => {
+  const mockGetPluginCookie = vi.mocked(getPluginCookie);
+  const mockHttpPost = vi.mocked(httpPost);
+
+  function makeCommentNode(id: string, content: string) {
+    return {
+      id,
+      content,
+      createdAt: "2024-06-01T00:00:00Z",
+      state: "active",
+      upvotes: 0,
+      author: { id: "a1", userName: "user1", displayName: "User 1", avatar: null },
+      replyTo: null,
+    };
+  }
+
+  function mockCommentsResponse(
+    comments: ReturnType<typeof makeCommentNode>[],
+    hasNextPage: boolean,
+    endCursor: string | null = null
+  ) {
+    const responseBody = JSON.stringify({
+      data: {
+        article: {
+          id: "article-1",
+          shortHash: "abc123",
+          comments: {
+            totalCount: comments.length,
+            pageInfo: { endCursor, hasNextPage },
+            edges: comments.map((c) => ({ node: c })),
+          },
+        },
+      },
+    });
+    return {
+      status: 200,
+      ok: true,
+      contentType: "application/json",
+      body: new Uint8Array(),
+      text: () => responseBody,
+    };
+  }
+
+  beforeEach(() => {
+    clearTokenCache();
+    mockGetPluginCookie.mockReset();
+    mockHttpPost.mockReset();
+  });
+
+  it("stops pagination early when all comments on a page are already known", async () => {
+    // Page 1: two comments that are already known, with hasNextPage=true
+    const page1Comments = [makeCommentNode("c1", "Comment 1"), makeCommentNode("c2", "Comment 2")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page1Comments, true, "cursor1"));
+
+    // Page 2 should NOT be fetched
+    const page2Comments = [makeCommentNode("c3", "Comment 3")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page2Comments, false));
+
+    const knownIds = new Set(["c1", "c2"]);
+    const result = await fetchArticleComments("abc123", knownIds);
+
+    // Should return the known comments from page 1 but NOT fetch page 2
+    expect(result).toHaveLength(2);
+    expect(mockHttpPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches all pages when no knownIds provided", async () => {
+    const page1Comments = [makeCommentNode("c1", "Comment 1")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page1Comments, true, "cursor1"));
+
+    const page2Comments = [makeCommentNode("c2", "Comment 2")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page2Comments, false));
+
+    const result = await fetchArticleComments("abc123");
+
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe("c1");
+    expect(result[1].id).toBe("c2");
+    expect(mockHttpPost).toHaveBeenCalledTimes(2);
+  });
+
+  it("fetches next page when some comments on current page are new", async () => {
+    // Page 1: c1 is known, c2 is new — should continue to page 2
+    const page1Comments = [makeCommentNode("c1", "Comment 1"), makeCommentNode("c2", "Comment 2")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page1Comments, true, "cursor1"));
+
+    const page2Comments = [makeCommentNode("c3", "Comment 3")];
+    mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page2Comments, false));
+
+    const knownIds = new Set(["c1"]); // only c1 is known
+    const result = await fetchArticleComments("abc123", knownIds);
+
+    expect(result).toHaveLength(3);
+    expect(mockHttpPost).toHaveBeenCalledTimes(2);
   });
 });

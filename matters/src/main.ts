@@ -435,23 +435,12 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         : "";
 
     // Phase 8: Fetch social data (comments only)
-    // First sync: fetch for ALL local articles
-    // Incremental sync: only fetch for newly synced articles (comments on old
-    // articles keep their existing data from previous syncs — to refresh all
-    // social data, clear lastSyncedAt from plugin config)
-    // Save incrementally after each article to avoid losing data if a fetch hangs
+    // Always fetch for all local articles. Uses early-exit pagination to skip
+    // re-fetching comments we already have (sort: newest + known ID check).
+    // Save incrementally after each article to avoid losing data if a fetch hangs.
     let socialSummary = "";
-    let articlesForSocialFetch: Array<{ shortHash: string; path: string; title: string; uid: string | null }>;
-
-    if (!lastSyncedAt) {
-      articlesForSocialFetch = await scanLocalArticles();
-      console.log(`📊 First sync: fetching social data for all ${articlesForSocialFetch.length} local articles`);
-    } else {
-      const newArticleShortHashes = new Set(articles.map(a => a.shortHash));
-      const allLocalArticles = await scanLocalArticles();
-      articlesForSocialFetch = allLocalArticles.filter(la => newArticleShortHashes.has(la.shortHash));
-      console.log(`📊 Incremental sync: fetching social data for ${articlesForSocialFetch.length} new articles (${allLocalArticles.length} total local)`);
-    }
+    const articlesForSocialFetch = await scanLocalArticles();
+    console.log(`📊 Fetching social data for all ${articlesForSocialFetch.length} local articles`);
 
     if (articlesForSocialFetch.length > 0) {
       await reportProgress("fetching_social", overallProgress("fetching_social", 0, articlesForSocialFetch.length), 100, "Fetching social data...");
@@ -469,16 +458,16 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         );
 
         try {
-          const comments = await fetchArticleComments(article.shortHash);
-
-          // Use uid as the social data key when available; fall back to path
-          let socialKey: string;
-          if (article.uid) {
-            socialKey = article.uid;
-          } else {
+          // Compute social key: uid when available, fall back to path
+          const socialKey = article.uid || article.path;
+          if (!article.uid) {
             console.warn(`   Article "${article.title}" has no uid, falling back to path as social data key`);
-            socialKey = article.path;
           }
+
+          // Pass known comment IDs for early-exit pagination optimization
+          const existingComments = socialData.articles[socialKey]?.comments || [];
+          const knownIds = new Set(existingComments.map(c => c.id));
+          const comments = await fetchArticleComments(article.shortHash, knownIds);
 
           mergeSocialData(socialData, socialKey, comments, [], []);
 
@@ -493,8 +482,6 @@ export async function process(context: ProcessContext): Promise<HookResult> {
 
       socialSummary = `, ${totalComments} comments`;
       console.log(`✅ Social data saved: ${totalComments} comments`);
-    } else {
-      console.log(`📊 No new articles, skipping social data fetch`);
     }
 
     // Phase 9: Update lastSyncedAt timestamp

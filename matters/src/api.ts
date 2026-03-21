@@ -933,7 +933,10 @@ async function fetchUserProfilePublic(userName: string): Promise<MattersUserProf
  * Fetch all comments for an article with pagination
  * Works in both authenticated and public modes
  */
-export async function fetchArticleComments(shortHash: string): Promise<MattersComment[]> {
+export async function fetchArticleComments(
+  shortHash: string,
+  knownIds?: Set<string>
+): Promise<MattersComment[]> {
   const allComments: MattersComment[] = [];
   let cursor: string | undefined;
 
@@ -970,6 +973,16 @@ export async function fetchArticleComments(shortHash: string): Promise<MattersCo
         replyToId: node.replyTo?.id,
         replyToAuthor: node.replyTo?.author?.userName,
       });
+    }
+
+    // Early exit: if all comments on this page are already known, no need
+    // to paginate further (comments are sorted newest-first)
+    if (knownIds && knownIds.size > 0 && edges.length > 0) {
+      const allKnown = edges.every(edge => knownIds.has(edge.node.id));
+      if (allKnown) {
+        console.log(`   📝 All comments on this page already known, stopping early`);
+        break;
+      }
     }
 
     cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;

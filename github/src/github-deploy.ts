@@ -361,7 +361,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
         binaryPath: options.gitPath,
         args: ["hash-object", "-w", "--stdin"],
         workingDir: ".",
-        timeoutMs: 5_000,
+        timeoutMs: 30_000,  // iCloud can slow .git/objects writes
         env: { GIT_TERMINAL_PROMPT: "0" },
         stdin: "",
       });
@@ -383,7 +383,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
               binaryPath: options.gitPath,
               args: ["hash-object", "-w", "--stdin"],
               workingDir: ".",
-              timeoutMs: 5_000,
+              timeoutMs: 30_000,
               env: { GIT_TERMINAL_PROMPT: "0" },
               stdin: options.domain + "\n",
             });
@@ -396,7 +396,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
             binaryPath: options.gitPath,
             args: ["mktree"],
             workingDir: ".",
-            timeoutMs: 5_000,
+            timeoutMs: 30_000,
             env: { GIT_TERMINAL_PROMPT: "0" },
             stdin: treeEntries,
           });

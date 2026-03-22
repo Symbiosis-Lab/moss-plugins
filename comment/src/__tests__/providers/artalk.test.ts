@@ -316,4 +316,86 @@ describe("buildArtalkClientScript", () => {
       expect(replyBtnMatches).toBeGreaterThanOrEqual(2);
     });
   });
+
+  // ==========================================================================
+  // Float-with-quote comment flow
+  // ==========================================================================
+
+  describe("float-with-quote flow", () => {
+    it("contains floatWithQuote function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function floatWithQuote");
+    });
+
+    it("contains cancelFloat function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function cancelFloat");
+    });
+
+    it("contains createFloatShell function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function createFloatShell");
+    });
+
+    it("listens for moss:quote-comment custom event", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("moss:quote-comment");
+    });
+
+    it("creates float shell DOM elements with correct classes", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("comment-float-backdrop");
+      expect(script).toContain("comment-float-shell");
+      expect(script).toContain("comment-float-inner");
+      expect(script).toContain("comment-float-quote");
+    });
+
+    it("stores quote text in form dataset for submission", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("form.dataset.quoteText");
+    });
+
+    it("prepends blockquote prefix to comment when quoteText is set", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("'> '");
+    });
+
+    it("dismisses float shell on Escape key", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("Escape");
+      expect(script).toContain("cancelFloat");
+    });
+  });
+
+  // ==========================================================================
+  // Identity persistence
+  // ==========================================================================
+
+  describe("identity persistence", () => {
+    it("contains loadIdentity function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function loadIdentity");
+    });
+
+    it("contains saveIdentity function", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("function saveIdentity");
+    });
+
+    it("uses moss-commenter localStorage key", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("moss-commenter");
+    });
+
+    it("calls loadIdentity at initialization", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      // loadIdentity should be called, not just defined
+      expect(script).toMatch(/loadIdentity\(\)/);
+    });
+
+    it("calls saveIdentity on successful submit", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("saveIdentity()");
+    });
+  });
 });

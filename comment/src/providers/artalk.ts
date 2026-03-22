@@ -130,6 +130,12 @@ export function buildArtalkClientScript(
       ua: navigator.userAgent
     };
 
+    // Prepend quoted passage as blockquote if submitting from float shell
+    var quoteText = form.dataset.quoteText || '';
+    if (quoteText) {
+      body.content = '> ' + quoteText + '\\n\\n' + body.content;
+    }
+
     fetch('${safeServerUrl}/api/v2/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -193,6 +199,8 @@ export function buildArtalkClientScript(
       }
 
       updateCommentCount();
+      saveIdentity();
+      cancelFloat();
       form.elements['content'].value = '';
       if (textarea) { textarea.style.height = 'auto'; }
     })
@@ -268,6 +276,89 @@ export function buildArtalkClientScript(
       wrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
+
+  /* --- Float-with-quote: selection → 评论 flow --- */
+  var floatShell = null;
+  var floatBackdrop = null;
+
+  function createFloatShell() {
+    floatBackdrop = document.createElement('div');
+    floatBackdrop.className = 'comment-float-backdrop';
+    document.body.appendChild(floatBackdrop);
+
+    floatShell = document.createElement('div');
+    floatShell.className = 'comment-float-shell';
+    floatShell.innerHTML = '<div class="comment-float-inner"></div>';
+    document.body.appendChild(floatShell);
+
+    floatBackdrop.addEventListener('click', cancelFloat);
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && floatShell.classList.contains('open')) cancelFloat();
+    });
+  }
+
+  function floatWithQuote(quoteText) {
+    cancelReply(true);
+    if (!floatShell) createFloatShell();
+    var inner = floatShell.querySelector('.comment-float-inner');
+    var quoteEl = document.createElement('div');
+    quoteEl.className = 'comment-float-quote';
+    quoteEl.textContent = quoteText;
+    inner.innerHTML = '';
+    inner.appendChild(quoteEl);
+    if (defaultFormSlot) defaultFormSlot.classList.add('comment-form-slot--collapsed');
+    inner.appendChild(form);
+    form.dataset.quoteText = quoteText;
+    floatBackdrop.classList.add('visible');
+    floatShell.classList.add('open');
+    textarea.focus();
+  }
+
+  function cancelFloat() {
+    if (!floatShell) return;
+    floatShell.classList.remove('open');
+    floatBackdrop.classList.remove('visible');
+    if (defaultFormSlot) {
+      defaultFormSlot.appendChild(form);
+      defaultFormSlot.classList.remove('comment-form-slot--collapsed');
+    }
+    delete form.dataset.quoteText;
+  }
+
+  document.addEventListener('moss:quote-comment', function(e) {
+    var text = e.detail && e.detail.text;
+    if (text) floatWithQuote(text);
+  });
+
+  /* --- Identity persistence --- */
+  var COMMENTER_KEY = 'moss-commenter';
+
+  function loadIdentity() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(COMMENTER_KEY));
+      if (!saved) return;
+      var nameField = form.querySelector('[name="name"]');
+      var emailField = form.querySelector('[name="email"]');
+      var linkField = form.querySelector('[name="link"]');
+      if (nameField && saved.name) nameField.value = saved.name;
+      if (emailField && saved.email) emailField.value = saved.email;
+      if (linkField && saved.url) linkField.value = saved.url;
+    } catch(e) {}
+  }
+
+  function saveIdentity() {
+    var nameField = form.querySelector('[name="name"]');
+    var emailField = form.querySelector('[name="email"]');
+    var linkField = form.querySelector('[name="link"]');
+    var data = {
+      name: nameField ? nameField.value.trim() : '',
+      email: emailField ? emailField.value.trim() : '',
+      url: linkField ? linkField.value.trim() : ''
+    };
+    if (data.name) localStorage.setItem(COMMENTER_KEY, JSON.stringify(data));
+  }
+
+  loadIdentity();
 
   /*
    * Eager hydration — fetch new comments on page load, not on toggle.

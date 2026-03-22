@@ -404,3 +404,24 @@ describe("per-comment reply button visibility", () => {
     expect(c2Section).not.toContain("comment-reply-btn");
   });
 });
+
+// ============================================================================
+// Form autocomplete attributes
+// ============================================================================
+
+describe("artalk form autocomplete attributes", () => {
+  it('has autocomplete="name" on name input', () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain('autocomplete="name"');
+  });
+
+  it('has autocomplete="email" on email input', () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain('autocomplete="email"');
+  });
+
+  it('has autocomplete="url" on link input', () => {
+    const html = renderCommentSection([], "posts/test/", serverUrl, submitScript, "artalk");
+    expect(html).toContain('autocomplete="url"');
+  });
+});

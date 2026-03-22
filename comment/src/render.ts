@@ -178,9 +178,9 @@ function renderCommentForm(pagePath: string, provider: string = "waline", lang: 
     return `<form class="comment-form" id="moss-comment-form">
   <textarea id="moss-comment-text" name="content" required rows="2" placeholder="${t.placeholder}"></textarea>
   <div class="comment-form-meta">
-    <input type="text" name="name" class="comment-field" placeholder="${t.name}" required>
-    <input type="email" name="email" class="comment-field" placeholder="${t.email_optional}">
-    <input type="text" name="link" class="comment-field" placeholder="${t.website_optional}">
+    <input type="text" name="name" class="comment-field" placeholder="${t.name}" autocomplete="name" required>
+    <input type="email" name="email" class="comment-field" placeholder="${t.email_optional}" autocomplete="email">
+    <input type="text" name="link" class="comment-field" placeholder="${t.website_optional}" autocomplete="url">
     ${submitButton}
   </div>
   ${statusDiv}

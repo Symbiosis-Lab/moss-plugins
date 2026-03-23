@@ -79,6 +79,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   getTauriCore: vi.fn().mockReturnValue({
     invoke: vi.fn().mockResolvedValue("git"),
   }),
+  fetchUrl: vi.fn().mockResolvedValue({ ok: true, status: 200 }),
 }));
 
 // Mock the github-api module (checkPagesStatus used by waitForPagesLive)
@@ -90,6 +91,7 @@ vi.mock("../github-api", () => ({
   createRepository: vi.fn(),
   setCustomDomain: vi.fn(),
   ensurePagesSource: vi.fn().mockResolvedValue({ configured: true, wasCreated: false }),
+  getPages: vi.fn().mockResolvedValue(null),
 }));
 
 // Import after mocking
@@ -99,7 +101,7 @@ import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush } from "../githu
 import { promptLogin, validateToken, hasRequiredScopes } from "../auth";
 import { getToken, getTokenFromGit, storeToken } from "../token";
 import { buildPagesUrl, parseGitHubUrl } from "../git";
-import { checkPagesStatus, ensurePagesSource } from "../github-api";
+import { checkPagesStatus, ensurePagesSource, getPages } from "../github-api";
 import { ensureGitHubRepo } from "../repo-setup";
 
 /**
@@ -179,7 +181,7 @@ function setupDeployMocks(
 describe("on_deploy integration", () => {
   let ctx: MockTauriContext;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = setupMockTauri();
     vi.clearAllMocks();
 
@@ -197,6 +199,11 @@ describe("on_deploy integration", () => {
     });
     vi.mocked(getOriginOwnerRepo).mockResolvedValue({ owner: "test-user", repo: "test-repo" });
     vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built", url: "", commit: "orphan-sha-abc1234def5678" });
+    vi.mocked(getPages).mockResolvedValue(null);
+
+    // Reset fetchUrl to default (site reachable) — individual tests override as needed
+    const mossApi = await import("@symbiosis-lab/moss-api");
+    vi.mocked(mossApi.fetchUrl).mockResolvedValue({ ok: true, status: 200, body: new Uint8Array(), contentType: null, text: () => "" });
   });
 
   afterEach(() => {
@@ -545,7 +552,7 @@ describe("on_deploy integration", () => {
   // Bug 2: Stale build detection via orphanSha
   // ==========================================================================
   describe("Stale Build Detection", () => {
-    it("detects stale build when commit SHA does not match", async () => {
+    it("detects stale build when commit SHA does not match and site not reachable", async () => {
       setupDeployMocks(ctx, { owner: "user", repo: "repo", hasChanges: true, commitSha: "new-commit" });
       vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
 
@@ -558,10 +565,14 @@ describe("on_deploy integration", () => {
         .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" })
         .mockResolvedValueOnce({ status: "built", url: "", commit: "old-stale-commit" });
 
+      // Site not yet reachable (stale content still propagating)
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: false, status: 404, body: new Uint8Array(), contentType: null, text: () => "" });
+
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
-      // isLive should be false due to stale build detection
+      // isLive should be false: stale build + HTTP check fails
       expect(result.deployment?.metadata?.is_live).toBe("false");
     });
 
@@ -575,6 +586,10 @@ describe("on_deploy integration", () => {
         url: "",
         commit: "orphan-sha-fresh-commit",
       });
+
+      // Site is reachable via HTTP
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: true, status: 200, body: new Uint8Array(), contentType: null, text: () => "" });
 
       const result = await on_deploy(createMockContext());
 
@@ -613,7 +628,7 @@ describe("on_deploy integration", () => {
       expect(lastToast.actions[0].url).toContain("settings/pages");
     });
 
-    it("shows info toast when build status is unknown/timeout", async () => {
+    it("shows info toast when build status is unknown/timeout and site not reachable", async () => {
       setupDeployMocks(ctx, { owner: "user", repo: "my-repo", hasChanges: true, commitSha: "timeout-commit" });
       vi.mocked(verifyRepoExists).mockResolvedValue(undefined);
 
@@ -623,15 +638,140 @@ describe("on_deploy integration", () => {
         url: "",
       });
 
+      // HTTP check also fails (site not yet available)
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: false, status: 404, body: new Uint8Array(), contentType: null, text: () => "" });
+
       const result = await on_deploy(createMockContext());
 
       expect(result.success).toBe(true);
 
-      // Should show a toast about checking GitHub for status
+      // Should show an info toast with "View site" action (not GitHub Actions link)
       const toastCalls = vi.mocked(showToast).mock.calls;
       const lastToast = toastCalls[toastCalls.length - 1][0];
+      expect(lastToast.variant).toBe("info");
       expect(lastToast.actions).toBeDefined();
-      expect(lastToast.actions[0].url).toContain("actions");
+      expect(lastToast.actions[0].url).toContain("user.github.io");
+    });
+  });
+
+  // ==========================================================================
+  // Custom Domain Display URLs
+  // ==========================================================================
+  describe("Custom domain display URLs", () => {
+    it("uses custom domain in deployment.url when context.domain is set", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+
+      const result = await on_deploy(createMockContext({ domain: "guoliu.me" }));
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.url).toBe("https://guoliu.me");
+    });
+
+    it("uses github.io URL when context.domain is not set", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.url).toBe("https://testuser.github.io/testrepo");
+    });
+
+    it("uses custom domain in toast actions", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+
+      await on_deploy(createMockContext({ domain: "guoliu.me" }));
+
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const lastToast = toastCalls[toastCalls.length - 1][0];
+      expect(lastToast.actions[0].url).toBe("https://guoliu.me");
+    });
+
+    it("falls back to GitHub Pages CNAME when no context.domain", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+      vi.mocked(getPages).mockResolvedValue({ cname: "example.com", https_enforced: true });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.url).toBe("https://example.com");
+    });
+  });
+
+  // ==========================================================================
+  // HTTP Reachability Verification
+  // ==========================================================================
+  describe("HTTP reachability verification", () => {
+    it("reports isLive=true when site is reachable via HTTP", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+      // fetchUrl returns ok: true (site is reachable)
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: true, status: 200, body: new Uint8Array(), contentType: null, text: () => "" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.metadata?.is_live).toBe("true");
+    });
+
+    it("reports isLive=false when site is not reachable", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+      // GitHub API says built, but HTTP check fails
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: false, status: 404, body: new Uint8Array(), contentType: null, text: () => "" });
+
+      const result = await on_deploy(createMockContext());
+
+      expect(result.success).toBe(true);
+      expect(result.deployment?.metadata?.is_live).toBe("false");
+    });
+
+    it("shows info toast when site not reachable after deploy", async () => {
+      setupDeployMocks(ctx, {
+        owner: "testuser",
+        repo: "testrepo",
+        hasChanges: true,
+        commitSha: "abc123def",
+      });
+      const { fetchUrl } = await import("@symbiosis-lab/moss-api");
+      vi.mocked(fetchUrl).mockResolvedValue({ ok: false, status: 404, body: new Uint8Array(), contentType: null, text: () => "" });
+
+      await on_deploy(createMockContext());
+
+      const toastCalls = vi.mocked(showToast).mock.calls;
+      const lastToast = toastCalls[toastCalls.length - 1][0];
+      // Should show info variant (not success) since site isn't reachable yet
+      expect(lastToast.variant).not.toBe("success");
     });
   });
 

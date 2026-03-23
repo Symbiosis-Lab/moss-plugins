@@ -10,7 +10,7 @@
  */
 
 import type { DeployContext, ConfigureDomainContext, HookResult, DnsTarget, DnsRecord } from "./types";
-import { getTauriCore, readFile } from "@symbiosis-lab/moss-api";
+import { getTauriCore, fetchUrl } from "@symbiosis-lab/moss-api";
 import { reportProgress, reportError, setCurrentHookName, showToast, closeBrowser } from "./utils";
 import { buildPagesUrl, parseGitHubUrl } from "./git";
 import { verifyRepoExists, getOriginOwnerRepo, deployViaGitPush, type DeployResult } from "./github-deploy";
@@ -139,6 +139,35 @@ async function waitForPagesLive(
 }
 
 // ============================================================================
+// HTTP Reachability Check
+// ============================================================================
+
+/**
+ * Check if a URL is reachable via HTTP GET.
+ * Uses Rust-side fetchUrl (ureq) for reliable, CORS-free checks.
+ * Retries with interval. Used as final "deployed" verification.
+ */
+async function checkSiteReachable(
+  url: string,
+  maxAttempts = 3,
+  intervalMs = 5000,
+): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    await reportProgress("verifying", 9, 10, `Checking ${url}... (${i + 1}/${maxAttempts})`);
+    try {
+      const result = await fetchUrl(url, { timeoutMs: 10000 });
+      if (result.ok) return true;
+    } catch {
+      // Network error, retry
+    }
+    if (i < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
+}
+
+// ============================================================================
 // Hook Implementation
 // ============================================================================
 
@@ -253,19 +282,10 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       reportProgress("deploying", 5, 10, currentPhase);
     }, DEPLOY_HEARTBEAT_INTERVAL_MS);
 
-    // Read custom domain from config so CNAME file is included in gh-pages
-    let domain: string | undefined;
-    try {
-      const configToml = await readFile(".moss/config.toml");
-      const match = configToml.match(/^\s*domain\s*=\s*"([^"]+)"/m);
-      if (match) domain = match[1];
-    } catch {
-      // No config or no domain
-    }
-
-    // Safety net: if no domain in local config, check GitHub Pages for existing CNAME.
-    // Prevents accidentally stripping a custom domain during re-deploy
-    // (e.g., if local config was lost due to iCloud sync, corruption, or manual edit).
+    // Use context.domain from DeployContext (populated by Rust from .moss/config.toml).
+    // Fall back to GitHub Pages API safety net if local config is missing
+    // (e.g., iCloud sync corruption, manual edit, or config lost).
+    let domain = context.domain;
     if (!domain) {
       try {
         const pages = await getPages(owner, repoName, token);
@@ -308,26 +328,36 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       console.warn(`   Failed to configure Pages source: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // Generate pages URL for logging and response
+    // Generate pages URL (github.io) for API operations and display URL for user-facing messages
     const pagesUrl = buildPagesUrl(owner, repoName);
+    const displayUrl = domain ? `https://${domain}` : pagesUrl;
     const { commitSha, orphanSha } = deployResult;
 
     // Log the deployment result with URL immediately
     if (commitSha) {
       console.log(`   Deployed: ${commitSha.substring(0, 7)}`);
-      console.log(`   Site URL: ${pagesUrl}`);
+      console.log(`   Site URL: ${displayUrl}`);
     } else {
       console.log("   No changes to deploy");
-      console.log(`   Site URL: ${pagesUrl}`);
+      console.log(`   Site URL: ${displayUrl}`);
     }
 
-    // Phase 9: Check if deployment is live (only if we pushed changes)
+    // Phase 9: Two-stage deployment verification
+    // Stage 1: GitHub API build status (uses github.io URL)
+    // Stage 2: HTTP reachability check against displayUrl (verifies actual access)
     let isLive = false;
     let liveError: string | undefined;
     if (commitSha) {
       const liveStatus = await waitForPagesLive(owner, repoName, token, pagesUrl, orphanSha);
-      isLive = liveStatus.isLive;
       liveError = liveStatus.error;
+
+      if (liveStatus.isLive) {
+        // API says built — confirm with HTTP reachability against the URL users see
+        isLive = await checkSiteReachable(displayUrl);
+      } else if (!liveError) {
+        // API timed out — try HTTP check as last resort
+        isLive = await checkSiteReachable(displayUrl, 2, 3000);
+      }
     }
 
     // Build DNS target for custom domain configuration
@@ -344,21 +374,21 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       // Scenario 1: First-time deployment (gh-pages branch created)
       message =
         `Your site is being deployed to GitHub Pages!\n\n` +
-        `Your site will be available at: ${pagesUrl}\n\n` +
+        `Your site will be available at: ${displayUrl}\n\n` +
         `GitHub Pages is automatically enabled for the gh-pages branch.\n` +
         `It may take a few minutes for your site to appear.`;
       toastMessage = "Deploy configured!";
       toastVariant = "success";
-      toastActions = [{ label: "View site", url: pagesUrl }];
+      toastActions = [{ label: "View site", url: displayUrl }];
     } else if (commitSha && isLive) {
       // Scenario 2a: Subsequent deploy, site is confirmed live
       message =
         `Site deployed to GitHub Pages!\n\n` +
-        `Your site: ${pagesUrl}\n\n` +
+        `Your site: ${displayUrl}\n\n` +
         `Changes have been pushed to gh-pages branch.`;
       toastMessage = "Site is live!";
       toastVariant = "success";
-      toastActions = [{ label: "View site", url: pagesUrl }];
+      toastActions = [{ label: "View site", url: displayUrl }];
     } else if (commitSha && liveError) {
       // Scenario 2b: Subsequent deploy, build errored on GitHub
       message =
@@ -369,23 +399,23 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       toastVariant = "warning";
       toastActions = [{ label: "View on GitHub", url: `https://github.com/${owner}/${repoName}/settings/pages` }];
     } else if (commitSha) {
-      // Scenario 2c: Subsequent deploy, unknown/timeout status
+      // Scenario 2c: Deployed but not yet reachable (DNS propagation, CDN cache, first deploy)
       message =
         `Site deployed to GitHub Pages!\n\n` +
-        `Your site: ${pagesUrl}\n\n` +
-        `Changes have been pushed to gh-pages branch.`;
-      toastMessage = "Deploying \u2014 check GitHub for status";
+        `Your site: ${displayUrl}\n\n` +
+        `Changes have been pushed. It may take a moment to go live.`;
+      toastMessage = "Deployed \u2014 may take a moment to go live";
       toastVariant = "info";
-      toastActions = [{ label: "View on GitHub", url: `https://github.com/${owner}/${repoName}/actions` }];
+      toastActions = [{ label: "View site", url: displayUrl }];
     } else {
       // Scenario 3: No changes to push
       message =
         `No changes to deploy.\n\n` +
-        `Your site: ${pagesUrl}\n\n` +
+        `Your site: ${displayUrl}\n\n` +
         `Your local site is already up to date.`;
       toastMessage = "No changes to deploy";
       toastVariant = "info";
-      toastActions = [{ label: "View site", url: pagesUrl }];
+      toastActions = [{ label: "View site", url: displayUrl }];
     }
 
     // Phase 10: Final progress message based on scenario
@@ -417,7 +447,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       message,
       deployment: {
         method: "github-pages",
-        url: pagesUrl,
+        url: displayUrl,
         deployed_at: new Date().toISOString(),
         metadata: {
           repo_url: `https://github.com/${owner}/${repoName}`,

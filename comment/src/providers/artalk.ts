@@ -50,6 +50,7 @@ const LANG_TO_LOCALE: Record<Lang, string> = {
  * @param uid - Content uid to use as the page key. Falls back to pagePath if empty.
  * @param siteName - Artalk site name (e.g., "MySite")
  * @param lang - Language code for i18n strings. Defaults to "en".
+ * @param pageTitle - Page title sent to Artalk for email notifications. Defaults to "".
  * @returns JavaScript code string
  */
 export function buildArtalkClientScript(
@@ -57,13 +58,15 @@ export function buildArtalkClientScript(
   pagePath: string,
   uid: string = "",
   siteName: string = "",
-  lang: Lang = "en"
+  lang: Lang = "en",
+  pageTitle: string = ""
 ): string {
   const safeServerUrl = escapeForSingleQuotedJs(serverUrl);
   // Use uid as the page key if available, otherwise fall back to pagePath
   const pageKey = uid || pagePath;
   const safePageKey = escapeForSingleQuotedJs(pageKey);
   const safeSiteName = escapeForSingleQuotedJs(siteName);
+  const safePageTitle = escapeForSingleQuotedJs(pageTitle);
 
   const t = translations[lang];
   const safeSubmitting = escapeForSingleQuotedJs(t.submitting);
@@ -126,6 +129,7 @@ export function buildArtalkClientScript(
       link: rawLink,
       rid: currentReplyId ? parseInt(currentReplyId, 10) : 0,
       page_key: '${safePageKey}',
+      page_title: '${safePageTitle}',
       site_name: '${safeSiteName}',
       ua: navigator.userAgent
     };

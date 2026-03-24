@@ -9,7 +9,7 @@ import type { Lang } from "../i18n";
 import { buildWalineSubmitScript } from "./waline";
 import { buildArtalkClientScript } from "./artalk";
 
-export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang) => string;
+export type SubmitScriptBuilder = (serverUrl: string, pagePath: string, uid: string, siteName?: string, lang?: Lang, pageTitle?: string) => string;
 
 const providers: Record<string, SubmitScriptBuilder> = {
   waline: buildWalineSubmitScript,

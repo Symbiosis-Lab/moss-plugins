@@ -201,11 +201,12 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
   const fetchedAt = await getCommentFetchTimestamp();
 
   // 3. Build uid/path mappings from article_map in context
-  const articleMap = ctx.article_map as { articles?: Record<string, { source_path?: string; url_path: string; uid?: string }> } | undefined;
+  const articleMap = ctx.article_map as { articles?: Record<string, { source_path?: string; url_path: string; uid?: string; title?: string }> } | undefined;
   const articles = articleMap?.articles || {};
 
   const uidToUrl = new Map<string, string>();
   const urlToUid = new Map<string, string>();
+  const urlToTitle = new Map<string, string>();
   const sourceToUrl = new Map<string, string>();
 
   // Get project_path for source path stripping
@@ -218,6 +219,9 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     if (entry.uid && entry.url_path) {
       uidToUrl.set(entry.uid, entry.url_path);
       urlToUid.set(entry.url_path, entry.uid);
+    }
+    if (entry.title && entry.url_path) {
+      urlToTitle.set(entry.url_path, entry.title);
     }
     if (entry.source_path && entry.url_path) {
       let relativePath = entry.source_path;
@@ -266,8 +270,9 @@ export async function enhance(ctx: EnhanceContext): Promise<EnhanceResult> {
     // Detect lang from project_info
     const lang = parseLang(`<html lang="${ctx.project_info.lang || "en"}">`);
 
+    const articleTitle = urlToTitle.get(urlPath) || "";
     const submitScript = (buildScript && serverUrl)
-      ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang)
+      ? buildScript(serverUrl, "/" + urlPath, uid, siteName, lang, articleTitle)
       : "";
 
     const commentHtml = renderCommentSection(

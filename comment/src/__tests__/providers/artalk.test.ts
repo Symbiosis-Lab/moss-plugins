@@ -398,4 +398,29 @@ describe("buildArtalkClientScript", () => {
       expect(script).toContain("saveIdentity()");
     });
   });
+
+  describe("page_title support", () => {
+    it("includes page_title in the POST body when provided", () => {
+      const script = buildArtalkClientScript(
+        serverUrl, pagePath, "uid-123", siteName, "en", "My Article Title"
+      );
+      expect(script).toContain("page_title");
+      expect(script).toContain("My Article Title");
+    });
+
+    it("escapes page_title for JS single-quoted string", () => {
+      const script = buildArtalkClientScript(
+        serverUrl, pagePath, "", siteName, "en", "It's a \"test\" with <script>"
+      );
+      expect(script).toContain("page_title");
+      // Single quotes must be escaped
+      expect(script).not.toContain("It's");
+      expect(script).toContain("It\\'s");
+    });
+
+    it("sends empty page_title when not provided (backward compat)", () => {
+      const script = buildArtalkClientScript(serverUrl, pagePath, "", siteName);
+      expect(script).toContain("page_title");
+    });
+  });
 });

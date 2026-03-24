@@ -46,6 +46,7 @@ export interface ArticleMapEntry {
   source_path: string;
   url_path: string;
   uid?: string;
+  title?: string;
 }
 
 /** Structure of .moss/article-map.json */

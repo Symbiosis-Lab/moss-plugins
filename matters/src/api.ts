@@ -935,7 +935,8 @@ async function fetchUserProfilePublic(userName: string): Promise<MattersUserProf
  */
 export async function fetchArticleComments(
   shortHash: string,
-  knownIds?: Set<string>
+  knownIds?: Set<string>,
+  sinceTimestamp?: string
 ): Promise<MattersComment[]> {
   const allComments: MattersComment[] = [];
   let cursor: string | undefined;
@@ -985,8 +986,26 @@ export async function fetchArticleComments(
       }
     }
 
+    // Timestamp-based early exit: comments are sorted newest-first, so once
+    // the oldest comment on this page is at or before sinceTimestamp, all
+    // remaining pages are older — stop pagination.
+    if (sinceTimestamp && edges.length > 0) {
+      const oldestOnPage = edges[edges.length - 1].node.createdAt;
+      if (oldestOnPage <= sinceTimestamp) {
+        break;
+      }
+    }
+
     cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;
   } while (cursor);
+
+  // Filter out comments at or before sinceTimestamp (handles the last page
+  // which may contain a mix of old and new comments)
+  if (sinceTimestamp) {
+    const filtered = allComments.filter(c => c.createdAt > sinceTimestamp);
+    console.log(`   📝 Found ${filtered.length} new comments (${allComments.length - filtered.length} older than last sync, skipped)`);
+    return filtered;
+  }
 
   console.log(`   📝 Found ${allComments.length} comments`);
   return allComments;

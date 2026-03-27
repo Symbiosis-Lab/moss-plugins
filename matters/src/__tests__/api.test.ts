@@ -509,4 +509,79 @@ describe("fetchArticleComments", () => {
     expect(result).toHaveLength(3);
     expect(mockHttpPost).toHaveBeenCalledTimes(2);
   });
+
+  describe("sinceTimestamp filtering", () => {
+    function makeCommentNodeWithDate(id: string, content: string, createdAt: string) {
+      return {
+        id,
+        content,
+        createdAt,
+        state: "active",
+        upvotes: 0,
+        author: { id: "a1", userName: "user1", displayName: "User 1", avatar: null },
+        replyTo: null,
+      };
+    }
+
+    it("filters out comments older than sinceTimestamp", async () => {
+      const comments = [
+        makeCommentNodeWithDate("c1", "New comment", "2025-03-01T00:00:00Z"),
+        makeCommentNodeWithDate("c2", "Old comment", "2025-01-01T00:00:00Z"),
+      ];
+      mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(comments, false));
+
+      const result = await fetchArticleComments("abc123", undefined, "2025-02-01T00:00:00Z");
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("c1");
+    });
+
+    it("returns all comments when sinceTimestamp is undefined", async () => {
+      const comments = [
+        makeCommentNodeWithDate("c1", "New comment", "2025-03-01T00:00:00Z"),
+        makeCommentNodeWithDate("c2", "Old comment", "2025-01-01T00:00:00Z"),
+      ];
+      mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(comments, false));
+
+      const result = await fetchArticleComments("abc123", undefined, undefined);
+
+      expect(result).toHaveLength(2);
+    });
+
+    it("stops pagination when oldest comment on page is before sinceTimestamp", async () => {
+      // Page 1: newest-first, last comment is older than sinceTimestamp
+      const page1Comments = [
+        makeCommentNodeWithDate("c1", "New", "2025-03-15T00:00:00Z"),
+        makeCommentNodeWithDate("c2", "Old", "2025-01-15T00:00:00Z"),
+      ];
+      mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page1Comments, true, "cursor1"));
+
+      // Page 2 should NOT be fetched
+      const page2Comments = [
+        makeCommentNodeWithDate("c3", "Very old", "2024-06-01T00:00:00Z"),
+      ];
+      mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(page2Comments, false));
+
+      const result = await fetchArticleComments("abc123", undefined, "2025-02-01T00:00:00Z");
+
+      // Only c1 (after sinceTimestamp) should be returned, c2 filtered out
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("c1");
+      // Should NOT have fetched page 2
+      expect(mockHttpPost).toHaveBeenCalledTimes(1);
+    });
+
+    it("excludes comments with createdAt exactly equal to sinceTimestamp", async () => {
+      const comments = [
+        makeCommentNodeWithDate("c1", "Exact match", "2025-02-01T00:00:00Z"),
+        makeCommentNodeWithDate("c2", "Newer", "2025-03-01T00:00:00Z"),
+      ];
+      mockHttpPost.mockResolvedValueOnce(mockCommentsResponse(comments, false));
+
+      const result = await fetchArticleComments("abc123", undefined, "2025-02-01T00:00:00Z");
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("c2");
+    });
+  });
 });

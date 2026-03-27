@@ -467,7 +467,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           // Pass known comment IDs for early-exit pagination optimization
           const existingComments = socialData.articles[socialKey]?.comments || [];
           const knownIds = new Set(existingComments.map(c => c.id));
-          const comments = await fetchArticleComments(article.shortHash, knownIds);
+          const comments = await fetchArticleComments(article.shortHash, knownIds, lastSyncedAt);
 
           mergeSocialData(socialData, socialKey, comments, [], []);
 

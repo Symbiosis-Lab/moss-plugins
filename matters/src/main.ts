@@ -946,12 +946,12 @@ export function normalizeHtmlForMatters(html: string): string {
   let result = html;
 
   // Step 1: Collapse h4, h5, h6 → h3 (process these BEFORE h1 to avoid double-shifting)
-  result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (match, slash, attrs) => {
+  result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (_match, slash, attrs) => {
     return `<${slash}h3${attrs || ""}>`;
   });
 
   // Step 2: Downgrade h1 → h2
-  result = result.replace(/<(\/?)h1(\s[^>]*)?>/gi, (match, slash, attrs) => {
+  result = result.replace(/<(\/?)h1(\s[^>]*)?>/gi, (_match, slash, attrs) => {
     return `<${slash}h2${attrs || ""}>`;
   });
 

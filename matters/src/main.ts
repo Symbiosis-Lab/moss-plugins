@@ -31,7 +31,7 @@ import {
   uploadEmbedByUrl,
   apiConfig,
 } from "./api";
-import { syncToLocalFiles, scanLocalArticles } from "./sync";
+import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { overallProgress } from "./progress";
@@ -271,6 +271,36 @@ export async function process(context: ProcessContext): Promise<HookResult> {
   console.log("🔐 Matters: process hook started");
 
   try {
+    // Binding guard: only sync if project is bound to a Matters account
+    {
+      const bindingConfig = await getConfig();
+      if (!bindingConfig.boundUserName) {
+        const detectedUser = await detectBoundUser();
+        if (detectedUser) {
+          // Auto-bind from existing articles
+          await saveConfig({ ...bindingConfig, boundUserName: detectedUser, userName: detectedUser });
+          console.log(`🔗 Auto-bound to @${detectedUser} from existing articles`);
+        } else {
+          // Fresh project — require login to bind
+          const loginSuccess = await promptLogin();
+          if (!loginSuccess) {
+            return {
+              success: true,
+              message: "No Matters account bound. Skipping sync.",
+            };
+          }
+          // Fetch profile to get username for binding
+          const profile = await fetchUserProfile();
+          await saveConfig({
+            ...bindingConfig,
+            boundUserName: profile.userName,
+            userName: profile.userName,
+          });
+          console.log(`🔗 Bound to @${profile.userName} via login`);
+        }
+      }
+    }
+
     // Phase 1: Authentication
     await reportProgress("authentication", overallProgress("authentication", 0, 1), 100, "Checking authentication...");
     let isAuthenticated = await checkAuthentication();

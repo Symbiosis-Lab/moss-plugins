@@ -72,22 +72,17 @@ export function shouldSyncDrafts(config: MattersPluginConfig): boolean {
 }
 
 /**
- * Detect the article folder by scanning for files with Matters syndication URLs.
- * Returns the folder name if found, or null if no existing articles.
+ * Scan project files for Matters syndication content.
+ * Returns the top-level folder name and the Matters username if found.
  *
- * Scans all markdown files and looks for those with a `syndicated` field
- * containing a matters.town URL. Returns the top-level folder name.
+ * Shared helper used by both detectArticleFolder() and detectBoundUser().
  */
-export async function detectArticleFolder(): Promise<string | null> {
+async function scanForMattersContent(): Promise<{ folder: string | null; userName: string | null }> {
   try {
-    // Get all files in the project
     const allFiles = await listFiles();
-
-    // Filter to markdown files and group by top-level folder
     const mdFiles = allFiles.filter((f) => f.endsWith(".md"));
 
     for (const filePath of mdFiles) {
-      // Get top-level folder (first path segment)
       const segments = filePath.split("/");
       if (segments.length < 2) continue; // Skip root-level files
 
@@ -96,31 +91,51 @@ export async function detectArticleFolder(): Promise<string | null> {
       // Skip hidden and underscore folders
       if (topFolder.startsWith(".") || topFolder.startsWith("_")) continue;
 
-      // Check if this file has Matters syndication
       try {
         const content = await readFile(filePath);
         const parsed = parseFrontmatter(content);
 
         if (
           parsed?.frontmatter?.syndicated &&
-          Array.isArray(parsed.frontmatter.syndicated) &&
-          parsed.frontmatter.syndicated.some((url: string) =>
-            isMattersUrl(url)
-          )
+          Array.isArray(parsed.frontmatter.syndicated)
         ) {
-          return topFolder;
+          const mattersUrl = parsed.frontmatter.syndicated.find(
+            (url: string) => isMattersUrl(url)
+          );
+          if (mattersUrl) {
+            // Extract username from URL: https://matters.town/@username/slug-hash
+            const match = mattersUrl.match(/\/@([^/]+)\//);
+            const userName = match ? match[1] : null;
+            return { folder: topFolder, userName };
+          }
         }
       } catch {
-        // Skip files that can't be read
         continue;
       }
     }
 
-    return null;
+    return { folder: null, userName: null };
   } catch {
-    // On any error (e.g., listFiles not available), return null
-    return null;
+    return { folder: null, userName: null };
   }
+}
+
+/**
+ * Detect the article folder by scanning for files with Matters syndication URLs.
+ * Returns the folder name if found, or null if no existing articles.
+ */
+export async function detectArticleFolder(): Promise<string | null> {
+  const { folder } = await scanForMattersContent();
+  return folder;
+}
+
+/**
+ * Detect the Matters username bound to this project by scanning syndication URLs.
+ * Returns the username if found, or null if no Matters content exists.
+ */
+export async function detectBoundUser(): Promise<string | null> {
+  const { userName } = await scanForMattersContent();
+  return userName;
 }
 
 /**

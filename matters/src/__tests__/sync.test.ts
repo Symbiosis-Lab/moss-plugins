@@ -945,3 +945,125 @@ Content`;
     expect(withoutUid?.uid).toBeNull();
   });
 });
+
+// ============================================================================
+// detectBoundUser Tests
+// ============================================================================
+
+describe("detectBoundUser", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("returns username from Matters syndication URL", async () => {
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/articles/test-article.md`,
+      `---
+title: "Test Article"
+syndicated:
+  - "https://matters.town/@alice/test-article-abc123"
+---
+
+Article content`
+    );
+
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBe("alice");
+  });
+
+  it("returns null when no Matters content exists", async () => {
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/articles/local-article.md`,
+      `---
+title: "Local Only"
+---
+
+Content`
+    );
+
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBeNull();
+  });
+
+  it("returns null when syndication URLs are from other platforms", async () => {
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/articles/devto-article.md`,
+      `---
+title: "Cross-posted"
+syndicated:
+  - "https://dev.to/alice/article-123"
+---
+
+Content`
+    );
+
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBeNull();
+  });
+
+  it("returns null when no markdown files exist", async () => {
+    // Empty project
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBeNull();
+  });
+
+  it("ignores hidden and underscore folders", async () => {
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/.hidden/article.md`,
+      `---
+title: "Hidden"
+syndicated:
+  - "https://matters.town/@alice/hidden-abc123"
+---
+
+Content`
+    );
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/_drafts/draft.md`,
+      `---
+title: "Draft"
+syndicated:
+  - "https://matters.town/@alice/draft-def456"
+---
+
+Content`
+    );
+
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBeNull();
+  });
+
+  it("extracts username from matters.town URL with @ prefix", async () => {
+    ctx.filesystem.setFile(
+      `${ctx.projectPath}/posts/my-post.md`,
+      `---
+title: "My Post"
+syndicated:
+  - "https://matters.town/@bob_writer/my-post-xyz789"
+---
+
+Content`
+    );
+
+    const { detectBoundUser } = await import("../sync");
+    const userName = await detectBoundUser();
+
+    expect(userName).toBe("bob_writer");
+  });
+});

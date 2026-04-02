@@ -20,6 +20,8 @@ import {
  * Plugin configuration stored in config.json
  */
 export interface MattersPluginConfig {
+  /** Matters username this project is bound to (guards auto-sync) */
+  boundUserName?: string;
   /** Matters.town username (allows unauthenticated mode when cookie unavailable) */
   userName?: string;
   /** User's language preference (e.g., "zh_hans", "zh_hant", "en") */

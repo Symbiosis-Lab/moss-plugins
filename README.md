@@ -13,6 +13,18 @@ Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
 | [matters](matters) | Syndicate | Syndicate to Matters.town |
 | [planet](planet) | Syndicate | Syndicate to IPFS via Planet *(proposal)* |
 
+## Archived
+
+The following generator plugins have been archived. moss focuses on Obsidian users who want to publish, not existing SSG users who already have preview and deployment workflows. See [docs/plans/2026-04-03-archive-ssg-plugins.md](../docs/plans/2026-04-03-archive-ssg-plugins.md).
+
+| Plugin | Status |
+| ------ | ------ |
+| [hugo](hugo) | Archived |
+| [astro](astro) | Archived |
+| [jekyll](jekyll) | Archived |
+| [eleventy](eleventy) | Archived |
+| [gatsby](gatsby) | Archived |
+
 ## Development
 
 ### Structure

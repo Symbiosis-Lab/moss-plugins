@@ -19,11 +19,11 @@ The following generator plugins have been archived. moss focuses on Obsidian use
 
 | Plugin | Status |
 | ------ | ------ |
-| [hugo](hugo) | Archived |
-| [astro](astro) | Archived |
-| [jekyll](jekyll) | Archived |
-| [eleventy](eleventy) | Archived |
-| [gatsby](gatsby) | Archived |
+| [hugo](archive/hugo) | Archived |
+| [astro](archive/astro) | Archived |
+| [jekyll](archive/jekyll) | Archived |
+| [eleventy](archive/eleventy) | Archived |
+| [gatsby](archive/gatsby) | Archived |
 
 ## Development
 

@@ -1,5 +1,6 @@
 ---
 title: Syndication Test Site
+uid: 37facec5
 ---
 
 # Syndication Test Site

@@ -1,5 +1,6 @@
 ---
 title: "Exploring Decentralized Publishing: A Test Article"
+uid: 6aef0cb6
 date: 2025-02-10
 tags:
   - web3

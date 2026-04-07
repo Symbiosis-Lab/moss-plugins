@@ -1,5 +1,6 @@
 ---
 title: Home
+uid: 6aece00d
 ---
 
 # Welcome

@@ -1,5 +1,6 @@
 ---
 title: My Blog
+uid: da3b6ba5
 ---
 
 # My Blog

@@ -1,5 +1,6 @@
 ---
 title: Home
+uid: 632dfff6
 ---
 
 # Welcome to My Blog

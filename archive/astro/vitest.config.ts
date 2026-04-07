@@ -1,17 +1,3 @@
-import { defineConfig } from "vitest/config";
+import { createArchiveUnitConfig } from "../../vitest.shared.ts";
 
-export default defineConfig({
-  test: {
-    root: import.meta.dirname,
-    globals: true,
-    environment: "node",
-    include: ["src/**/*.test.ts"],
-    testTimeout: 60000,
-    hookTimeout: 30000,
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "json", "html"],
-      exclude: ["node_modules", "dist", "**/*.test.ts", "**/*.e2e.ts"],
-    },
-  },
-});
+export default createArchiveUnitConfig(import.meta.dirname);

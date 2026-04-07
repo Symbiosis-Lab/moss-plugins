@@ -1,13 +1,3 @@
-import { defineConfig } from "vitest/config";
+import { createArchiveE2eConfig } from "../../vitest.shared.ts";
 
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: "node",
-    // E2E tests only
-    include: ["src/**/*.e2e.ts"],
-    // E2E tests have longer timeouts
-    testTimeout: 120000,
-    hookTimeout: 60000,
-  },
-});
+export default createArchiveE2eConfig();

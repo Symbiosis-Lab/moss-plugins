@@ -1,45 +1,29 @@
-import { defineConfig } from "vitest/config";
+import { createSocialPluginConfig } from "../vitest.shared.ts";
 
-export default defineConfig({
-  test: {
-    root: import.meta.dirname,
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "lcov", "html"],
-      include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/__generated__/**"],
+export default createSocialPluginConfig(import.meta.dirname, {
+  coverageExclude: ["src/**/*.test.ts", "src/__generated__/**"],
+  extraProjects: [
+    {
+      extends: true,
+      test: {
+        name: "features",
+        include: ["features/steps/**/*.steps.ts"],
+        environment: "node",
+        testTimeout: 120000,
+        hookTimeout: 60000,
+        globals: true,
+        setupFiles: ["./test-setup/e2e.ts"],
+      },
     },
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: "unit",
-          include: ["src/**/*.test.ts"],
-          environment: "happy-dom",
-        },
+    {
+      extends: true,
+      test: {
+        name: "e2e",
+        include: ["e2e/**/*.test.ts"],
+        environment: "node",
+        testTimeout: 120000,
+        hookTimeout: 60000,
       },
-      {
-        extends: true,
-        test: {
-          name: "features",
-          include: ["features/steps/**/*.steps.ts"],
-          environment: "node",
-          testTimeout: 120000, // 2 minutes for real API calls
-          hookTimeout: 60000,
-          globals: true,
-          setupFiles: ["./test-setup/e2e.ts"],
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "e2e",
-          include: ["e2e/**/*.test.ts"],
-          environment: "node",
-          testTimeout: 120000, // 2 minutes for CLI tests
-          hookTimeout: 60000,
-        },
-      },
-    ],
-  },
+    },
+  ],
 });

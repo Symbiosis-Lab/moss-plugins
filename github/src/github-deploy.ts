@@ -353,6 +353,13 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
     await git(["add", ".moss/build/site/"]);
 
     // ── 3. Get site tree SHA directly from index ─────────────────────────
+    // Remove index.lock again: iCloud can re-lock the index between git add
+    // (which releases it) and write-tree (which needs to read it). The lock
+    // file is zero-bytes with iCloud extended attributes — not a real git lock.
+    await executeBinary({
+      binaryPath: "rm", args: ["-f", ".git/index.lock"],
+      workingDir: ".", timeoutMs: 5_000, env: {},
+    });
     onProgress(10, "Preparing gh-pages...");
     const writeTree = await git(["write-tree", "--prefix=.moss/build/site/"]);
     if (!writeTree.success) throw new Error(`Failed to write site tree: ${sanitize(writeTree.stderr, token)}`);

@@ -256,6 +256,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // git write-tree --prefix=.moss/build/site/
         // .nojekyll injection (always happens):
         .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object -w --stdin (.nojekyll)
@@ -294,6 +295,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -443,6 +445,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "4b825dc\n"))       // write-tree --prefix (empty tree)
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -495,6 +498,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111bbb222\n"))  // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -526,6 +530,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -580,6 +585,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(false, "", "fatal: not a valid object name"));  // write-tree --prefix fails
 
       const onProgress = vi.fn();
@@ -599,6 +605,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -633,6 +640,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -691,6 +699,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -756,6 +765,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
         // .nojekyll injection:
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -899,6 +909,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                        // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))      // hash-object .nojekyll
@@ -940,6 +951,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                        // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                        // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))            // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))      // hash-object .nojekyll
@@ -1094,6 +1106,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/build/site/
           // .nojekyll + CNAME injection steps:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (.nojekyll)
@@ -1166,6 +1179,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (empty .nojekyll)
@@ -1220,6 +1234,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (empty .nojekyll)
@@ -1292,6 +1307,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, SITE_TREE + "\n"))  // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, NOJEKYLL_BLOB + "\n"))  // hash-object -w --stdin (.nojekyll)
@@ -1362,6 +1378,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1398,6 +1415,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "4b825dc\n"))       // write-tree --prefix (empty tree)
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1499,6 +1517,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "newSiteTree\n"))   // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1534,6 +1553,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1634,6 +1654,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1682,6 +1703,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
@@ -1728,6 +1750,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1749,6 +1772,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging (retry):
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // write-tree --prefix=.moss/build/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1793,6 +1817,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1827,6 +1852,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "aaa111\n"))        // write-tree --prefix=.moss/build/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1848,6 +1874,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging (retry):
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "bbb222\n"))        // write-tree --prefix=.moss/build/site/
           .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
           .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1898,6 +1925,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // write-tree --prefix=.moss/build/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
@@ -1945,6 +1973,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "treeSha\n"))       // write-tree --prefix=.moss/build/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob abc\tindex.html\n"))  // ls-tree
@@ -1977,6 +2006,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/build/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
@@ -2015,6 +2045,7 @@ describe("github-deploy", () => {
         .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
         // Site-only staging:
         .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+        .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
         .mockResolvedValueOnce(gitResult(true, "siteTree\n"))      // write-tree --prefix=.moss/build/site/
         .mockResolvedValueOnce(gitResult(true, "nojekyllblob\n"))  // hash-object .nojekyll
         .mockResolvedValueOnce(gitResult(true, "100644 blob siteblob\tindex.html\n"))  // ls-tree
@@ -2085,6 +2116,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "siteTree123\n"))   // git write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object -w --stdin (.nojekyll)
@@ -2199,6 +2231,7 @@ describe("github-deploy", () => {
           .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/shallow.lock
           // Site-only staging:
           .mockResolvedValueOnce(gitResult(true))                    // git add .moss/build/site/
+          .mockResolvedValueOnce(gitResult(true))                    // rm -f .git/index.lock (iCloud race)
           .mockResolvedValueOnce(gitResult(true, "siteTree123\n"))   // write-tree --prefix=.moss/build/site/
           // .nojekyll injection:
           .mockResolvedValueOnce(gitResult(true, "nojekyll000\n"))   // hash-object

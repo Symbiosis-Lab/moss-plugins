@@ -278,8 +278,9 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Tracks current phase so heartbeat message is informative, not generic
     let deployResult: DeployResult = { commitSha: "", orphanSha: "", treeChanged: false };
     let currentPhase = "Deploying...";
+    let currentStep = 5;
     const heartbeat = setInterval(() => {
-      reportProgress("deploying", 5, 10, currentPhase);
+      reportProgress("deploying", currentStep, 10, currentPhase);
     }, DEPLOY_HEARTBEAT_INTERVAL_MS);
 
     // Use context.domain from DeployContext (populated by Rust from .moss/config.toml).
@@ -310,8 +311,8 @@ async function deploy(context: DeployContext): Promise<HookResult> {
         onProgress: (percent, message) => {
           currentPhase = message;
           // Map 0-100% to steps 5-9 of overall 10-step progress
-          const step = 5 + Math.floor((percent / 100) * 4);
-          reportProgress("deploying", Math.min(step, 9), 10, message);
+          currentStep = Math.min(5 + Math.floor((percent / 100) * 4), 9);
+          reportProgress("deploying", currentStep, 10, message);
         },
       });
     } finally {

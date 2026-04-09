@@ -111,7 +111,7 @@ function createMockContext(overrides?: Partial<DeployContext>): DeployContext {
   return {
     project_path: "/test/project",
     moss_dir: "/test/project/.moss",
-    output_dir: "/test/project/.moss/site",
+    output_dir: "/test/project/.moss/build/site",
     site_files: ["index.html", "style.css"],
     project_info: {
       project_type: "markdown",
@@ -170,8 +170,8 @@ function setupDeployMocks(
   // Deploy result (now returns DeployResult object)
   vi.mocked(deployViaGitPush).mockResolvedValue(
     hasChanges
-      ? { commitSha: commitSha, orphanSha: "orphan-sha-" + commitSha }
-      : { commitSha: "", orphanSha: "" }
+      ? { commitSha: commitSha, orphanSha: "orphan-sha-" + commitSha, treeChanged: true }
+      : { commitSha: "", orphanSha: "", treeChanged: false }
   );
 
   // Pages status check
@@ -369,7 +369,7 @@ describe("on_deploy integration", () => {
         .mockResolvedValueOnce(null) // Phase 1 check
         .mockResolvedValueOnce("new-token"); // after promptLogin
 
-      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "", orphanSha: "" });
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "", orphanSha: "", treeChanged: false });
 
       const result = await on_deploy(createMockContext());
 
@@ -388,7 +388,7 @@ describe("on_deploy integration", () => {
       });
       vi.mocked(hasRequiredScopes).mockReturnValue(true);
 
-      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "commit-sha", orphanSha: "orphan-commit-sha" });
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "commit-sha", orphanSha: "orphan-commit-sha", treeChanged: true });
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built", url: "", commit: "orphan-commit-sha" });
 
       const result = await on_deploy(createMockContext());

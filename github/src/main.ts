@@ -276,7 +276,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Heartbeat safety net: report progress periodically to prevent inactivity timeout
     // and keep the progress panel visible (must be < STALE_TIMEOUT_MS of 15s).
     // Tracks current phase so heartbeat message is informative, not generic
-    let deployResult: DeployResult = { commitSha: "", orphanSha: "" };
+    let deployResult: DeployResult = { commitSha: "", orphanSha: "", treeChanged: false };
     let currentPhase = "Deploying...";
     const heartbeat = setInterval(() => {
       reportProgress("deploying", 5, 10, currentPhase);
@@ -299,8 +299,8 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     }
 
     try {
-      // Single deploy: commits source + .moss/site/, pushes to main,
-      // then extracts .moss/site/ tree as orphan commit → gh-pages
+      // Single deploy: commits source + .moss/build/site/, pushes to main,
+      // then extracts .moss/build/site/ tree as orphan commit → gh-pages
       deployResult = await deployViaGitPush({
         owner,
         repo: repoName,
@@ -331,11 +331,15 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Generate pages URL (github.io) for API operations and display URL for user-facing messages
     const pagesUrl = buildPagesUrl(owner, repoName);
     const displayUrl = domain ? `https://${domain}` : pagesUrl;
-    const { commitSha, orphanSha } = deployResult;
+    const { commitSha, orphanSha, treeChanged } = deployResult;
+
+    // Use treeChanged (gh-pages content) for primary UI, not commitSha (source backup).
+    // The gh-pages push always runs; commitSha only reflects source backup to main.
+    const deployed = treeChanged;
 
     // Log the deployment result with URL immediately
-    if (commitSha) {
-      console.log(`   Deployed: ${commitSha.substring(0, 7)}`);
+    if (deployed) {
+      console.log(`   Deployed: ${orphanSha.substring(0, 7)}`);
       console.log(`   Site URL: ${displayUrl}`);
     } else {
       console.log("   No changes to deploy");
@@ -345,9 +349,10 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Phase 9: Two-stage deployment verification
     // Stage 1: GitHub API build status (uses github.io URL)
     // Stage 2: HTTP reachability check against displayUrl (verifies actual access)
+    // Always verify when tree changed — don't gate on commitSha (source backup).
     let isLive = false;
     let liveError: string | undefined;
-    if (commitSha) {
+    if (deployed) {
       const liveStatus = await waitForPagesLive(owner, repoName, token, pagesUrl, orphanSha);
       liveError = liveStatus.error;
 
@@ -370,7 +375,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     let toastVariant: "success" | "info" | "warning" | "error";
     let toastActions: Array<{ label: string; url: string }>;
 
-    if (wasFirstSetup && commitSha) {
+    if (wasFirstSetup && deployed) {
       // Scenario 1: First-time deployment (gh-pages branch created)
       message =
         `Your site is being deployed to GitHub Pages!\n\n` +
@@ -380,7 +385,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       toastMessage = "Deploy configured!";
       toastVariant = "success";
       toastActions = [{ label: "View site", url: displayUrl }];
-    } else if (commitSha && isLive) {
+    } else if (deployed && isLive) {
       // Scenario 2a: Subsequent deploy, site is confirmed live
       message =
         `Site deployed to GitHub Pages!\n\n` +
@@ -389,7 +394,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       toastMessage = "Site is live!";
       toastVariant = "success";
       toastActions = [{ label: "View site", url: displayUrl }];
-    } else if (commitSha && liveError) {
+    } else if (deployed && liveError) {
       // Scenario 2b: Subsequent deploy, build errored on GitHub
       message =
         `Site pushed to GitHub Pages but the build failed.\n\n` +
@@ -398,7 +403,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
       toastMessage = liveError.length > 60 ? liveError.slice(0, 60) + "..." : liveError;
       toastVariant = "warning";
       toastActions = [{ label: "View on GitHub", url: `https://github.com/${owner}/${repoName}/settings/pages` }];
-    } else if (commitSha) {
+    } else if (deployed) {
       // Scenario 2c: Deployed but not yet reachable (DNS propagation, CDN cache, first deploy)
       message =
         `Site deployed to GitHub Pages!\n\n` +
@@ -421,14 +426,14 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Phase 10: Final progress message based on scenario
     const progressMsg = wasFirstSetup
       ? "GitHub Pages configured!"
-      : commitSha
+      : deployed
         ? "Deployed!"
         : "No changes to deploy";
     await reportProgress("complete", 10, 10, progressMsg);
 
     const logMsg = wasFirstSetup
       ? "Setup complete"
-      : commitSha
+      : deployed
         ? "Changes pushed"
         : "No changes";
     console.log(`GitHub Deployer: ${logMsg}`);

@@ -103,7 +103,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
     return {
       project_path: projectPath,
       moss_dir: `${projectPath}/.moss`,
-      output_dir: `${projectPath}/.moss/site`,
+      output_dir: `${projectPath}/.moss/build/site`,
       site_files: scenarioSiteFiles,
       project_info: {
         project_type: "markdown",
@@ -273,8 +273,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       // Already set via getOriginOwnerRepo in Given
     });
 
-    And('the site is compiled with files in ".moss/site/"', () => {
-      ctx.filesystem.setFile(`${projectPath}/.moss/site/index.html`, "<html></html>");
+    And('the site is compiled with files in ".moss/build/site/"', () => {
+      ctx.filesystem.setFile(`${projectPath}/.moss/build/site/index.html`, "<html></html>");
     });
 
     And("the GitHub Actions workflow already exists", () => {
@@ -282,8 +282,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       vi.mocked(getToken).mockResolvedValue("test-token");
       vi.mocked(getTokenFromGit).mockResolvedValue(null);
 
-      // deployViaGitPush returns commit sha string
-      vi.mocked(deployViaGitPush).mockResolvedValue("new-commit-sha");
+      // deployViaGitPush returns DeployResult
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "new-commit-sha", orphanSha: "orphan-sha", treeChanged: true });
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });
@@ -322,8 +322,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
     });
 
-    And('the site is compiled with files in ".moss/site/"', () => {
-      ctx.filesystem.setFile(`${projectPath}/.moss/site/index.html`, "<html></html>");
+    And('the site is compiled with files in ".moss/build/site/"', () => {
+      ctx.filesystem.setFile(`${projectPath}/.moss/build/site/index.html`, "<html></html>");
       ctx.filesystem.setFile(`${projectPath}/.gitignore`, "node_modules/");
     });
 
@@ -332,8 +332,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       vi.mocked(getToken).mockResolvedValue("test-token");
       vi.mocked(getTokenFromGit).mockResolvedValue(null);
 
-      // deployViaGitPush returns commit sha string
-      vi.mocked(deployViaGitPush).mockResolvedValue("first-commit-sha");
+      // deployViaGitPush returns DeployResult
+      vi.mocked(deployViaGitPush).mockResolvedValue({ commitSha: "first-commit-sha", orphanSha: "orphan-sha", treeChanged: true });
 
       // Pages status check
       vi.mocked(checkPagesStatus).mockResolvedValue({ status: "built" });

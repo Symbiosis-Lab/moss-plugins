@@ -38,8 +38,8 @@ describe("WORKFLOW_TEMPLATE", () => {
     expect(WORKFLOW_TEMPLATE).toContain("id-token: write");
   });
 
-  it("references .moss/site as the upload path", () => {
-    expect(WORKFLOW_TEMPLATE).toContain("path: .moss/site");
+  it("references .moss/build/site as the upload path", () => {
+    expect(WORKFLOW_TEMPLATE).toContain("path: .moss/build/site");
   });
 
   it("includes workflow_dispatch trigger", () => {

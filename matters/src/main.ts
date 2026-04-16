@@ -193,7 +193,10 @@ async function waitForToken(
     }
 
     clearTokenCache();
-    const token = await getAccessToken();
+    // During login flow, check global cookies (fromCookie=true) since
+    // the login page sets the token as a cookie in the shared WebKit store.
+    // getAccessToken(true) will also persist the token to project storage.
+    const token = await getAccessToken(true);
 
     // Exit if context was lost (SDK returns undefined)
     if (token === undefined) {

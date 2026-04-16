@@ -41,6 +41,9 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
 vi.mock("../api", () => ({
   clearTokenCache: vi.fn(),
   getAccessToken: vi.fn().mockResolvedValue("test-token"),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
   createDraft: vi.fn(),
   fetchDraft: vi.fn(),
   uploadCoverByUrl: vi.fn(),

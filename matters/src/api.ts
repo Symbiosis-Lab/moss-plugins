@@ -37,7 +37,7 @@ import type {
   UserCollectionsQuery,
   UserProfileQuery,
 } from "./__generated__/types";
-import { getPluginCookie, httpPost } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, httpPost, readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Configuration
@@ -436,6 +436,8 @@ mutation PutCollection($input: PutCollectionInput!) {
 // Token Management
 // ============================================================================
 
+const AUTH_FILE = "auth.json";
+
 let cachedAccessToken: string | null = null;
 
 /**
@@ -446,22 +448,82 @@ export function clearTokenCache(): void {
 }
 
 /**
- * Get access token from cookies (with caching)
+ * Load the stored access token from project-scoped plugin storage.
+ * Returns null if no token is stored or the file is invalid.
+ */
+export async function loadStoredToken(): Promise<string | null> {
+  try {
+    const exists = await pluginFileExists(AUTH_FILE);
+    if (!exists) return null;
+    const content = await readPluginFile(AUTH_FILE);
+    const data = JSON.parse(content);
+    return typeof data.accessToken === "string" ? data.accessToken : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save access token to project-scoped plugin storage.
+ * This makes the token survive across sessions and scopes it to this project.
+ */
+export async function saveStoredToken(token: string): Promise<void> {
+  const data = { accessToken: token, savedAt: new Date().toISOString() };
+  await writePluginFile(AUTH_FILE, JSON.stringify(data, null, 2));
+  console.log("💾 Access token saved to project storage");
+}
+
+/**
+ * Remove stored access token from project storage.
+ */
+export async function clearStoredToken(): Promise<void> {
+  cachedAccessToken = null;
+  try {
+    await writePluginFile(AUTH_FILE, "{}");
+  } catch {
+    // Ignore write failures
+  }
+}
+
+/**
+ * Get access token, preferring project-scoped storage over global cookies.
  *
- * Uses the SDK's auto-detected plugin context - no need to pass plugin name or project path.
+ * Normal mode (default): reads from project storage only. If no stored token
+ * exists, returns null — the caller must trigger a login flow.
  *
+ * Cookie mode (fromCookie=true): also checks the global WebKit cookie store.
+ * Used only during/after login to capture the freshly-set cookie.
+ *
+ * @param fromCookie - If true, fall back to global cookie store (login flow only)
  * @returns
  *   - `string` - The access token if found
  *   - `null` - No token found (but context was available)
  *   - `undefined` - No plugin context (e.g., hook ended, window closed)
  */
-export async function getAccessToken(): Promise<string | null | undefined> {
+export async function getAccessToken(fromCookie = false): Promise<string | null | undefined> {
   if (cachedAccessToken !== null) {
     return cachedAccessToken;
   }
 
+  // 1. Check project-scoped storage first
   try {
-    console.log("✅ Getting cookies from plugin context");
+    const storedToken = await loadStoredToken();
+    if (storedToken) {
+      console.log("🔑 Using stored access token from project storage");
+      cachedAccessToken = storedToken;
+      return cachedAccessToken;
+    }
+  } catch {
+    // Fall through to cookie check if allowed
+  }
+
+  // 2. Only check global cookies when explicitly requested (login flow)
+  if (!fromCookie) {
+    return null;
+  }
+
+  try {
+    console.log("🍪 Checking cookies for access token (login flow)...");
     const cookies = await getPluginCookie();
 
     // null means "no plugin context" - signal caller to stop
@@ -470,18 +532,18 @@ export async function getAccessToken(): Promise<string | null | undefined> {
       return undefined;
     }
 
-    console.log(`Received ${cookies.length} cookies`);
-
-    if (cookies.length > 0) {
-      const cookieNames = cookies.map((c) => c.name).join(", ");
-      console.log(`Cookie names: ${cookieNames}`);
-    }
-
     const tokenCookie = cookies.find((c) => c.name === "__access_token");
 
     if (tokenCookie) {
       console.log(`Found __access_token cookie (length: ${tokenCookie.value?.length ?? 0})`);
       cachedAccessToken = tokenCookie.value;
+
+      // Immediately persist to project storage so future calls don't need cookies
+      try {
+        await saveStoredToken(tokenCookie.value);
+      } catch (e) {
+        console.warn(`Failed to persist token to storage: ${e}`);
+      }
     } else {
       console.warn("__access_token cookie NOT found");
     }

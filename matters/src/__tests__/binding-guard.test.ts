@@ -47,6 +47,9 @@ vi.mock("../sync", () => ({
 vi.mock("../api", () => ({
   clearTokenCache: vi.fn(),
   getAccessToken: (...args: unknown[]) => mockGetAccessToken(...args),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
   fetchAllArticlesSince: vi.fn().mockResolvedValue({ articles: [], userName: "testuser" }),
   fetchAllDraftsSince: vi.fn().mockResolvedValue([]),
   fetchAllCollections: vi.fn().mockResolvedValue([]),

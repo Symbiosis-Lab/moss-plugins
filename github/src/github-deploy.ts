@@ -326,13 +326,12 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
       console.log("   No remote history to fetch (first deploy)");
     }
 
-    // ── Ensure .gitignore: exclude .moss/* except .moss/build/site/ ────────
-    // Two un-ignore entries needed: .moss/* blocks .moss/build/, so we must
-    // un-ignore the intermediate directory before un-ignoring the leaf.
-    onProgress(1, "Writing .gitignore...");
+    // ── Migration: strip stale moss-managed .moss/* lines from root .gitignore ──
+    // Older moss versions overwrote the root .gitignore with .moss/* exclusions.
+    // Those rules now live in .moss/.gitignore (written by the Rust pipeline).
     await executeBinary({
       binaryPath: "sh",
-      args: ["-c", 'printf "node_modules/\\n.DS_Store\\n.moss/*\\n!.moss/build/\\n.moss/build/*\\n!.moss/build/site/\\n" > .gitignore'],
+      args: ["-c", "[ -f .gitignore ] && sed -i '' '/^\\.moss/d;/^!\\.moss/d' .gitignore || true"],
       workingDir: ".",
       timeoutMs: 5_000,
       env: {},

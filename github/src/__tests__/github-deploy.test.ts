@@ -358,27 +358,23 @@ describe("github-deploy", () => {
       expect(initCalls).toHaveLength(0);
     });
 
-    it("writes .gitignore excluding .moss/* but including .moss/build/site/", async () => {
+    it("strips stale moss-managed .moss/* lines from root .gitignore (migration)", async () => {
       setupFullDeployMocks();
 
       const onProgress = vi.fn();
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-      // Verify .gitignore is written via sh -c
-      expect(mockExecuteBinary).toHaveBeenCalledWith(
-        expect.objectContaining({
-          binaryPath: "sh",
-          args: ["-c", expect.stringContaining(".moss/*")],
-        })
-      );
-      // Verify it contains the two-level un-ignore pattern for .moss/build/site/
+      // Gitignore ownership for .moss/ lives in .moss/.gitignore (written by Rust).
+      // Here we only strip stale .moss/* rules from the root .gitignore via sed.
       const shCall = mockExecuteBinary.mock.calls.find(
-        (call) => call[0].binaryPath === "sh"
+        (call) => call[0].binaryPath === "sh" && (call[0].args[1] as string).includes("sed")
       );
-      expect(shCall![0].args[1]).toContain("!.moss/build/");
-      expect(shCall![0].args[1]).toContain(".moss/build/*");
-      expect(shCall![0].args[1]).toContain("!.moss/build/site/");
-      expect(shCall![0].args[1]).toContain("node_modules/");
+      expect(shCall).toBeDefined();
+      const cmd = shCall![0].args[1] as string;
+      expect(cmd).toContain("[ -f .gitignore ]");
+      expect(cmd).toContain("sed -i");
+      expect(cmd).toContain("/^\\.moss/d");
+      expect(cmd).toContain("/^!\\.moss/d");
     });
 
     it("pushes gh-pages first, then main separately", async () => {
@@ -556,7 +552,6 @@ describe("github-deploy", () => {
       await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
       expect(onProgress).toHaveBeenCalledWith(0, "Preparing deploy...");
-      expect(onProgress).toHaveBeenCalledWith(1, "Writing .gitignore...");
       expect(onProgress).toHaveBeenCalledWith(5, "Staging site files...");
       expect(onProgress).toHaveBeenCalledWith(10, "Preparing gh-pages...");
       expect(onProgress).toHaveBeenCalledWith(25, "Pushing to GitHub...");
@@ -1479,27 +1474,25 @@ describe("github-deploy", () => {
         );
       });
 
-      it("gitignore un-ignores .moss/build/ and .moss/build/site/ with correct two-level pattern", async () => {
+      it("migration sed strips both .moss and !.moss rules from root .gitignore", async () => {
         setupFullDeployMocks();
 
         const onProgress = vi.fn();
         await deployViaGitPush({ owner: OWNER, repo: REPO, token: TOKEN, onProgress, gitPath: "git" });
 
-        // Find the sh -c call that writes .gitignore
+        // Gitignore ownership for .moss/ moved to .moss/.gitignore (Rust-managed).
+        // The plugin only strips stale .moss/* and !.moss/* lines from the root
+        // gitignore for users upgrading from older moss versions.
         const shCall = mockExecuteBinary.mock.calls.find(
-          (call) => call[0].binaryPath === "sh"
+          (call) => call[0].binaryPath === "sh" && (call[0].args[1] as string).includes("sed")
         );
         expect(shCall).toBeDefined();
-        const gitignoreCmd = shCall![0].args[1] as string;
+        const cmd = shCall![0].args[1] as string;
 
-        // Must un-ignore the intermediate directory .moss/build/ first,
-        // then ignore everything inside it, then un-ignore the leaf .moss/build/site/
-        expect(gitignoreCmd).toContain("!.moss/build/");
-        expect(gitignoreCmd).toContain(".moss/build/*");
-        expect(gitignoreCmd).toContain("!.moss/build/site/");
-
-        // Must NOT use the old single-level pattern
-        expect(gitignoreCmd).not.toMatch(/!\.moss\/site\//);
+        // Deletes lines starting with .moss (ignore rules)
+        expect(cmd).toContain("/^\\.moss/d");
+        // Deletes lines starting with !.moss (un-ignore rules)
+        expect(cmd).toContain("/^!\\.moss/d");
       });
     });
 

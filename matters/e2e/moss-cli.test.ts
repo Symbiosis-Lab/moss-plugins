@@ -239,7 +239,7 @@ describe("Matters Plugin E2E Tests", () => {
    */
   describe("Process hook (with --wait-plugins)", () => {
     it.skipIf(!HAS_WAIT_PLUGINS)(
-      "compiles with matters plugin - handles missing auth gracefully",
+      "builds with matters plugin - handles missing auth gracefully",
       async () => {
         const fixture = createFixture({
           withPlugin: true,
@@ -257,7 +257,7 @@ Hello from my blog!
 
         // Compile with plugins - process hook will run
         const { stdout, stderr, code } = await runMoss(
-          ["compile", fixture, "--wait-plugins"],
+          ["build", fixture, "--wait-plugins"],
           { timeout: 60000 }
         );
 
@@ -289,7 +289,7 @@ Hello from my blog!
         });
 
         const { stdout, stderr, code } = await runMoss(
-          ["compile", fixture, "--wait-plugins"],
+          ["build", fixture, "--wait-plugins"],
           { timeout: 60000 }
         );
 
@@ -322,7 +322,7 @@ Hello from my blog!
         });
 
         const { stdout, stderr, code } = await runMoss(
-          ["compile", fixture, "--wait-plugins"],
+          ["build", fixture, "--wait-plugins"],
           { timeout: 60000 }
         );
 

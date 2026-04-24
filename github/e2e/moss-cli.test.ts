@@ -196,12 +196,12 @@ describe("moss CLI E2E Tests", () => {
   });
 
   describe("moss --help", () => {
-    it("shows help message with compile command", async () => {
+    it("shows help message with build command", async () => {
       const { stdout, code } = await runMoss(["--help"]);
 
       expect(code).toBe(0);
       expect(stdout).toContain("moss");
-      expect(stdout).toContain("compile");
+      expect(stdout).toContain("build");
     });
 
     it("shows help message with deploy command", async () => {
@@ -214,11 +214,11 @@ describe("moss CLI E2E Tests", () => {
   });
 
   describe("Basic compilation (no plugins)", () => {
-    it("compiles a folder with markdown files", async () => {
+    it("builds a folder with markdown files", async () => {
       const fixture = createFixture({ content: { "index.md": "# Hello" } });
 
       const { stdout, stderr, code } = await runMoss([
-        "compile",
+        "build",
         fixture,
         "--no-plugins",
       ]);
@@ -252,7 +252,7 @@ describe("moss CLI E2E Tests", () => {
       expect(output).toMatch(/no.*plugin|install.*plugin/i);
     });
 
-    it("compiles before deploying", async () => {
+    it("builds before deploying", async () => {
       const fixture = createFixture({
         withGit: true,
         withRemote: "git@github.com:user/test-repo.git",
@@ -330,8 +330,8 @@ describe("moss CLI E2E Tests", () => {
         withPlugin: true,
       });
 
-      // First compile the site (creates .moss/site)
-      await runMoss(["compile", fixture, "--no-plugins"]);
+      // First build the site (creates .moss/site)
+      await runMoss(["build", fixture, "--no-plugins"]);
 
       // Then deploy - plugin should report "not a git repository" error
       const { stdout, stderr, code } = await runMoss(
@@ -354,8 +354,8 @@ describe("moss CLI E2E Tests", () => {
         withPlugin: true,
       });
 
-      // First compile the site
-      await runMoss(["compile", fixture, "--no-plugins"]);
+      // First build the site
+      await runMoss(["build", fixture, "--no-plugins"]);
 
       // Then deploy - plugin should report "no remote" error
       const { stdout, stderr, code } = await runMoss(
@@ -377,8 +377,8 @@ describe("moss CLI E2E Tests", () => {
         withPlugin: true,
       });
 
-      // First compile the site
-      await runMoss(["compile", fixture, "--no-plugins"]);
+      // First build the site
+      await runMoss(["build", fixture, "--no-plugins"]);
 
       // Then deploy - plugin should report "not a GitHub URL" error
       const { stdout, stderr, code } = await runMoss(
@@ -392,15 +392,15 @@ describe("moss CLI E2E Tests", () => {
       expect(output).toMatch(/not.*GitHub|GitHub.*only|github\.com/i);
     });
 
-    it.skipIf(!HAS_WAIT_PLUGINS)("validates site is compiled before deploy", async () => {
-      // Create fixture with valid GitHub setup but NO compiled site
+    it.skipIf(!HAS_WAIT_PLUGINS)("validates site is built before deploy", async () => {
+      // Create fixture with valid GitHub setup but NO built site
       const fixture = createFixture({
         withGit: true,
         withRemote: "git@github.com:testuser/testrepo.git",
         withPlugin: true,
       });
 
-      // Do NOT compile - go straight to deploy
+      // Do NOT build - go straight to deploy
       // Plugin should report "no site files" error
       const { stdout, stderr, code } = await runMoss(
         ["deploy", fixture, "--wait-plugins"],
@@ -410,7 +410,7 @@ describe("moss CLI E2E Tests", () => {
       const output = stdout + stderr;
 
       // Plugin should report empty site or compilation needed
-      expect(output).toMatch(/site.*empty|compile.*first|no.*files/i);
+      expect(output).toMatch(/site.*empty|build.*first|no.*files/i);
     });
 
     it.skipIf(!HAS_WAIT_PLUGINS)("shows deploy progress messages", async () => {
@@ -422,7 +422,7 @@ describe("moss CLI E2E Tests", () => {
       });
 
       // Compile first
-      await runMoss(["compile", fixture, "--no-plugins"]);
+      await runMoss(["build", fixture, "--no-plugins"]);
 
       // Deploy with --wait-plugins to see full output
       const { stdout, stderr, code } = await runMoss(
@@ -447,7 +447,7 @@ describe("moss CLI E2E Tests", () => {
    * so it won't affect compilation, but this verifies plugin loading works.
    */
   describe("Compile with plugins", () => {
-    it.skipIf(!HAS_WAIT_PLUGINS)("compiles successfully with plugin installed", async () => {
+    it.skipIf(!HAS_WAIT_PLUGINS)("builds successfully with plugin installed", async () => {
       const fixture = createFixture({
         withGit: true,
         withRemote: "git@github.com:testuser/testrepo.git",
@@ -459,7 +459,7 @@ describe("moss CLI E2E Tests", () => {
 
       // Compile WITH plugins (default behavior)
       const { stdout, stderr, code } = await runMoss(
-        ["compile", fixture, "--wait-plugins"],
+        ["build", fixture, "--wait-plugins"],
         { timeout: 60000 }
       );
 

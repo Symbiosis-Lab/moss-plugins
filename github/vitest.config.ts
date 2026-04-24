@@ -28,7 +28,7 @@ export default createSocialPluginConfig(import.meta.dirname, {
         globals: true,
       },
     },
-    // E2E tests require a compiled moss binary and run in the dedicated E2E workflow.
+    // E2E tests require a built moss binary and run in the dedicated E2E workflow.
     // They are excluded from `test:coverage` to avoid failing in the plugin CI job.
     // Run them explicitly via: vitest run --project e2e
     ...(process.env.INCLUDE_E2E

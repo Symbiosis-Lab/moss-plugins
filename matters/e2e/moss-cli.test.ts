@@ -255,7 +255,7 @@ Hello from my blog!
           },
         });
 
-        // Compile with plugins - process hook will run
+        // Build with plugins - process hook will run
         const { stdout, stderr, code } = await runMoss(
           ["build", fixture, "--wait-plugins"],
           { timeout: 60000 }

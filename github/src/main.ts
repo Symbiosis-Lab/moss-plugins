@@ -175,10 +175,10 @@ async function checkSiteReachable(
  * deploy hook - Deploy to GitHub Pages via git push
  *
  * This capability:
- * 0. Validates requirements (git repo, GitHub remote, compiled site)
+ * 0. Validates requirements (git repo, GitHub remote, built site)
  * 1. Ensures authentication (prompts login if needed)
  * 2. Pushes source files to main branch (first-time only, non-fatal)
- * 3. Force-pushes compiled site to gh-pages via git CLI
+ * 3. Force-pushes built site to gh-pages via git CLI
  * 4. Verifies deployment is live
  */
 async function deploy(context: DeployContext): Promise<HookResult> {
@@ -202,7 +202,7 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     // Phase 0.5: Early validation using context.site_files (Bug 13 fix)
     // The plugin trusts moss to provide site_files - no need to call listFiles()
     if (!context.site_files || context.site_files.length === 0) {
-      const msg = "Site directory is empty. Please compile your site first.";
+      const msg = "Site directory is empty. Please build your site first.";
       await reportError(msg, "validation", true);
       return { success: false, message: msg };
     }

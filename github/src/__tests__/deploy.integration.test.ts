@@ -260,7 +260,7 @@ describe("on_deploy integration", () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.message).toMatch(/site.*empty|compile.*first/i);
+      expect(result.message).toMatch(/site.*empty|build.*first/i);
     });
 
     it("passes validation when context.site_files has files", async () => {

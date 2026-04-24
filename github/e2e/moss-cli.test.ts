@@ -421,7 +421,7 @@ describe("moss CLI E2E Tests", () => {
         withPlugin: true,
       });
 
-      // Compile first
+      // Build first
       await runMoss(["build", fixture, "--no-plugins"]);
 
       // Deploy with --wait-plugins to see full output
@@ -440,13 +440,13 @@ describe("moss CLI E2E Tests", () => {
   });
 
   /**
-   * Compile with plugins tests
+   * Build with plugins tests
    *
    * Tests compilation with plugins enabled (no --no-plugins flag).
    * The GitHub plugin has deploy capability, not process/enhance,
    * so it won't affect compilation, but this verifies plugin loading works.
    */
-  describe("Compile with plugins", () => {
+  describe("Build with plugins", () => {
     it.skipIf(!HAS_WAIT_PLUGINS)("builds successfully with plugin installed", async () => {
       const fixture = createFixture({
         withGit: true,
@@ -457,7 +457,7 @@ describe("moss CLI E2E Tests", () => {
         },
       });
 
-      // Compile WITH plugins (default behavior)
+      // Build WITH plugins (default behavior)
       const { stdout, stderr, code } = await runMoss(
         ["build", fixture, "--wait-plugins"],
         { timeout: 60000 }

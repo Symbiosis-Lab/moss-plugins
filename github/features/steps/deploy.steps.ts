@@ -254,8 +254,8 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       expect(deployResult?.success).toBe(false);
     });
 
-    And("the error should mention that the site needs to be compiled", () => {
-      expect(deployResult?.message).toMatch(/site.*empty|compile.*first|not found/i);
+    And("the error should mention that the site needs to be built", () => {
+      expect(deployResult?.message).toMatch(/site.*empty|build.*first|not found/i);
     });
   });
 
@@ -273,7 +273,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       // Already set via getOriginOwnerRepo in Given
     });
 
-    And('the site is compiled with files in ".moss/build/site/"', () => {
+    And('the site is built with files in ".moss/build/site/"', () => {
       ctx.filesystem.setFile(`${projectPath}/.moss/build/site/index.html`, "<html></html>");
     });
 
@@ -322,7 +322,7 @@ describeFeature(feature, ({ Scenario, BeforeEachScenario, AfterEachScenario }) =
       });
     });
 
-    And('the site is compiled with files in ".moss/build/site/"', () => {
+    And('the site is built with files in ".moss/build/site/"', () => {
       ctx.filesystem.setFile(`${projectPath}/.moss/build/site/index.html`, "<html></html>");
       ctx.filesystem.setFile(`${projectPath}/.gitignore`, "node_modules/");
     });

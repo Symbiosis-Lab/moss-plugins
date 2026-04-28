@@ -29,12 +29,12 @@ Feature: GitHub Deployer Validation
     And the site directory is empty
     When I attempt to deploy
     Then the deployment should fail
-    And the error should mention that the site needs to be compiled
+    And the error should mention that the site needs to be built
 
   Scenario: Successful deployment with SSH remote
     Given the directory is a git repository
     And the git remote is "git@github.com:testuser/testrepo.git"
-    And the site is compiled with files in ".moss/build/site/"
+    And the site is built with files in ".moss/build/site/"
     And the GitHub Actions workflow already exists
     When I attempt to deploy
     Then the deployment should succeed
@@ -43,7 +43,7 @@ Feature: GitHub Deployer Validation
   Scenario: First-time deployment creates workflow
     Given the directory is a git repository
     And the git remote is "git@github.com:user/repo.git"
-    And the site is compiled with files in ".moss/build/site/"
+    And the site is built with files in ".moss/build/site/"
     And the GitHub Actions workflow does not exist
     When I attempt to deploy
     Then the deployment should succeed

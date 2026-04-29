@@ -793,6 +793,38 @@ describe("uploadAndReplaceLocalImages", () => {
     warnSpy.mockRestore();
   });
 
+  it("leaves original src unchanged when waitForUrl exhausts the budget", async () => {
+    // Regression: waitForUrl throws when the deployed URL never returns 2xx
+    // (huge github-pages CDN propagation lag, transient outage, etc.). The
+    // upload step must fall through to the catch handler and leave the src
+    // unchanged so the matters draft doesn't get a broken absolute URL
+    // pointing at our domain. Without this, the user sees a draft with
+    // images that 404 inside matters' editor.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const html = '<img src="images/photo.jpg" alt="Photo">';
+    const baseUrl = "https://example.com/posts/test/";
+
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, {
+      waitOptions: { totalMs: 50, intervalMs: 10 },
+    });
+
+    expect(result).toContain('src="images/photo.jpg"');
+    // uploadEmbedByUrl must NOT have been called: waitForUrl threw first
+    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("did not become reachable"),
+    );
+
+    warnSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
   it("replaces successful uploads while leaving failed ones unchanged", async () => {
     vi.mocked(uploadEmbedByUrl)
       .mockResolvedValueOnce("https://assets.matters.town/embed/good.jpg")

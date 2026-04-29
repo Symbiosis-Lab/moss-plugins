@@ -1052,7 +1052,11 @@ export function addCanonicalLinkToContent(
  *   clamp `../../` to the root and lose the article's directory context.
  * @returns HTML content with local image srcs replaced by CDN URLs
  */
-export async function uploadAndReplaceLocalImages(content: string, baseUrl: string): Promise<string> {
+export async function uploadAndReplaceLocalImages(
+  content: string,
+  baseUrl: string,
+  options: { waitOptions?: { totalMs?: number; intervalMs?: number } } = {},
+): Promise<string> {
   // Collect all img src values
   const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
   const localSrcs = new Set<string>();
@@ -1084,7 +1088,7 @@ export async function uploadAndReplaceLocalImages(content: string, baseUrl: stri
     }
 
     try {
-      await waitForUrl(absoluteUrl);
+      await waitForUrl(absoluteUrl, options.waitOptions);
       const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
       replacements.set(src, cdnUrl);
       console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
@@ -1124,15 +1128,22 @@ export async function waitForUrl(
   const deadline = Date.now() + totalMs;
 
   let lastError: unknown = null;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt++;
     try {
       const response = await fetch(url, { method: "HEAD" });
       if (response.ok) {
+        if (attempt > 1) {
+          console.log(`    🌐 URL reachable after ${attempt} attempt(s): ${url}`);
+        }
         return;
       }
       lastError = new Error(`HTTP ${response.status}`);
+      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, HTTP ${response.status}): ${url}`);
     } catch (error) {
       lastError = error;
+      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, ${error}): ${url}`);
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

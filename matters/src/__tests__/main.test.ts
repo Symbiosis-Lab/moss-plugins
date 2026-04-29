@@ -425,6 +425,24 @@ describe("absolutizeRelativeHrefs", () => {
     const html = '<img src="../foo.gif">';
     expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
   });
+
+  it("preserves &amp;-encoded query strings in resolved hrefs", () => {
+    // moss-generated HTML uses HTML entities for & in attributes. Make sure
+    // the regex captures and re-emits them unchanged so the resulting href
+    // is still well-formed HTML.
+    const html = '<a href="../foo?a=1&amp;b=2">link</a>';
+    const result = absolutizeRelativeHrefs(html, baseUrl);
+    expect(result).toContain('href="https://example.com/posts/foo?a=1&amp;b=2"');
+  });
+
+  it("leaves empty href untouched", () => {
+    // The regex requires at least one character inside the quotes, so empty
+    // hrefs fall through unchanged. That's the safer default — rewriting
+    // empty hrefs to the article URL would silently turn a broken link into
+    // a self-link, which is worse than leaving it broken.
+    const html = '<a href="">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
+  });
 });
 
 // ============================================================================

@@ -279,8 +279,15 @@ async function deploy(context: DeployContext): Promise<HookResult> {
     let deployResult: DeployResult = { commitSha: "", orphanSha: "", treeChanged: false };
     let currentPhase = "Deploying...";
     let currentStep = 5;
+    // Once gh-pages push lands, the deploy is logically done from the user's
+    // perspective — the slow tail (source backup to main, Pages-API liveness
+    // check) shouldn't keep the panel saying "Deployed!" while progress visibly
+    // advances. Track whether we've crossed that boundary so the heartbeat
+    // emits a phase-appropriate message instead.
+    let postDeployPhase = false;
     const heartbeat = setInterval(() => {
-      reportProgress("deploying", currentStep, 10, currentPhase);
+      const stage = postDeployPhase ? "verifying" : "deploying";
+      reportProgress(stage, currentStep, 10, currentPhase);
     }, DEPLOY_HEARTBEAT_INTERVAL_MS);
 
     // Use context.domain from DeployContext (populated by Rust from .moss/config.toml).
@@ -310,9 +317,19 @@ async function deploy(context: DeployContext): Promise<HookResult> {
         domain,
         onProgress: (percent, message) => {
           currentPhase = message;
-          // Map 0-100% to steps 5-9 of overall 10-step progress
-          currentStep = Math.min(5 + Math.floor((percent / 100) * 4), 9);
-          reportProgress("deploying", currentStep, 10, message);
+          // The plugin emits percent=100 once when gh-pages push lands
+          // ("Deployed!"), then again with a different message for the
+          // post-deploy source-backup phase. Once we've seen that boundary,
+          // step locks to 10 and the heartbeat reports the "verifying" stage.
+          if (percent >= 100) {
+            postDeployPhase = true;
+            currentStep = 10;
+            reportProgress("verifying", currentStep, 10, message);
+          } else {
+            // Map 0-99% to steps 5-9 of overall 10-step progress
+            currentStep = Math.min(5 + Math.floor((percent / 100) * 4), 9);
+            reportProgress("deploying", currentStep, 10, message);
+          }
         },
       });
     } finally {

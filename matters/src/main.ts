@@ -749,9 +749,13 @@ export async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
   }
 
-  // Step 4: Upload local images to Matters CDN — only for HTML content
+  // Step 4: Upload local images to Matters CDN — only for HTML content.
+  // Resolve relative srcs against the article's canonical URL (not the bare
+  // siteUrl) so `../../assets/foo.gif` from a deeply-nested article resolves
+  // correctly. Bare siteUrl loses the article's directory context — `../../`
+  // from a root-relative base just clamps to root.
   if (isHtml) {
-    content = await uploadAndReplaceLocalImages(content, siteUrl);
+    content = await uploadAndReplaceLocalImages(content, canonicalUrl);
   }
 
   // Step 5: Check for existing tracked draft
@@ -787,10 +791,13 @@ export async function syndicateArticle(
   console.log(`    📝 Draft ${existingDraftId ? "updated" : "created"} with ID: ${draft.id}`);
 
   // Step 7: Upload cover if present in frontmatter (requires draft ID as entityId)
+  // Cover paths are conventionally site-relative (e.g. `/og-image.png` or
+  // `assets/covers/foo.jpg`), so resolve against siteUrl, not canonicalUrl.
   const coverPath = article.frontmatter.cover as string | undefined;
   if (coverPath) {
     const coverUrl = new URL(coverPath.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
     try {
+      await waitForUrl(coverUrl);
       const coverAssetId = await uploadCoverByUrl(coverUrl, draft.id);
       console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
       // Update draft with cover
@@ -1034,12 +1041,18 @@ export function addCanonicalLinkToContent(
  * - Skips absolute URLs (http://, https://, data:)
  * - Deduplicates: same src used multiple times is only uploaded once
  * - Graceful failure: warns on upload error, leaves original src unchanged
+ * - Retries the upload with HEAD-probe backoff on 404s, since the article
+ *   may have just been deployed and CDN propagation (GitHub Pages especially)
+ *   can lag the deploy command's success by tens of seconds.
  *
  * @param content - HTML content containing img tags
- * @param siteUrl - Base URL of the published site (e.g., "https://example.com")
+ * @param baseUrl - URL to resolve relative srcs against. Pass the article's
+ *   own canonical URL (e.g. "https://example.com/posts/foo/") so deep-relative
+ *   paths like "../../assets/x.gif" resolve correctly. A bare site root would
+ *   clamp `../../` to the root and lose the article's directory context.
  * @returns HTML content with local image srcs replaced by CDN URLs
  */
-export async function uploadAndReplaceLocalImages(content: string, siteUrl: string): Promise<string> {
+export async function uploadAndReplaceLocalImages(content: string, baseUrl: string): Promise<string> {
   // Collect all img src values
   const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
   const localSrcs = new Set<string>();
@@ -1062,13 +1075,21 @@ export async function uploadAndReplaceLocalImages(content: string, siteUrl: stri
   const replacements = new Map<string, string>();
 
   for (const src of localSrcs) {
-    const absoluteUrl = new URL(src.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
+    let absoluteUrl: string;
     try {
+      absoluteUrl = new URL(src, baseUrl).href;
+    } catch (error) {
+      console.warn(`    ⚠️ Could not resolve image URL ${src} against ${baseUrl}: ${error}`);
+      continue;
+    }
+
+    try {
+      await waitForUrl(absoluteUrl);
       const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
       replacements.set(src, cdnUrl);
       console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
     } catch (error) {
-      console.warn(`    ⚠️ Image upload failed for ${src}, leaving unchanged: ${error}`);
+      console.warn(`    ⚠️ Image upload failed for ${absoluteUrl}, leaving unchanged: ${error}`);
     }
   }
 
@@ -1081,4 +1102,40 @@ export async function uploadAndReplaceLocalImages(content: string, siteUrl: stri
   }
 
   return result;
+}
+
+/**
+ * Poll a URL with HEAD until it returns 2xx, or throw after the budget.
+ *
+ * Used before matters' upload-by-URL to absorb the gap between a deploy
+ * succeeding and the CDN actually serving the new file. GitHub Pages can
+ * take tens of seconds to propagate after `git push` completes; matters'
+ * server fetching too early returns a 404 that we cannot recover from
+ * (matters silently caches the failure).
+ *
+ * Exported for unit testing.
+ */
+export async function waitForUrl(
+  url: string,
+  options: { totalMs?: number; intervalMs?: number } = {}
+): Promise<void> {
+  const totalMs = options.totalMs ?? 60_000;
+  const intervalMs = options.intervalMs ?? 3_000;
+  const deadline = Date.now() + totalMs;
+
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { method: "HEAD" });
+      if (response.ok) {
+        return;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(`URL did not become reachable within ${totalMs}ms: ${url} (${lastError})`);
 }

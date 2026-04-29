@@ -455,6 +455,11 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
     // ── 6. Deferred source backup to main branch (non-fatal) ─────────────
     // Stage the entire vault (may be slow on iCloud) and push source to main.
     // This happens AFTER "Deployed!" so the user isn't waiting.
+    //
+    // Emit a phase change so the parent's heartbeat shows the right message
+    // ("Backing up source...") instead of repeating "Deployed!" for minutes
+    // while iCloud-synced `git add --all` of the whole vault grinds.
+    onProgress(100, "Backing up source...");
     let sha = "";
     try {
       // Check for source files >100MB and append to .gitignore

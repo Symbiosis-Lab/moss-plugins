@@ -16,7 +16,7 @@
  * - syndicateArticle saving draft on timeout/no-publish
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ArticleInfo } from "../types";
 
 // ============================================================================
@@ -88,6 +88,7 @@ import {
   normalizeHtmlForMatters,
   addCanonicalLinkToContent,
   uploadAndReplaceLocalImages,
+  waitForUrl,
   getDraftMap,
   saveDraftMap,
   getDraftId,
@@ -97,6 +98,24 @@ import {
 } from "../main";
 import { uploadCoverByUrl, uploadEmbedByUrl, createDraft, fetchDraft, SINGLE_FILE_UPLOAD_MUTATION } from "../api";
 import { readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
+
+// ============================================================================
+// Global setup
+// ============================================================================
+
+// `waitForUrl` (used inside syndicateArticle and uploadAndReplaceLocalImages)
+// polls fetch with HEAD until 2xx. Stub fetch globally so tests don't hit the
+// network or burn the 60s default budget on every run.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ============================================================================
 // Test Helpers
@@ -624,6 +643,52 @@ describe("uploadEmbedByUrl", () => {
 });
 
 // ============================================================================
+// Tests: waitForUrl
+// ============================================================================
+
+describe("waitForUrl", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns when fetch responds 2xx on first attempt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForUrl("https://example.com/foo.gif", { totalMs: 1000, intervalMs: 50 }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("https://example.com/foo.gif", { method: "HEAD" });
+  });
+
+  it("retries while fetch returns 404, then succeeds when it goes 2xx", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
+      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForUrl("https://example.com/late.gif", { totalMs: 5000, intervalMs: 10 }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws when budget elapses without a 2xx", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForUrl("https://example.com/never.gif", { totalMs: 60, intervalMs: 20 }),
+    ).rejects.toThrow(/did not become reachable/);
+  });
+});
+
+// ============================================================================
 // Tests: uploadAndReplaceLocalImages
 // ============================================================================
 
@@ -633,6 +698,15 @@ describe("uploadAndReplaceLocalImages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    // waitForUrl uses HEAD; default it to ok=true so tests don't hit real network.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("uploads local images and replaces src with CDN URL", async () => {
@@ -780,19 +854,47 @@ describe("syndicateArticle - local image upload", () => {
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
     vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
     vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("uploads local images in HTML content before creating draft", async () => {
     const article = makeArticle({
       html_content: '<p>Text</p><img src="images/photo.jpg" alt="Photo">',
       frontmatter: {},
+      url_path: "posts/test/",
     });
 
     await syndicateArticle(article, siteUrl, userName, options);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg");
+    // Relative srcs resolve against the article's canonical URL, not the
+    // site root. Without this, `../../assets/foo.gif` from a deep post
+    // would clamp to root and lose the article's directory context.
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/posts/test/images/photo.jpg");
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
     expect(callArgs.content).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
+  });
+
+  it("resolves deep-relative srcs (../../) against article path, not site root", async () => {
+    // Regression: a post at /writings/foo-bar/ with `<img src="../../assets/x.gif">`
+    // must upload from /assets/x.gif (resolved via parent traversal), not be
+    // dropped/mis-resolved. Earlier code passed bare siteUrl as the base, so
+    // `../../` clamped to root and the per-article directory was never used.
+    const article = makeArticle({
+      html_content: '<img src="../../assets/scale-compare-recording.gif">',
+      frontmatter: {},
+      url_path: "writings/foo-bar/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/assets/scale-compare-recording.gif");
   });
 
   it("does not upload images when content is markdown (not HTML)", async () => {
@@ -1306,6 +1408,14 @@ describe("uploadAndReplaceLocalImages - non-ASCII path encoding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("percent-encodes Chinese characters in image src URLs", async () => {

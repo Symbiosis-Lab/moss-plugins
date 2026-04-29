@@ -86,6 +86,8 @@ vi.mock("../converter", () => ({
 import {
   syndicateArticle,
   normalizeHtmlForMatters,
+  stripArticleTitleH1,
+  absolutizeRelativeHrefs,
   addCanonicalLinkToContent,
   uploadAndReplaceLocalImages,
   waitForUrl,
@@ -305,6 +307,123 @@ describe("SINGLE_FILE_UPLOAD_MUTATION", () => {
   it("has correct mutation signature", () => {
     expect(SINGLE_FILE_UPLOAD_MUTATION).toMatch(/mutation\s+SingleFileUpload/);
     expect(SINGLE_FILE_UPLOAD_MUTATION).toMatch(/\$input:\s*SingleFileUploadInput!/);
+  });
+});
+
+// ============================================================================
+// Tests: stripArticleTitleH1
+// ============================================================================
+
+describe("stripArticleTitleH1", () => {
+  it("strips moss-article-title h1 when text matches", () => {
+    const html = '<h1 class="moss-article-title">My Title</h1><p>Body.</p>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe("<p>Body.</p>");
+  });
+
+  it("strips when class is one of several", () => {
+    const html = '<h1 class="foo moss-article-title bar">My Title</h1><p>Body.</p>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe("<p>Body.</p>");
+  });
+
+  it("ignores h1 with the moss class but mismatched text (author-edited)", () => {
+    const html = '<h1 class="moss-article-title">Different</h1>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe(html);
+  });
+
+  it("ignores plain h1 (no moss-article-title class)", () => {
+    const html = '<h1>My Title</h1><p>Body.</p>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe(html);
+  });
+
+  it("ignores h2/h3 even when text matches and class is present", () => {
+    const html = '<h2 class="moss-article-title">My Title</h2>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe(html);
+  });
+
+  it("tolerates inline tags inside the h1", () => {
+    const html = '<h1 class="moss-article-title">My <em>fancy</em> Title</h1>';
+    expect(stripArticleTitleH1(html, "My fancy Title")).toBe("");
+  });
+
+  it("collapses whitespace before comparing", () => {
+    const html = '<h1 class="moss-article-title">  My\n  Title  </h1>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe("");
+  });
+
+  it("does not affect non-leading h1s on its own (multiple h1s case)", () => {
+    // The strip is class-gated, so a body-internal plain <h1> survives.
+    const html = '<h1 class="moss-article-title">My Title</h1><p>x</p><h1>Also Title</h1>';
+    expect(stripArticleTitleH1(html, "My Title")).toBe('<p>x</p><h1>Also Title</h1>');
+  });
+});
+
+// ============================================================================
+// Tests: absolutizeRelativeHrefs
+// ============================================================================
+
+describe("absolutizeRelativeHrefs", () => {
+  const baseUrl = "https://example.com/posts/foo/";
+
+  it("resolves a deep-relative href against the article URL", () => {
+    const html = '<a href="../../scale-compare.html">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(
+      '<a href="https://example.com/scale-compare.html">link</a>',
+    );
+  });
+
+  it("resolves a sibling-relative href", () => {
+    const html = '<a href="other.html">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(
+      '<a href="https://example.com/posts/foo/other.html">link</a>',
+    );
+  });
+
+  it("resolves a root-relative href against the site origin", () => {
+    const html = '<a href="/about/">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(
+      '<a href="https://example.com/about/">link</a>',
+    );
+  });
+
+  it("leaves http URLs untouched", () => {
+    const html = '<a href="https://other.com/x">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
+  });
+
+  it("leaves mailto: untouched", () => {
+    const html = '<a href="mailto:a@b.com">email</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
+  });
+
+  it("leaves fragment-only links untouched (intra-document)", () => {
+    const html = '<a href="#section">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
+  });
+
+  it("leaves protocol-relative URLs untouched", () => {
+    const html = '<a href="//cdn.example.com/x.js">link</a>';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
+  });
+
+  it("preserves attributes around the href", () => {
+    const html = '<a class="x" href="../foo.html" target="_blank" rel="noopener">link</a>';
+    const result = absolutizeRelativeHrefs(html, baseUrl);
+    expect(result).toContain('class="x"');
+    expect(result).toContain('target="_blank"');
+    expect(result).toContain('rel="noopener"');
+    expect(result).toContain('href="https://example.com/posts/foo.html"');
+  });
+
+  it("handles multiple anchors in one document", () => {
+    const html = '<a href="a.html">a</a><p>x</p><a href="../b.html">b</a>';
+    const result = absolutizeRelativeHrefs(html, baseUrl);
+    expect(result).toContain('href="https://example.com/posts/foo/a.html"');
+    expect(result).toContain('href="https://example.com/posts/b.html"');
+  });
+
+  it("does not touch <img src> attributes", () => {
+    const html = '<img src="../foo.gif">';
+    expect(absolutizeRelativeHrefs(html, baseUrl)).toBe(html);
   });
 });
 
@@ -968,6 +1087,45 @@ describe("syndicateArticle - local image upload", () => {
     expect(callArgs.content).toContain('src="images/photo.jpg"');
 
     vi.restoreAllMocks();
+  });
+
+  it("absolutizes relative <a href> links against the article URL", async () => {
+    // Regression: matters.town serves whatever URL we send. Relative hrefs in
+    // the draft (e.g. `../../scale-compare.html`) end up resolved against
+    // matters.town/me/drafts/... and 404 every internal link from the source.
+    const article = makeArticle({
+      html_content: '<p>See <a href="../../scale-compare.html">the demo</a>.</p>',
+      frontmatter: {},
+      url_path: "writings/foo-bar/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    const draftContent = vi.mocked(createDraft).mock.calls[0][0].content!;
+    expect(draftContent).toContain('href="https://example.com/scale-compare.html"');
+    expect(draftContent).not.toContain('href="../../scale-compare.html"');
+  });
+
+  it("strips the moss-injected article-title h1 to avoid duplicating the matters title", async () => {
+    // Regression: moss's pipeline auto-injects <h1 class="moss-article-title">
+    // into html_content. matters.town has its own title field, so leaving the
+    // h1 in the body shows the title twice in the published draft.
+    const article = makeArticle({
+      title: "My Title",
+      html_content:
+        '<h1 class="moss-article-title">My Title</h1><p>Body.</p>',
+      frontmatter: {},
+      url_path: "posts/test/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options);
+
+    const draftContent = vi.mocked(createDraft).mock.calls[0][0].content!;
+    expect(draftContent).not.toContain('moss-article-title');
+    // The matters title field carries the title.
+    expect(vi.mocked(createDraft).mock.calls[0][0].title).toBe("My Title");
+    // The first non-whitespace content should not be a title heading.
+    expect(draftContent.trim().startsWith("<p>Body.</p>")).toBe(true);
   });
 });
 

@@ -739,8 +739,12 @@ export async function syndicateArticle(
   const { content: articleContent, isHtml } = getArticleContent(article);
   let content = articleContent;
 
-  // Step 2: Normalize HTML (headings + image wrapping) — only for HTML content
+  // Step 2: Normalize HTML (headings + image wrapping) — only for HTML content.
+  // Strip moss's auto-injected article-title <h1> first (matters has its own
+  // title field, so leaving the h1 in the body produces a visible duplicate
+  // in the matters draft).
   if (isHtml) {
+    content = stripArticleTitleH1(content, article.title);
     content = normalizeHtmlForMatters(content);
   }
 
@@ -749,7 +753,16 @@ export async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
   }
 
-  // Step 4: Upload local images to Matters CDN — only for HTML content.
+  // Step 4a: Absolutize relative <a href> values against the article URL
+  // BEFORE any image work. Without this, matters.town serves `<a href="../../foo.html">`
+  // from its own domain and the link 404s. Same article-relative resolution
+  // rule as image srcs (PR1). Done as a separate pass so href-only updates
+  // don't trip the image-upload waitForUrl gate.
+  if (isHtml) {
+    content = absolutizeRelativeHrefs(content, canonicalUrl);
+  }
+
+  // Step 4b: Upload local images to Matters CDN — only for HTML content.
   // Resolve relative srcs against the article's canonical URL (not the bare
   // siteUrl) so `../../assets/foo.gif` from a deeply-nested article resolves
   // correctly. Bare siteUrl loses the article's directory context — `../../`
@@ -982,6 +995,63 @@ export function getArticleContent(article: ArticleInfo): { content: string; isHt
  * in <figure class="image"><img ...><figcaption></figcaption></figure>
  * as required by Matters' content format.
  */
+/**
+ * Strip moss's auto-injected article-title `<h1 class="moss-article-title">`
+ * when its plain text equals the article's title. matters.town has its own
+ * title field on the draft, so leaving the h1 in the body content produces a
+ * visible duplicate ("Title" rendered as the heading + "Title" rendered as
+ * the matters page H1 above it).
+ *
+ * Tolerates other `<h1>` tags in the body — only removes the moss-class one,
+ * and only when its content matches. Authors who genuinely want a leading H1
+ * with the same text as the title can opt out by removing the moss class.
+ *
+ * Exported for unit testing.
+ */
+export function stripArticleTitleH1(html: string, articleTitle: string): string {
+  // Match <h1 ...class="...moss-article-title..."...>INNER</h1>
+  const re = /<h1\b[^>]*class="[^"]*\bmoss-article-title\b[^"]*"[^>]*>([\s\S]*?)<\/h1>/gi;
+  return html.replace(re, (full, inner: string) => {
+    // Compare plain text — strip tags and collapse whitespace on both sides.
+    const innerText = inner.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    const titleText = articleTitle.replace(/\s+/g, " ").trim();
+    return innerText === titleText ? "" : full;
+  });
+}
+
+/**
+ * Absolutize relative `href` values on `<a>` elements against `baseUrl`.
+ *
+ * matters.town's editor preserves whatever URL we pass in the draft HTML.
+ * Relative hrefs (e.g. `../../scale-compare.html`) end up resolved by the
+ * matters editor against `https://matters.town/...`, breaking every internal
+ * link from the original site. Resolve against the article's own canonical
+ * URL so links retain their original meaning when viewed inside matters.
+ *
+ * - Skips absolute URLs (http://, https://, mailto:, data:, etc.)
+ * - Skips fragment-only links (`#section`) — those reference the matters
+ *   draft's own headings and should stay intra-document.
+ * - Skips hrefs we can't resolve (logs and leaves them alone).
+ *
+ * Exported for unit testing.
+ */
+export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
+  return html.replace(/<a\b([^>]*?)\shref="([^"]+)"([^>]*)>/gi, (full, before: string, href: string, after: string) => {
+    // Leave absolute URLs, scheme-relative URLs, and fragment links untouched.
+    if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) {
+      return full;
+    }
+    let absolute: string;
+    try {
+      absolute = new URL(href, baseUrl).href;
+    } catch (error) {
+      console.warn(`    ⚠️ Could not resolve href ${href} against ${baseUrl}: ${error}`);
+      return full;
+    }
+    return `<a${before} href="${absolute}"${after}>`;
+  });
+}
+
 export function normalizeHtmlForMatters(html: string): string {
   let result = html;
 

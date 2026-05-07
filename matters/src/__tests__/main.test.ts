@@ -1117,7 +1117,7 @@ describe("syndicateArticle - local image upload", () => {
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
   });
 
-  it("continues gracefully when image upload fails", async () => {
+  it("continues gracefully when image upload fails — does not re-put draft", async () => {
     vi.mocked(uploadEmbedByUrl).mockRejectedValue(new Error("Upload failed"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -1128,9 +1128,36 @@ describe("syndicateArticle - local image upload", () => {
 
     await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
 
-    // Draft should still be created with original src
+    // Draft created once, with original src. No second putDraft, since the
+    // rewrite produced no changes (`rewritten === content`).
+    expect(createDraft).toHaveBeenCalledTimes(1);
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
     expect(callArgs.content).toContain('src="images/photo.jpg"');
+
+    vi.restoreAllMocks();
+  });
+
+  it("continues gracefully when re-put after image upload throws (matches cover's failure semantics)", async () => {
+    // Regression: a single 5xx on the embed re-put used to kill syndicateArticle,
+    // skipping the toast/openBrowser path while the draft itself was already
+    // created. Cover survives the same failure (try/catch around its block),
+    // and embed should too — the user is still better off seeing the draft.
+    vi.mocked(createDraft)
+      .mockResolvedValueOnce(makeDraftResponse("draft-rep")) // first putDraft: ok
+      .mockRejectedValueOnce(new Error("matters 503")) // re-put: fails
+      .mockResolvedValue(makeDraftResponse("draft-rep")); // any later calls: ok
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const article = makeArticle({
+      html_content: '<p>Text</p><img src="images/photo.jpg">',
+      frontmatter: {},
+    });
+
+    await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Image upload step failed"),
+    );
 
     vi.restoreAllMocks();
   });

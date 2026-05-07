@@ -793,17 +793,17 @@ export async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
   }
 
-  // Step 4a: Absolutize relative <a href> values against the article URL
+  // Step 4: Absolutize relative <a href> values against the article URL
   // BEFORE any image work. Without this, matters.town serves `<a href="../../foo.html">`
   // from its own domain and the link 404s. Same article-relative resolution
   // rule as image srcs (PR1). Done as a separate pass so href-only updates
   // don't trip the image-upload waitForUrl gate.
+  //
+  // Local image uploads happen post-draft (Step 8) — Matters' singleFileUpload
+  // requires `entityId` for embeds, just as it does for cover.
   if (isHtml) {
     content = absolutizeRelativeHrefs(content, canonicalUrl);
   }
-
-  // (Local image uploads happen post-draft — Matters' singleFileUpload
-  // requires `entityId` for embeds, just as it does for cover. See Step 8.)
 
   // Step 5: Check for existing tracked draft
   const existingDraftId = article.source_path ? await getDraftId(article.source_path) : undefined;
@@ -859,11 +859,20 @@ export async function syndicateArticle(
   // Same `entityId` requirement as cover, so this also has to wait until the
   // draft exists. The first putDraft above sent the relative-src content; if
   // any uploads succeed, this overwrites the body with the CDN-rewritten one.
+  //
+  // Wrapped in try/catch to match the cover flow's "continue on failure"
+  // semantics. Without this, a single re-put error (e.g. matters API 5xx)
+  // would skip the toast/openBrowser path and leave the user looking at a
+  // generic syndication failure instead of the still-usable draft.
   if (isHtml) {
-    const rewritten = await uploadAndReplaceLocalImages(content, canonicalUrl, draft.id);
-    if (rewritten !== content) {
-      await createDraft({ id: draft.id, title: draft.title, content: rewritten });
-      console.log(`    🖼️ Draft updated with rewritten image srcs`);
+    try {
+      const rewritten = await uploadAndReplaceLocalImages(content, canonicalUrl, draft.id);
+      if (rewritten !== content) {
+        await createDraft({ id: draft.id, title: draft.title, content: rewritten });
+        console.log(`    🖼️ Draft updated with rewritten image srcs`);
+      }
+    } catch (error) {
+      console.warn(`    ⚠️ Image upload step failed, draft body keeps relative srcs: ${error}`);
     }
   }
 

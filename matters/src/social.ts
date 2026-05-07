@@ -195,6 +195,10 @@ function mergeAppreciations(
  * @param comments - New comments to merge
  * @param donations - New donations to merge
  * @param appreciations - New appreciations to merge
+ * @param commentCount - Optional remote commentCount to record as
+ *   `lastKnownCommentCount` so the next sync can skip fetching when nothing
+ *   has changed. Pass only when you actually fetched comments — leave
+ *   undefined for syndicate-time merges that don't observe remote state.
  * @returns The mutated data object
  */
 export function mergeSocialData(
@@ -202,7 +206,8 @@ export function mergeSocialData(
   articleKey: string,
   comments: MattersComment[],
   donations: MattersDonation[],
-  appreciations: MattersAppreciation[]
+  appreciations: MattersAppreciation[],
+  commentCount?: number
 ): MattersSocialData {
   // Get or create article entry
   const existing = data.articles[articleKey] || createEmptyArticleSocialData();
@@ -212,6 +217,8 @@ export function mergeSocialData(
     comments: mergeComments(existing.comments, comments),
     donations: mergeDonations(existing.donations, donations),
     appreciations: mergeAppreciations(existing.appreciations, appreciations),
+    lastKnownCommentCount:
+      commentCount !== undefined ? commentCount : existing.lastKnownCommentCount,
   };
 
   return data;

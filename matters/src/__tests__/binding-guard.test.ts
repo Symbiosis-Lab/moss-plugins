@@ -55,6 +55,7 @@ vi.mock("../api", () => ({
   fetchAllCollections: vi.fn().mockResolvedValue([]),
   fetchUserProfile: (...args: unknown[]) => mockFetchUserProfile(...args),
   fetchArticleComments: vi.fn().mockResolvedValue({ comments: [], donations: [], appreciations: [] }),
+  fetchAllArticleCommentCounts: vi.fn().mockResolvedValue(new Map()),
   apiConfig: { queryMode: "viewer", testUserName: "Matty", endpoint: "https://server.matters.town/graphql" },
 }));
 

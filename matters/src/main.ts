@@ -25,6 +25,7 @@ import {
   fetchAllCollections,
   fetchUserProfile,
   fetchArticleComments,
+  fetchAllArticleCommentCounts,
   createDraft,
   fetchDraft,
   uploadCoverByUrl,
@@ -468,18 +469,34 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         : "";
 
     // Phase 8: Fetch social data (comments only)
-    // Always fetch for all local articles. Uses early-exit pagination to skip
-    // re-fetching comments we already have (sort: newest + known ID check).
-    // Save incrementally after each article to avoid losing data if a fetch hangs.
+    // First, ask Matters once for `commentCount` per article (one paginated
+    // pass). For each local article, skip the per-article comments query
+    // entirely when the remote count matches what we recorded last sync.
+    // Inside the per-article fetch, the existing `knownIds` + `lastSyncedAt`
+    // short-circuits still apply to bound page-level work.
     let socialSummary = "";
     const articlesForSocialFetch = await scanLocalArticles();
-    console.log(`📊 Fetching social data for all ${articlesForSocialFetch.length} local articles`);
+    console.log(`📊 Checking social data for ${articlesForSocialFetch.length} local articles`);
 
     if (articlesForSocialFetch.length > 0) {
-      await reportProgress("fetching_social", overallProgress("fetching_social", 0, articlesForSocialFetch.length), 100, "Fetching social data...");
+      await reportProgress("fetching_social", overallProgress("fetching_social", 0, articlesForSocialFetch.length), 100, "Checking for new comments...");
+
+      // One paginated query that returns {shortHash, commentCount} for the
+      // user's whole library. ~4 queries per 200 articles vs. the previous
+      // 200+ per-article queries. If this fails (network, etc.) we fall back
+      // to checking every article so we don't silently drop new comments.
+      let remoteCounts: Map<string, number> | null = null;
+      try {
+        remoteCounts = await fetchAllArticleCommentCounts();
+        console.log(`📊 Got commentCount for ${remoteCounts.size} remote articles`);
+      } catch (error) {
+        console.warn(`   commentCount discovery failed (${error}); falling back to per-article fetch`);
+      }
 
       const socialData = await loadSocialData();
       let totalComments = 0;
+      let fetched = 0;
+      let skipped = 0;
 
       for (let i = 0; i < articlesForSocialFetch.length; i++) {
         const article = articlesForSocialFetch[i];
@@ -497,14 +514,37 @@ export async function process(context: ProcessContext): Promise<HookResult> {
             console.warn(`   Article "${article.title}" has no uid, falling back to path as social data key`);
           }
 
+          // Skip the comments fetch when the remote count exactly matches
+          // what we saw last sync. We require remoteCounts to be populated
+          // (discovery succeeded) and storedCount to be defined (we've
+          // synced this article at least once before with this code path).
+          //
+          // Known soft-correctness gap: if a comment is deleted AND another
+          // is added between two syncs (net count unchanged), we'll skip
+          // and keep the deleted comment in local storage. mergeComments is
+          // upsert-only, so this matches the pre-change behavior anyway —
+          // local storage is never pruned. Acceptable for now; if it ever
+          // matters, force a periodic full refetch.
+          const remoteCount = remoteCounts?.get(article.shortHash);
+          const storedCount = socialData.articles[socialKey]?.lastKnownCommentCount;
+          if (
+            remoteCount !== undefined &&
+            storedCount !== undefined &&
+            remoteCount === storedCount
+          ) {
+            skipped++;
+            continue;
+          }
+
           // Pass known comment IDs for early-exit pagination optimization
           const existingComments = socialData.articles[socialKey]?.comments || [];
           const knownIds = new Set(existingComments.map(c => c.id));
           const comments = await fetchArticleComments(article.shortHash, knownIds, lastSyncedAt);
 
-          mergeSocialData(socialData, socialKey, comments, [], []);
+          mergeSocialData(socialData, socialKey, comments, [], [], remoteCount);
 
           totalComments += comments.length;
+          fetched++;
 
           // Save after each article to avoid losing data if later fetches hang
           await saveSocialData(socialData);
@@ -513,8 +553,8 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         }
       }
 
-      socialSummary = `, ${totalComments} comments`;
-      console.log(`✅ Social data saved: ${totalComments} comments`);
+      socialSummary = `, ${totalComments} new comments`;
+      console.log(`✅ Social data: ${fetched} fetched, ${skipped} skipped (no change), ${totalComments} new comments`);
     }
 
     // Phase 9: Update lastSyncedAt timestamp

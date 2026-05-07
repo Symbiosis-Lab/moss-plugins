@@ -21,6 +21,9 @@ import {
   clearStoredToken,
   fetchAllDraftsSince,
   fetchArticleComments,
+  fetchAllArticleCommentCounts,
+  VIEWER_ARTICLE_COMMENT_COUNTS_QUERY,
+  USER_ARTICLE_COMMENT_COUNTS_QUERY,
 } from "../api";
 import type { MattersDraft } from "../types";
 
@@ -703,5 +706,175 @@ describe("fetchArticleComments", () => {
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe("c2");
     });
+  });
+});
+
+describe("Comment-count discovery queries", () => {
+  it("VIEWER_ARTICLE_COMMENT_COUNTS_QUERY selects shortHash + commentCount only", () => {
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("ViewerArticleCommentCounts");
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("viewer");
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("shortHash");
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("commentCount");
+    // Lightweight: must not pull title/content/etc.
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).not.toContain("title");
+    expect(VIEWER_ARTICLE_COMMENT_COUNTS_QUERY).not.toContain("content");
+  });
+
+  it("USER_ARTICLE_COMMENT_COUNTS_QUERY mirrors viewer query for public access", () => {
+    expect(USER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("UserArticleCommentCounts");
+    expect(USER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("user(input:");
+    expect(USER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("shortHash");
+    expect(USER_ARTICLE_COMMENT_COUNTS_QUERY).toContain("commentCount");
+    expect(USER_ARTICLE_COMMENT_COUNTS_QUERY).not.toContain("title");
+  });
+});
+
+describe("fetchAllArticleCommentCounts", () => {
+  const mockHttpPost = vi.mocked(httpPost);
+
+  function makeViewerPage(
+    nodes: Array<{ shortHash: string; commentCount: number }>,
+    hasNextPage: boolean,
+    endCursor: string | null = null
+  ) {
+    return {
+      status: 200,
+      ok: true,
+      contentType: "application/json",
+      body: new Uint8Array(),
+      text: () => JSON.stringify({
+        data: {
+          viewer: {
+            id: "viewer-1",
+            articles: {
+              pageInfo: { endCursor, hasNextPage },
+              edges: nodes.map((node) => ({ node })),
+            },
+          },
+        },
+      }),
+    };
+  }
+
+  function makeUserPage(
+    nodes: Array<{ shortHash: string; commentCount: number }>,
+    hasNextPage: boolean,
+    endCursor: string | null = null
+  ) {
+    return {
+      status: 200,
+      ok: true,
+      contentType: "application/json",
+      body: new Uint8Array(),
+      text: () => JSON.stringify({
+        data: {
+          user: {
+            id: "user-1",
+            articles: {
+              pageInfo: { endCursor, hasNextPage },
+              edges: nodes.map((node) => ({ node })),
+            },
+          },
+        },
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    clearTokenCache();
+    mockHttpPost.mockReset();
+  });
+
+  it("returns a map of shortHash → commentCount in viewer mode", async () => {
+    const originalMode = apiConfig.queryMode;
+    apiConfig.queryMode = "viewer";
+    try {
+      mockHttpPost.mockResolvedValueOnce(
+        makeViewerPage(
+          [
+            { shortHash: "abc123", commentCount: 4 },
+            { shortHash: "def456", commentCount: 0 },
+          ],
+          false
+        )
+      );
+
+      const counts = await fetchAllArticleCommentCounts();
+
+      expect(counts.size).toBe(2);
+      expect(counts.get("abc123")).toBe(4);
+      expect(counts.get("def456")).toBe(0);
+      expect(mockHttpPost).toHaveBeenCalledTimes(1);
+    } finally {
+      apiConfig.queryMode = originalMode;
+    }
+  });
+
+  it("paginates through multiple pages until hasNextPage=false", async () => {
+    const originalMode = apiConfig.queryMode;
+    apiConfig.queryMode = "viewer";
+    try {
+      mockHttpPost.mockResolvedValueOnce(
+        makeViewerPage([{ shortHash: "p1a", commentCount: 1 }], true, "cursor1")
+      );
+      mockHttpPost.mockResolvedValueOnce(
+        makeViewerPage([{ shortHash: "p2a", commentCount: 2 }], true, "cursor2")
+      );
+      mockHttpPost.mockResolvedValueOnce(
+        makeViewerPage([{ shortHash: "p3a", commentCount: 3 }], false)
+      );
+
+      const counts = await fetchAllArticleCommentCounts();
+
+      expect(counts.size).toBe(3);
+      expect(counts.get("p1a")).toBe(1);
+      expect(counts.get("p2a")).toBe(2);
+      expect(counts.get("p3a")).toBe(3);
+      expect(mockHttpPost).toHaveBeenCalledTimes(3);
+    } finally {
+      apiConfig.queryMode = originalMode;
+    }
+  });
+
+  it("uses USER query in user mode", async () => {
+    const originalMode = apiConfig.queryMode;
+    const originalUser = apiConfig.testUserName;
+    apiConfig.queryMode = "user";
+    apiConfig.testUserName = "Matty";
+    try {
+      mockHttpPost.mockResolvedValueOnce(
+        makeUserPage([{ shortHash: "xyz", commentCount: 7 }], false)
+      );
+
+      const counts = await fetchAllArticleCommentCounts();
+
+      expect(counts.get("xyz")).toBe(7);
+      // User mode should not require an x-access-token header
+      const callArgs = mockHttpPost.mock.calls[0];
+      expect(callArgs[2]?.headers ?? {}).not.toHaveProperty("x-access-token");
+    } finally {
+      apiConfig.queryMode = originalMode;
+      apiConfig.testUserName = originalUser;
+    }
+  });
+
+  it("returns empty map when user is not found in user mode", async () => {
+    const originalMode = apiConfig.queryMode;
+    apiConfig.queryMode = "user";
+    try {
+      mockHttpPost.mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        contentType: "application/json",
+        body: new Uint8Array(),
+        text: () => JSON.stringify({ data: { user: null } }),
+      });
+
+      const counts = await fetchAllArticleCommentCounts();
+
+      expect(counts.size).toBe(0);
+    } finally {
+      apiConfig.queryMode = originalMode;
+    }
   });
 });

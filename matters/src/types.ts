@@ -277,6 +277,13 @@ export interface ArticleSocialData {
   comments: MattersComment[];
   donations: MattersDonation[];
   appreciations: MattersAppreciation[];
+  /**
+   * commentCount as reported by Matters at the last successful sync.
+   * Used to skip per-article fetches when the remote count hasn't changed.
+   * Undefined for entries written before this field existed (treated as
+   * "unknown" — sync will fetch as before, then populate this).
+   */
+  lastKnownCommentCount?: number;
 }
 
 /**
@@ -296,6 +303,39 @@ export interface MattersSocialData {
   updatedAt: string;
   /** Social data keyed by source .md path (project-relative) */
   articles: Record<string, ArticleSocialData>;
+}
+
+// ============================================================================
+// Lightweight Comment-Count Discovery Types
+// ============================================================================
+
+/**
+ * Minimal article node for the "which articles have new comments?" query.
+ * Just enough to join against local social data and compare counts.
+ */
+export interface ArticleCommentCount {
+  shortHash: string;
+  commentCount: number;
+}
+
+export interface ViewerArticleCommentCountsResponse {
+  viewer: {
+    id: string;
+    articles: {
+      pageInfo: PageInfo;
+      edges: Array<{ node: ArticleCommentCount }>;
+    };
+  };
+}
+
+export interface UserArticleCommentCountsResponse {
+  user: {
+    id: string;
+    articles: {
+      pageInfo: PageInfo;
+      edges: Array<{ node: ArticleCommentCount }>;
+    } | null;
+  } | null;
 }
 
 // ============================================================================

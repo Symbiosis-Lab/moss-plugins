@@ -306,6 +306,57 @@ describe("Social Module", () => {
       expect(data.articles["abc123"].comments[0].content).toBe("Article 1");
       expect(data.articles["xyz789"].comments[0].content).toBe("Article 2");
     });
+
+    it("records lastKnownCommentCount when provided", () => {
+      const data: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+
+      mergeSocialData(data, "abc123", [createComment("c1", "Hi")], [], [], 7);
+
+      expect(data.articles["abc123"].lastKnownCommentCount).toBe(7);
+    });
+
+    it("preserves prior lastKnownCommentCount when omitted", () => {
+      const data: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          "abc123": {
+            comments: [createComment("c1", "Hi")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 5,
+          },
+        },
+      };
+
+      // No commentCount passed (e.g., a syndicate-time merge)
+      mergeSocialData(data, "abc123", [createComment("c2", "Bye")], [], []);
+
+      expect(data.articles["abc123"].lastKnownCommentCount).toBe(5);
+    });
+
+    it("overwrites prior lastKnownCommentCount when a new value is provided", () => {
+      const data: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          "abc123": {
+            comments: [],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 3,
+          },
+        },
+      };
+
+      mergeSocialData(data, "abc123", [createComment("c1", "New")], [], [], 4);
+
+      expect(data.articles["abc123"].lastKnownCommentCount).toBe(4);
+    });
   });
 
   describe("getArticleSocialData", () => {

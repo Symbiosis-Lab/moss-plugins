@@ -27,6 +27,8 @@ import type {
   ArticleCommentsResponse,
   ArticleDonationsResponse,
   ArticleAppreciationsResponse,
+  ViewerArticleCommentCountsResponse,
+  UserArticleCommentCountsResponse,
   PutDraftInput,
   PutDraftResponse,
   PutCollectionInput,
@@ -279,6 +281,54 @@ query UserProfile($userName: String!) {
       ... on Article {
         slug
         shortHash
+      }
+    }
+  }
+}
+`;
+
+// ============================================================================
+// Lightweight comment-count discovery queries
+// ============================================================================
+
+/**
+ * Fetch only `{shortHash, commentCount}` for every published article. Used to
+ * decide which articles need a full comments fetch this sync.
+ */
+export const VIEWER_ARTICLE_COMMENT_COUNTS_QUERY = `
+query ViewerArticleCommentCounts($after: String) {
+  viewer {
+    id
+    articles(input: { first: 50, after: $after, filter: { state: active } }) {
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      edges {
+        node {
+          shortHash
+          commentCount
+        }
+      }
+    }
+  }
+}
+`;
+
+export const USER_ARTICLE_COMMENT_COUNTS_QUERY = `
+query UserArticleCommentCounts($userName: String!, $after: String) {
+  user(input: { userName: $userName }) {
+    id
+    articles(input: { first: 50, after: $after, filter: { state: active } }) {
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      edges {
+        node {
+          shortHash
+          commentCount
+        }
       }
     }
   }
@@ -990,6 +1040,57 @@ async function fetchUserProfilePublic(userName: string): Promise<MattersUserProf
 // ============================================================================
 // Social Data Fetching Functions
 // ============================================================================
+
+/**
+ * Fetch `commentCount` for every published article in one (paginated) pass.
+ *
+ * Returns a map keyed by `shortHash`. Used by the social-sync loop to skip
+ * the per-article comments query when the count hasn't moved since last sync.
+ *
+ * Picks the query mode (viewer/user) from `apiConfig.queryMode`, matching
+ * `fetchAllArticles()`.
+ */
+export async function fetchAllArticleCommentCounts(): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  let cursor: string | undefined;
+
+  if (apiConfig.queryMode === "user") {
+    const userName = apiConfig.testUserName;
+    do {
+      const data = await graphqlQueryPublic<UserArticleCommentCountsResponse>(
+        USER_ARTICLE_COMMENT_COUNTS_QUERY,
+        { userName, after: cursor }
+      );
+
+      const articles = data.user?.articles;
+      if (!articles) break;
+
+      for (const edge of articles.edges) {
+        counts.set(edge.node.shortHash, edge.node.commentCount);
+      }
+
+      cursor = articles.pageInfo.hasNextPage ? articles.pageInfo.endCursor : undefined;
+    } while (cursor);
+  } else {
+    do {
+      const data = await graphqlQuery<ViewerArticleCommentCountsResponse>(
+        VIEWER_ARTICLE_COMMENT_COUNTS_QUERY,
+        { after: cursor }
+      );
+
+      if (!data.viewer) break;
+
+      const { edges, pageInfo } = data.viewer.articles;
+      for (const edge of edges) {
+        counts.set(edge.node.shortHash, edge.node.commentCount);
+      }
+
+      cursor = pageInfo.hasNextPage ? pageInfo.endCursor : undefined;
+    } while (cursor);
+  }
+
+  return counts;
+}
 
 /**
  * Fetch all comments for an article with pagination

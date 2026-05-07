@@ -1347,9 +1347,12 @@ export async function uploadCoverByUrl(url: string, entityId: string): Promise<s
  * fetches the image from the published site directly.
  *
  * @param url - Full URL of the image on the published site
+ * @param entityId - Draft ID the embed is being uploaded into. Required by
+ *   Matters: without it the mutation rejects with "Entity id needs to be
+ *   specified." (same constraint as cover; see uploadCoverByUrl).
  * @returns The Matters CDN URL (path) of the uploaded image
  */
-export async function uploadEmbedByUrl(url: string): Promise<string> {
+export async function uploadEmbedByUrl(url: string, entityId: string): Promise<string> {
   interface SingleFileUploadResponse {
     singleFileUpload: { id: string; path: string };
   }
@@ -1359,6 +1362,7 @@ export async function uploadEmbedByUrl(url: string): Promise<string> {
       url,
       type: "embed",
       entityType: "draft",
+      entityId,
     },
   });
 

@@ -802,14 +802,8 @@ export async function syndicateArticle(
     content = absolutizeRelativeHrefs(content, canonicalUrl);
   }
 
-  // Step 4b: Upload local images to Matters CDN — only for HTML content.
-  // Resolve relative srcs against the article's canonical URL (not the bare
-  // siteUrl) so `../../assets/foo.gif` from a deeply-nested article resolves
-  // correctly. Bare siteUrl loses the article's directory context — `../../`
-  // from a root-relative base just clamps to root.
-  if (isHtml) {
-    content = await uploadAndReplaceLocalImages(content, canonicalUrl);
-  }
+  // (Local image uploads happen post-draft — Matters' singleFileUpload
+  // requires `entityId` for embeds, just as it does for cover. See Step 8.)
 
   // Step 5: Check for existing tracked draft
   const existingDraftId = article.source_path ? await getDraftId(article.source_path) : undefined;
@@ -861,19 +855,31 @@ export async function syndicateArticle(
     }
   }
 
+  // Step 8: Upload embedded body images and re-put the draft with CDN URLs.
+  // Same `entityId` requirement as cover, so this also has to wait until the
+  // draft exists. The first putDraft above sent the relative-src content; if
+  // any uploads succeed, this overwrites the body with the CDN-rewritten one.
+  if (isHtml) {
+    const rewritten = await uploadAndReplaceLocalImages(content, canonicalUrl, draft.id);
+    if (rewritten !== content) {
+      await createDraft({ id: draft.id, title: draft.title, content: rewritten });
+      console.log(`    🖼️ Draft updated with rewritten image srcs`);
+    }
+  }
+
   // Show draft ready toast
   await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
 
-  // Step 8: Open draft in browser for user review
+  // Step 9: Open draft in browser for user review
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   const browserHandle = await openBrowser(draftPageUrl);
 
-  // Step 9: Poll for publish state change (10 min timeout)
+  // Step 10: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000, browserHandle);
 
   if (publishedArticle) {
-    // Step 10: Article was published - update local frontmatter
+    // Step 11: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
 
@@ -898,7 +904,7 @@ export async function syndicateArticle(
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 11: Timeout - save draft ID for reuse next time
+  // Step 12: Timeout - save draft ID for reuse next time
   if (article.source_path) {
     try {
       await saveDraftId(article.source_path, draft.id);
@@ -1160,11 +1166,16 @@ export function addCanonicalLinkToContent(
  *   own canonical URL (e.g. "https://example.com/posts/foo/") so deep-relative
  *   paths like "../../assets/x.gif" resolve correctly. A bare site root would
  *   clamp `../../` to the root and lose the article's directory context.
+ * @param entityId - Draft ID the embeds are being uploaded into. Matters'
+ *   singleFileUpload requires this for type:"embed" — see uploadEmbedByUrl.
+ *   Caller must therefore create the draft first, then call this and re-put
+ *   the rewritten content via createDraft({ id: entityId, content: ... }).
  * @returns HTML content with local image srcs replaced by CDN URLs
  */
 export async function uploadAndReplaceLocalImages(
   content: string,
   baseUrl: string,
+  entityId: string,
   options: { waitOptions?: { totalMs?: number; intervalMs?: number } } = {},
 ): Promise<string> {
   // Collect all img src values
@@ -1199,7 +1210,7 @@ export async function uploadAndReplaceLocalImages(
 
     try {
       await waitForUrl(absoluteUrl, options.waitOptions);
-      const cdnUrl = await uploadEmbedByUrl(absoluteUrl);
+      const cdnUrl = await uploadEmbedByUrl(absoluteUrl, entityId);
       replacements.set(src, cdnUrl);
       console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
     } catch (error) {

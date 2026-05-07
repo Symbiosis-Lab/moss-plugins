@@ -759,23 +759,23 @@ describe("uploadEmbedByUrl", () => {
   it("returns CDN path on success", async () => {
     vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/abc123.jpg");
 
-    const result = await uploadEmbedByUrl("https://example.com/images/photo.jpg");
+    const result = await uploadEmbedByUrl("https://example.com/images/photo.jpg", "draft-1");
 
     expect(result).toBe("https://assets.matters.town/embed/abc123.jpg");
   });
 
-  it("is called with the correct URL argument", async () => {
+  it("is called with the correct URL and entityId arguments", async () => {
     vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/abc123.jpg");
 
-    await uploadEmbedByUrl("https://example.com/images/photo.jpg");
+    await uploadEmbedByUrl("https://example.com/images/photo.jpg", "draft-1");
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", "draft-1");
   });
 
   it("throws on failure", async () => {
     vi.mocked(uploadEmbedByUrl).mockRejectedValue(new Error("Upload failed: 500"));
 
-    await expect(uploadEmbedByUrl("https://example.com/bad.jpg")).rejects.toThrow("Upload failed: 500");
+    await expect(uploadEmbedByUrl("https://example.com/bad.jpg", "draft-1")).rejects.toThrow("Upload failed: 500");
   });
 });
 
@@ -831,6 +831,7 @@ describe("waitForUrl", () => {
 
 describe("uploadAndReplaceLocalImages", () => {
   const siteUrl = "https://example.com";
+  const entityId = "draft-test";
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -849,9 +850,9 @@ describe("uploadAndReplaceLocalImages", () => {
   it("uploads local images and replaces src with CDN URL", async () => {
     const html = '<p>Text</p><img src="images/photo.jpg" alt="Photo"><p>More</p>';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", entityId);
     expect(result).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
     expect(result).not.toContain('src="images/photo.jpg"');
   });
@@ -859,23 +860,23 @@ describe("uploadAndReplaceLocalImages", () => {
   it("uploads images with leading slash and constructs correct URL", async () => {
     const html = '<img src="/assets/hero.png" alt="Hero">';
 
-    await uploadAndReplaceLocalImages(html, siteUrl);
+    await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/assets/hero.png");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/assets/hero.png", entityId);
   });
 
   it("strips trailing slash from siteUrl when constructing upload URL", async () => {
     const html = '<img src="images/photo.jpg">';
 
-    await uploadAndReplaceLocalImages(html, "https://example.com/");
+    await uploadAndReplaceLocalImages(html, "https://example.com/", entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", entityId);
   });
 
   it("skips absolute http URLs (does not upload them)", async () => {
     const html = '<img src="https://cdn.example.com/photo.jpg"><img src="http://other.com/img.png">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
     expect(result).toContain('src="https://cdn.example.com/photo.jpg"');
@@ -885,7 +886,7 @@ describe("uploadAndReplaceLocalImages", () => {
   it("skips data: URIs", async () => {
     const html = '<img src="data:image/png;base64,iVBORw0KGgo=">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
     expect(result).toContain("data:image/png;base64,iVBORw0KGgo=");
@@ -894,7 +895,7 @@ describe("uploadAndReplaceLocalImages", () => {
   it("deduplicates: same src used twice is only uploaded once", async () => {
     const html = '<img src="images/photo.jpg"><p>text</p><img src="images/photo.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).toHaveBeenCalledTimes(1);
     // Both occurrences should be replaced
@@ -909,7 +910,7 @@ describe("uploadAndReplaceLocalImages", () => {
 
     const html = '<img src="a.jpg"><img src="b.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).toHaveBeenCalledTimes(2);
     expect(result).toContain('src="https://assets.matters.town/embed/a.jpg"');
@@ -922,7 +923,7 @@ describe("uploadAndReplaceLocalImages", () => {
 
     const html = '<img src="images/photo.jpg" alt="Photo">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(result).toContain('src="images/photo.jpg"');
     expect(warnSpy).toHaveBeenCalled();
@@ -947,7 +948,7 @@ describe("uploadAndReplaceLocalImages", () => {
     const html = '<img src="images/photo.jpg" alt="Photo">';
     const baseUrl = "https://example.com/posts/test/";
 
-    const result = await uploadAndReplaceLocalImages(html, baseUrl, {
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId, {
       waitOptions: { totalMs: 50, intervalMs: 10 },
     });
 
@@ -970,7 +971,7 @@ describe("uploadAndReplaceLocalImages", () => {
 
     const html = '<img src="good.jpg"><img src="bad.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(result).toContain('src="https://assets.matters.town/embed/good.jpg"');
     expect(result).toContain('src="bad.jpg"');
@@ -981,7 +982,7 @@ describe("uploadAndReplaceLocalImages", () => {
   it("returns content unchanged when no images are present", async () => {
     const html = "<p>Just text, no images</p>";
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
     expect(result).toBe(html);
@@ -990,7 +991,7 @@ describe("uploadAndReplaceLocalImages", () => {
   it("returns content unchanged when all images are absolute URLs", async () => {
     const html = '<img src="https://cdn.example.com/a.jpg"><img src="https://other.com/b.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
     expect(result).toBe(html);
@@ -999,9 +1000,9 @@ describe("uploadAndReplaceLocalImages", () => {
   it("handles images with various attributes correctly", async () => {
     const html = '<img src="photo.jpg" alt="A photo" width="500" height="300" class="hero">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl);
+    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/photo.jpg");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/photo.jpg", entityId);
     expect(result).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
     expect(result).toContain('alt="A photo"');
     expect(result).toContain('width="500"');
@@ -1033,7 +1034,13 @@ describe("syndicateArticle - local image upload", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uploads local images in HTML content before creating draft", async () => {
+  it("uploads local images AFTER draft creation with entityId, then re-puts the draft with rewritten content", async () => {
+    // Regression: Matters' singleFileUpload mutation requires `entityId` for
+    // type:"embed", just as it does for cover. Uploading before the draft
+    // exists fails with "Entity id needs to be specified.", leaving the body
+    // <img> srcs as relative paths (which 404 inside matters.town).
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+
     const article = makeArticle({
       html_content: '<p>Text</p><img src="images/photo.jpg" alt="Photo">',
       frontmatter: {},
@@ -1042,12 +1049,29 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options);
 
-    // Relative srcs resolve against the article's canonical URL, not the
-    // site root. Without this, `../../assets/foo.gif` from a deep post
-    // would clamp to root and lose the article's directory context.
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/posts/test/images/photo.jpg");
-    const callArgs = vi.mocked(createDraft).mock.calls[0][0];
-    expect(callArgs.content).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
+    // Embed uploaded against the draft's entityId. Relative srcs resolve
+    // against the article's canonical URL, not the site root.
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith(
+      "https://example.com/posts/test/images/photo.jpg",
+      "draft-123",
+    );
+
+    // First putDraft: original content (still has the relative src — the
+    // draft must exist before we have an entityId to upload against).
+    expect(createDraft).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ content: expect.stringContaining('src="images/photo.jpg"') }),
+    );
+
+    // Second putDraft: rewrites content with CDN URLs, preserves title.
+    expect(createDraft).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: "draft-123",
+        title: "Test Article",
+        content: expect.stringContaining('src="https://assets.matters.town/embed/uploaded.jpg"'),
+      }),
+    );
   });
 
   it("resolves deep-relative srcs (../../) against article path, not site root", async () => {
@@ -1055,6 +1079,7 @@ describe("syndicateArticle - local image upload", () => {
     // must upload from /assets/x.gif (resolved via parent traversal), not be
     // dropped/mis-resolved. Earlier code passed bare siteUrl as the base, so
     // `../../` clamped to root and the per-article directory was never used.
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-deep"));
     const article = makeArticle({
       html_content: '<img src="../../assets/scale-compare-recording.gif">',
       frontmatter: {},
@@ -1063,7 +1088,10 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/assets/scale-compare-recording.gif");
+    expect(uploadEmbedByUrl).toHaveBeenCalledWith(
+      "https://example.com/assets/scale-compare-recording.gif",
+      "draft-deep",
+    );
   });
 
   it("does not upload images when content is markdown (not HTML)", async () => {
@@ -1629,7 +1657,7 @@ describe("uploadAndReplaceLocalImages - non-ASCII path encoding", () => {
   it("percent-encodes Chinese characters in image src URLs", async () => {
     const html = '<img src="图片/photo.png" alt="Photo">';
 
-    await uploadAndReplaceLocalImages(html, siteUrl);
+    await uploadAndReplaceLocalImages(html, siteUrl, "draft-cn");
 
     const callArgs = vi.mocked(uploadEmbedByUrl).mock.calls[0][0];
     expect(callArgs).toContain("%");

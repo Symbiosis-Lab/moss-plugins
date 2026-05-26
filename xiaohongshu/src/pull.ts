@@ -53,6 +53,8 @@ export async function pullNotes(contentDir: string): Promise<number> {
 
     // Build markdown content
     // Images come first (Xiaohongshu is image-first)
+    // Always emit canonical `![alt](src)` markdown, never raw <img>
+    // (unified-image-emission Decision #9).
     let markdown = "";
     for (const img of fullNote.images) {
       markdown += `![](${img})\n\n`;

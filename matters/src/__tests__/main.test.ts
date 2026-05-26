@@ -6,7 +6,7 @@
  * - syndicateArticle skips cover upload when no cover in frontmatter
  * - syndicateArticle continues gracefully when cover upload fails
  * - uploadCoverByUrl calls graphqlQuery with correct mutation shape
- * - normalizeHtmlForMatters heading transformation and image wrapping
+ * - normalizeHtmlForMatters heading transformation and image pass-through
  * - addCanonicalLinkToContent with lang parameter
  * - syndicateArticle passing summary and lang
  * - Draft tracking: getDraftMap, saveDraftMap, getDraftId, saveDraftId, removeDraftId
@@ -521,53 +521,49 @@ describe("normalizeHtmlForMatters - heading transformation", () => {
 });
 
 // ============================================================================
-// Tests: normalizeHtmlForMatters — image wrapping
+// Tests: normalizeHtmlForMatters — image pass-through
 // ============================================================================
+//
+// Image figure-wrapping moved to moss's synthesizer in Phase 2A of the
+// unified-image-emission migration (2026-05-25). The plugin no longer
+// wraps standalone <img> tags — moss now emits <figure class="moss-image">
+// upstream for caption-pattern images, and bare imgs are intentional.
 
-describe("normalizeHtmlForMatters - image wrapping", () => {
-  it("wraps standalone img in figure.image", () => {
+describe("normalizeHtmlForMatters - image pass-through", () => {
+  it("leaves standalone img unchanged", () => {
     const html = '<p><img src="photo.jpg" alt="Photo"></p>';
     const result = normalizeHtmlForMatters(html);
-    expect(result).toContain('<figure class="image">');
-    expect(result).toContain('<img src="photo.jpg" alt="Photo">');
-    expect(result).toContain("<figcaption></figcaption>");
-    expect(result).toContain("</figure>");
+    expect(result).toBe('<p><img src="photo.jpg" alt="Photo"></p>');
   });
 
-  it("wraps self-closing img in figure.image", () => {
+  it("leaves self-closing img unchanged", () => {
     const html = '<img src="photo.jpg" />';
     const result = normalizeHtmlForMatters(html);
-    expect(result).toContain('<figure class="image">');
-    expect(result).toContain('<img src="photo.jpg" />');
-    expect(result).toContain("<figcaption></figcaption>");
+    expect(result).toBe('<img src="photo.jpg" />');
   });
 
-  it("does not wrap img already inside a figure", () => {
+  it("leaves img already inside a figure unchanged", () => {
     const html = '<figure><img src="photo.jpg" alt="Photo"></figure>';
     const result = normalizeHtmlForMatters(html);
-    // Should not double-wrap
     expect(result).toBe('<figure><img src="photo.jpg" alt="Photo"></figure>');
-    expect(result).not.toContain('<figure class="image"><figure>');
   });
 
-  it("does not wrap img already inside a figure with class", () => {
-    const html = '<figure class="image"><img src="photo.jpg"></figure>';
+  it("leaves img inside figure with class unchanged", () => {
+    const html = '<figure class="moss-image"><img src="photo.jpg"></figure>';
     const result = normalizeHtmlForMatters(html);
-    expect(result).toBe('<figure class="image"><img src="photo.jpg"></figure>');
+    expect(result).toBe('<figure class="moss-image"><img src="photo.jpg"></figure>');
   });
 
-  it("wraps multiple standalone images", () => {
+  it("leaves multiple standalone images unchanged", () => {
     const html = '<img src="a.jpg"><p>text</p><img src="b.jpg">';
     const result = normalizeHtmlForMatters(html);
-    expect(result).toContain('<figure class="image"><img src="a.jpg"><figcaption></figcaption></figure>');
-    expect(result).toContain('<figure class="image"><img src="b.jpg"><figcaption></figcaption></figure>');
+    expect(result).toBe('<img src="a.jpg"><p>text</p><img src="b.jpg">');
   });
 
-  it("handles img with many attributes", () => {
+  it("leaves img with many attributes unchanged", () => {
     const html = '<img src="photo.jpg" alt="A photo" width="500" height="300">';
     const result = normalizeHtmlForMatters(html);
-    expect(result).toContain('<figure class="image">');
-    expect(result).toContain('src="photo.jpg"');
+    expect(result).toBe('<img src="photo.jpg" alt="A photo" width="500" height="300">');
   });
 });
 
@@ -711,7 +707,11 @@ describe("syndicateArticle - summary and lang", () => {
     expect(callArgs.content).not.toContain("<h4>");
   });
 
-  it("wraps standalone images in figure.image before creating draft", async () => {
+  it("does not wrap images in figure.image (synthesizer owns wrapping)", async () => {
+    // After Phase 2A of the unified-image-emission migration (2026-05-25),
+    // moss's synthesizer owns figure-wrapping. The matters plugin no longer
+    // re-wraps standalone <img> tags; they are sent through unchanged so
+    // moss's <figure class="moss-image"> output reaches matters intact.
     const article = makeArticle({
       html_content: '<p>Text</p><img src="photo.jpg" alt="Photo"><p>More</p>',
       frontmatter: {},
@@ -723,10 +723,9 @@ describe("syndicateArticle - summary and lang", () => {
     });
 
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
-    expect(callArgs.content).toContain('<figure class="image">');
-    // Local image is uploaded and src replaced with CDN URL
+    expect(callArgs.content).not.toContain('<figure class="image">');
+    expect(callArgs.content).not.toContain("<figcaption>");
     expect(callArgs.content).toContain('alt="Photo"');
-    expect(callArgs.content).toContain("<figcaption></figcaption>");
   });
 
   it("does not normalize HTML when content is markdown (not HTML)", async () => {

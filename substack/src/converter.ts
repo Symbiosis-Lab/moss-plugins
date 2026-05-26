@@ -145,11 +145,17 @@ export function markdownToHtml(md: string): string {
   // Horizontal rule
   html = html.replace(/^---$/gm, "<hr>");
 
-  // Images
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+  // Images: do NOT rewrite ![alt](src) here. Per the unified-image-emission
+  // migration (Decision #9), plugins must emit canonical CommonMark image
+  // syntax; moss's Tag::Image synthesizer owns the structural HTML (LQIP,
+  // dimensions, <picture>, lazy loading). Leaving the markdown intact lets
+  // moss's pipeline produce a fully enhanced <img>; downstream consumers of
+  // this HTML (e.g. Substack's ProseMirror) treat ![alt](src) as literal text
+  // until a richer adapter replaces this regex-based converter.
 
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Links: negative lookbehind for `!` so we don't claw into ![alt](src)
+  // image syntax — that markdown is left intact for moss's synthesizer.
+  html = html.replace(/(?<!!)\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
   // Bold + italic
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");

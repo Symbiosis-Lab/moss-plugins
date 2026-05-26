@@ -129,9 +129,13 @@ describe("markdownToHtml", () => {
     expect(html).toContain('<a href="https://example.com">example</a>');
   });
 
-  it("converts images", () => {
+  it("leaves ![alt](src) markdown intact for moss's synthesizer", () => {
+    // Per unified-image-emission Decision #9, plugins must emit canonical
+    // CommonMark image syntax; moss's Tag::Image handler owns structural
+    // HTML (LQIP / dims / <picture> / lazy loading).
     const html = markdownToHtml("![alt](https://img.com/photo.jpg)");
-    expect(html).toContain('<img src="https://img.com/photo.jpg" alt="alt">');
+    expect(html).toContain("![alt](https://img.com/photo.jpg)");
+    expect(html).not.toContain("<img");
   });
 });
 

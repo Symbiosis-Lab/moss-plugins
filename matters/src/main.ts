@@ -1046,9 +1046,13 @@ export function getArticleContent(article: ArticleInfo): { content: string; isHt
  * - Keeps h2 and h3 unchanged
  * - Collapses h4, h5, h6 → h3 (to prevent removal by Matters)
  *
- * Also wraps standalone <img> tags (not already inside a <figure>)
- * in <figure class="image"><img ...><figcaption></figcaption></figure>
- * as required by Matters' content format.
+ * Image wrapping was previously done here as well, but is now owned
+ * by moss's image-emission synthesizer (Phase 2A of the
+ * unified-image-emission migration, 2026-05-25). The synthesizer
+ * emits `<figure class="moss-image">` for caption-pattern images at
+ * build time, so by the time content reaches this function, images
+ * are already wrapped (or intentionally bare). A plugin-level rewrap
+ * would conflict with that contract.
  */
 /**
  * Strip moss's auto-injected article-title `<h1 class="moss-article-title">`
@@ -1120,20 +1124,10 @@ export function normalizeHtmlForMatters(html: string): string {
     return `<${slash}h2${attrs || ""}>`;
   });
 
-  // Step 3: Wrap standalone <img> tags in <figure class="image">
-  // Match <img ...> tags that are NOT preceded by <figure (with possible attributes)
-  result = result.replace(/<img\s[^>]*>/gi, (imgTag, offset) => {
-    // Look backwards from the img tag to check if it's inside a <figure>
-    const preceding = result.substring(Math.max(0, offset - 200), offset);
-    // Check if there's an unclosed <figure before this img
-    const lastFigureOpen = preceding.lastIndexOf("<figure");
-    const lastFigureClose = preceding.lastIndexOf("</figure");
-    if (lastFigureOpen > lastFigureClose) {
-      // Inside a <figure> — don't wrap
-      return imgTag;
-    }
-    return `<figure class="image">${imgTag}<figcaption></figcaption></figure>`;
-  });
+  // Image figure-wrapping was removed in Phase 2A of the
+  // unified-image-emission migration (2026-05-25). moss's synthesizer
+  // now emits `<figure class="moss-image">` for caption-pattern images,
+  // so plugins must not re-wrap.
 
   return result;
 }

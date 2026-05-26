@@ -139,11 +139,13 @@ export function markdownToHtml(md: string): string {
   // Horizontal rule
   html = html.replace(/^---$/gm, "<hr>");
 
-  // Images
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+  // Images: keep as canonical CommonMark ![alt](src) — moss's image enhancement
+  // pipeline (variant/srcset/<picture>) only runs on markdown image syntax.
+  // Raw <img> emission bypasses placeholder enhancement (see plan §2A).
 
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Links — negative lookbehind for `!` avoids matching markdown image syntax
+  // `![alt](src)`, which we intentionally leave intact for moss's image pipeline.
+  html = html.replace(/(?<!!)\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
   // Bold + italic
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");

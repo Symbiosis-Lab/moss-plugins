@@ -115,9 +115,12 @@ describe("markdownToHtml", () => {
     expect(html).toContain('<a href="https://example.com">example</a>');
   });
 
-  it("converts images", () => {
+  it("preserves canonical markdown image syntax", () => {
+    // moss's image enhancement pipeline only sees ![alt](src) markdown.
+    // Raw <img> emission would bypass placeholder/variant enhancement.
     const html = markdownToHtml("![alt](https://img.com/photo.jpg)");
-    expect(html).toContain('<img src="https://img.com/photo.jpg" alt="alt">');
+    expect(html).toContain("![alt](https://img.com/photo.jpg)");
+    expect(html).not.toContain("<img");
   });
 });
 

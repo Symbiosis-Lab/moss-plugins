@@ -8,6 +8,12 @@
  *
  * Notes are image-first, so the converter preserves images prominently
  * and extracts hashtags from the text.
+ *
+ * Image emission convention (unified-image-emission Decision #9):
+ * Always emit canonical `![alt](src)` markdown. Never emit raw <img>.
+ * moss treats author-typed HTML as opaque (no LQIP/dims/loading injection);
+ * raw <img> from a plugin would silently lose all enhancement and break
+ * image-pipeline invariants (variant registration, asset publish).
  */
 
 /**

@@ -1046,13 +1046,19 @@ export function getArticleContent(article: ArticleInfo): { content: string; isHt
  * - Keeps h2 and h3 unchanged
  * - Collapses h4, h5, h6 → h3 (to prevent removal by Matters)
  *
- * Image wrapping was previously done here as well, but is now owned
- * by moss's image-emission synthesizer (Phase 2A of the
- * unified-image-emission migration, 2026-05-25). The synthesizer
- * emits `<figure class="moss-image">` for caption-pattern images at
- * build time, so by the time content reaches this function, images
- * are already wrapped (or intentionally bare). A plugin-level rewrap
- * would conflict with that contract.
+ * Image wrapping is also matters-specific. Matters' server-side HTML
+ * sanitizer strips any `<img>` not inside `<figure class="image">` with
+ * a `<figcaption>` child, and also strips `<figure>` with any other
+ * class (`moss-image`, plain `<figure>`, etc.). Smoke test against
+ * `server.matters.icu` on 2026-05-27 confirmed this contract empirically
+ * (see `.credentials/accounts.md` for the test wallet).
+ *
+ * Phase 2A of the unified-image-emission migration (2026-05-25) removed
+ * the plugin's matters-shape wrap on the assumption moss's
+ * `<figure class="moss-image">` output would round-trip through matters.
+ * It does not — matters strips that wrap entirely. So we restore the
+ * wrap, but as a matters-specific pre-upload transform (not a
+ * regression of moss-core's emission). See `wrapImagesForMatters`.
  */
 /**
  * Strip moss's auto-injected article-title `<h1 class="moss-article-title">`
@@ -1124,10 +1130,91 @@ export function normalizeHtmlForMatters(html: string): string {
     return `<${slash}h2${attrs || ""}>`;
   });
 
-  // Image figure-wrapping was removed in Phase 2A of the
-  // unified-image-emission migration (2026-05-25). moss's synthesizer
-  // now emits `<figure class="moss-image">` for caption-pattern images,
-  // so plugins must not re-wrap.
+  // Step 3: Wrap images in matters' required <figure class="image"> shell.
+  result = wrapImagesForMatters(result);
+
+  return result;
+}
+
+/**
+ * Convert every moss image-emission pattern into matters' required shape:
+ * `<figure class="image"><img src="..."><figcaption>...</figcaption></figure>`.
+ *
+ * Matters' server-side sanitizer is strict (smoke-tested 2026-05-27 against
+ * `server.matters.icu`):
+ *
+ *   - `<img>` outside a `<figure class="image">` → STRIPPED
+ *   - `<figure class="moss-image">` → STRIPPED (along with contents)
+ *   - `<figure>` (no class) → STRIPPED
+ *   - `<figure class="image">` without a `<figcaption>` child → causes a
+ *     server error ("Cannot read properties of undefined (reading 'firstChild')")
+ *   - `<figure class="image">` with `<figcaption>` (empty is fine) → KEPT
+ *   - `<picture>` inside `<figure class="image">` → kept on POST, server
+ *     normalizes to bare `<img>` on read
+ *
+ * So we restore the wrap the matters plugin used to apply pre-Phase-2A,
+ * but adapted for moss's new emission patterns (`<picture>` wrappers and
+ * `<figure class="moss-image">` shells).
+ *
+ * Exported for unit testing.
+ */
+export function wrapImagesForMatters(html: string): string {
+  let result = html;
+
+  // Step A: Rename `<figure class="moss-image">` → `<figure class="image">`,
+  // adding an empty `<figcaption>` if the body doesn't already have one.
+  result = result.replace(
+    /<figure\b[^>]*\bclass="[^"]*\bmoss-image\b[^"]*"[^>]*>([\s\S]*?)<\/figure>/gi,
+    (_full, body) => {
+      const hasFigcap = /<figcaption\b/i.test(body);
+      const bodyWithCap = hasFigcap ? body : `${body}<figcaption></figcaption>`;
+      return `<figure class="image">${bodyWithCap}</figure>`;
+    },
+  );
+
+  // Helper: is `offset` inside an open `<figure>` or `<picture>` in `src`?
+  // Looks back 400 chars (longer than any plausible single element start) for
+  // an unclosed tag.
+  const isInside = (src: string, offset: number, tag: "figure" | "picture"): boolean => {
+    const preceding = src.substring(Math.max(0, offset - 400), offset);
+    const openIdx = preceding.lastIndexOf(`<${tag}`);
+    const closeIdx = preceding.lastIndexOf(`</${tag}`);
+    return openIdx > closeIdx;
+  };
+
+  // Step B: `<p>` containing only a `<picture>` → hoist to a figure wrap.
+  // A `<figure>` inside a `<p>` is invalid HTML and matters' parser splits the
+  // `<p>` around it, producing stray empty `<p></p>` siblings. Hoist first.
+  result = result.replace(
+    /<p>\s*(<picture\b[^>]*>[\s\S]*?<\/picture>)\s*<\/p>/gi,
+    (_full, picture: string) => `<figure class="image">${picture}<figcaption></figcaption></figure>`,
+  );
+
+  // Step C: Wrap remaining standalone `<picture>` blocks (not already inside
+  // a `<figure>`). matters normalizes the picture down to just the `<img>` on
+  // storage, but the wrap is what saves the image from being stripped.
+  result = result.replace(
+    /<picture\b[^>]*>[\s\S]*?<\/picture>/gi,
+    (full, offset: number) => {
+      if (isInside(result, offset, "figure")) return full;
+      return `<figure class="image">${full}<figcaption></figcaption></figure>`;
+    },
+  );
+
+  // Step D: `<p>` containing only an `<img>` → same hoist as Step B.
+  result = result.replace(
+    /<p>\s*(<img\b[^>]*>)\s*<\/p>/gi,
+    (_full, img: string) => `<figure class="image">${img}<figcaption></figcaption></figure>`,
+  );
+
+  // Step E: Remaining bare `<img>` tags (not already inside a `<figure>` or
+  // `<picture>`). After Step D this is rare — usually an inline image mixed
+  // with text. We wrap regardless; matters would strip it otherwise.
+  result = result.replace(/<img\b[^>]*>/gi, (imgTag, offset: number) => {
+    if (isInside(result, offset, "figure")) return imgTag;
+    if (isInside(result, offset, "picture")) return imgTag;
+    return `<figure class="image">${imgTag}<figcaption></figcaption></figure>`;
+  });
 
   return result;
 }

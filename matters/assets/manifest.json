@@ -4,7 +4,7 @@
   "description": "Syndicate your articles to Matters.town (POSSE)",
   "author": "moss team",
   "entry": "main.bundle.js",
-  "capabilities": ["process", "syndicate"],
+  "capabilities": ["process", "syndicate", "import"],
   "global_name": "MattersPlugin",
   "domain": "matters.town",
   "icon": "icon.svg",

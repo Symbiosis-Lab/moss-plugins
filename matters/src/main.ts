@@ -44,6 +44,7 @@ import {
   readPluginFile,
   writePluginFile,
   pluginFileExists,
+  getPluginEnvVar,
 } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
@@ -219,7 +220,79 @@ async function waitForToken(
 /**
  * Prompt user to login to Matters.town
  */
+// ============================================================================
+// Test-harness escape hatch (T8a, 2026-05-28)
+// ============================================================================
+//
+// `MOSS_MATTERS_TEST_PROFILE` lets the onboarding e2e harness bypass the
+// real Matters auth flow entirely. When set, the plugin:
+//
+//  1. (API layer) flips `apiConfig.queryMode = "user"` and sets
+//     `apiConfig.testUserName = <profile>`, switching all GraphQL traffic
+//     through `graphqlQueryPublic` (no cookies, no token cache).
+//
+//  2. (UI layer) skips `promptLogin()` outright. The auth webview never
+//     opens — without this, the harness still observes the matters.news/
+//     login page load and can't assert "import starts immediately".
+//
+// Both flips are required for end-to-end harness coverage; an API-only
+// flip leaves the auth webview visible. The env var is read via the
+// allow-listed `get_plugin_env_var` Tauri command (the plugin runtime
+// has no direct `process.env` access). Default test profile is `@guo`.
+//
+// Production behavior is unchanged when the env var is unset — every
+// call site degrades to the legacy auth flow.
+
+let testProfileCache: string | null | undefined;
+
+/**
+ * Resolve the Matters test profile. Memoized — env vars don't change
+ * mid-session, so we read once at first call. Returns `null` (not
+ * `undefined`) when explicitly unset so consumers can distinguish
+ * "not configured" from "not yet checked".
+ *
+ * Strips a leading `@` if present so the harness can pass either
+ * `@guo` or `guo` and get the same result. `apiConfig.testUserName`
+ * stores the bare username.
+ */
+async function getMattersTestProfile(): Promise<string | null> {
+  if (testProfileCache !== undefined) return testProfileCache;
+  const raw = await getPluginEnvVar("MOSS_MATTERS_TEST_PROFILE");
+  if (!raw) {
+    testProfileCache = null;
+    return null;
+  }
+  const trimmed = raw.startsWith("@") ? raw.slice(1) : raw;
+  testProfileCache = trimmed;
+  console.log(`🧪 Matters: MOSS_MATTERS_TEST_PROFILE=${raw} → public-fetch mode (@${trimmed})`);
+  return trimmed;
+}
+
+/**
+ * Apply the test-profile escape hatch to `apiConfig`. No-op when the env
+ * var is unset, so safe to call unconditionally. Returns the profile
+ * name if the escape hatch was applied, `null` otherwise — callers use
+ * the return value to decide whether to skip auth UI.
+ */
+async function applyTestProfileEscapeHatch(): Promise<string | null> {
+  const profile = await getMattersTestProfile();
+  if (!profile) return null;
+  apiConfig.queryMode = "user";
+  apiConfig.testUserName = profile;
+  return profile;
+}
+
 async function promptLogin(): Promise<boolean> {
+  // UI-layer escape hatch: when MOSS_MATTERS_TEST_PROFILE is set, skip
+  // the login webview entirely and pretend authentication succeeded.
+  // The API layer (apiConfig.queryMode = "user") already routes all
+  // queries through the public path, so there is nothing to authenticate.
+  const testProfile = await getMattersTestProfile();
+  if (testProfile) {
+    console.log(`🧪 Matters: skipping login UI (test profile @${testProfile})`);
+    return true;
+  }
+
   console.log("🔐 Opening Matters.town login page...");
 
   try {
@@ -272,13 +345,32 @@ export async function process(context: ProcessContext): Promise<HookResult> {
   clearTokenCache();
   await initializeDomain();
 
+  // T8a escape hatch: if MOSS_MATTERS_TEST_PROFILE is set, flip apiConfig
+  // to public-fetch mode BEFORE any auth/binding logic runs. The promptLogin
+  // helper also checks the env var and skips its UI — together these two
+  // flips give the e2e harness a no-auth-webview import path. Idempotent;
+  // no-op in production.
+  const testProfile = await applyTestProfileEscapeHatch();
+
   console.log("🔐 Matters: process hook started");
 
   try {
     // Binding guard: only sync if project is bound to a Matters account
     {
       const bindingConfig = await getConfig();
-      if (!bindingConfig.boundUserName) {
+      // Under the test-profile escape hatch the project is "bound" to the
+      // test user implicitly — skip the binding detection / login prompt
+      // since the harness already picked the profile.
+      if (testProfile) {
+        if (bindingConfig.boundUserName !== testProfile) {
+          await saveConfig({
+            ...bindingConfig,
+            boundUserName: testProfile,
+            userName: testProfile,
+          });
+          console.log(`🧪 Matters: auto-bound to @${testProfile} (test profile)`);
+        }
+      } else if (!bindingConfig.boundUserName) {
         const detectedUser = await detectBoundUser();
         if (detectedUser) {
           // Auto-bind from existing articles

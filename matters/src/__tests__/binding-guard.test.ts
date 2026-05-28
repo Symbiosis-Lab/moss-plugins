@@ -31,6 +31,9 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),
+  // T8a escape hatch — undefined return = no test profile = production
+  // path (which is what these binding-guard tests exercise).
+  getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../config", () => ({

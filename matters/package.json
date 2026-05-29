@@ -1,5 +1,5 @@
 {
-  "name": "matters",
+  "name": "@symbiosis-lab/moss-plugin-matters",
   "version": "0.0.1",
   "description": "Syndicate articles between local system and Matters.town",
   "main": "dist/main.bundle.js",
@@ -27,6 +27,16 @@
   ],
   "author": "Symbiosis Lab",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Symbiosis-Lab/moss-plugins.git",
+    "directory": "matters"
+  },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.2.1",
     "@graphql-codegen/cli": "^6.1.0",

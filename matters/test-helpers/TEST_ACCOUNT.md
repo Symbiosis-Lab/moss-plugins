@@ -1,3 +1,5 @@
+> **Warning:** This file documents how to configure test credentials. NEVER commit a real wallet private key. Use a throwaway test account funded only with disposable test tokens.
+
 # Matters Test Account Setup
 
 This document describes how to set up a test account for E2E testing on Matters.icu (test environment).

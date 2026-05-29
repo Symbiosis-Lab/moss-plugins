@@ -1,5 +1,5 @@
 {
-  "name": "github",
+  "name": "@symbiosis-lab/moss-plugin-github",
   "version": "1.5.0",
   "description": "Deploy to GitHub Pages via GitHub Actions",
   "main": "dist/main.js",
@@ -26,6 +26,16 @@
   ],
   "author": "Symbiosis Lab",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Symbiosis-Lab/moss-plugins.git",
+    "directory": "github"
+  },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.2.1",
     "@symbiosis-lab/moss-api": "workspace:*",

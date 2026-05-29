@@ -667,10 +667,10 @@ describe("on_deploy integration", () => {
         commitSha: "abc123def",
       });
 
-      const result = await on_deploy(createMockContext({ domain: "guoliu.me" }));
+      const result = await on_deploy(createMockContext({ domain: "example.com" }));
 
       expect(result.success).toBe(true);
-      expect(result.deployment?.url).toBe("https://guoliu.me");
+      expect(result.deployment?.url).toBe("https://example.com");
     });
 
     it("uses github.io URL when context.domain is not set", async () => {
@@ -695,11 +695,11 @@ describe("on_deploy integration", () => {
         commitSha: "abc123def",
       });
 
-      await on_deploy(createMockContext({ domain: "guoliu.me" }));
+      await on_deploy(createMockContext({ domain: "example.com" }));
 
       const toastCalls = vi.mocked(showToast).mock.calls;
       const lastToast = toastCalls[toastCalls.length - 1][0];
-      expect(lastToast.actions[0].url).toBe("https://guoliu.me");
+      expect(lastToast.actions[0].url).toBe("https://example.com");
     });
 
     it("falls back to GitHub Pages CNAME when no context.domain", async () => {

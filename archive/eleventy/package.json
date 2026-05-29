@@ -1,5 +1,6 @@
 {
   "name": "eleventy",
+  "private": true,
   "version": "1.0.0",
   "description": "Eleventy (11ty) static site generator plugin for moss",
   "main": "dist/main.js",

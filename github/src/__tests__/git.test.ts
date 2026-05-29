@@ -20,8 +20,8 @@ describe("parseGitHubUrl", () => {
     });
 
     it("parses org repo HTTPS URL", () => {
-      const result = parseGitHubUrl("https://github.com/anthropics/moss.git");
-      expect(result).toEqual({ owner: "anthropics", repo: "moss" });
+      const result = parseGitHubUrl("https://github.com/symbiosis-lab/moss.git");
+      expect(result).toEqual({ owner: "symbiosis-lab", repo: "moss" });
     });
 
     it("handles hyphenated repo names", () => {
@@ -62,8 +62,8 @@ describe("parseGitHubUrl", () => {
     });
 
     it("parses org repo SSH URL", () => {
-      const result = parseGitHubUrl("git@github.com:anthropics/moss.git");
-      expect(result).toEqual({ owner: "anthropics", repo: "moss" });
+      const result = parseGitHubUrl("git@github.com:symbiosis-lab/moss.git");
+      expect(result).toEqual({ owner: "symbiosis-lab", repo: "moss" });
     });
 
     it("parses user site repo with dots (username.github.io) via SSH", () => {
@@ -117,8 +117,8 @@ describe("extractGitHubPagesUrl", () => {
   });
 
   it("generates correct Pages URL for org repos", () => {
-    const result = extractGitHubPagesUrl("https://github.com/anthropics/moss.git");
-    expect(result).toBe("https://anthropics.github.io/moss");
+    const result = extractGitHubPagesUrl("https://github.com/symbiosis-lab/moss.git");
+    expect(result).toBe("https://symbiosis-lab.github.io/moss");
   });
 
   it("generates root URL for user site repo (SSH)", () => {
@@ -185,6 +185,6 @@ describe("buildPagesUrl", () => {
   });
 
   it("generates project URL for org repo", () => {
-    expect(buildPagesUrl("anthropics", "moss")).toBe("https://anthropics.github.io/moss");
+    expect(buildPagesUrl("symbiosis-lab", "moss")).toBe("https://symbiosis-lab.github.io/moss");
   });
 });

@@ -1,5 +1,6 @@
 {
   "name": "jekyll",
+  "private": true,
   "version": "1.0.0",
   "description": "Jekyll static site generator plugin for moss",
   "main": "dist/main.js",

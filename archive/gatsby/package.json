@@ -1,5 +1,6 @@
 {
   "name": "gatsby",
+  "private": true,
   "version": "1.0.0",
   "description": "Gatsby static site generator plugin for moss",
   "main": "dist/main.js",

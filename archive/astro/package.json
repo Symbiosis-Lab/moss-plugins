@@ -1,5 +1,6 @@
 {
   "name": "astro",
+  "private": true,
   "version": "1.0.0",
   "description": "Astro static site generator plugin for moss",
   "main": "dist/main.js",

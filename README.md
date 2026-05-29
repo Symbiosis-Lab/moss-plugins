@@ -1,102 +1,25 @@
-# moss-plugins
+> **Read-only mirror.** Source lives in the private moss monorepo. See [CONTRIBUTING.md](CONTRIBUTING.md) — PRs against this mirror cannot be merged.
 
-[![Test](https://github.com/Symbiosis-Lab/moss-plugins/actions/workflows/test.yml/badge.svg)](https://github.com/Symbiosis-Lab/moss-plugins/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/Symbiosis-Lab/moss-plugins/graph/badge.svg)](https://codecov.io/gh/Symbiosis-Lab/moss-plugins)
+# moss plugins
 
-Plugins for [moss](https://github.com/Symbiosis-Lab/moss).
+This repository mirrors the `plugins/` directory of the moss monorepo. Each subdirectory is an independently-publishable npm package under `@symbiosis-lab/moss-plugin-<name>`.
 
-## Plugins
+## Active plugins
 
-| Plugin | Capability | Description |
-| ------ | ---------- | ----------- |
-| [github](github) | Deploy | Deploy to GitHub Pages |
-| [matters](matters) | Syndicate | Syndicate to Matters.town |
-| [planet](planet) | Syndicate | Syndicate to IPFS via Planet *(proposal)* |
+- `github` — publishes moss sites to GitHub Pages
+- `matters` — publishes posts to matters.town
+- `douban` — imports content from douban
+- `linkedin` — cross-posts to LinkedIn
+- `substack` — cross-posts to Substack
+- `x` — cross-posts to X
+- `xiaohongshu` — cross-posts to Xiaohongshu
 
-## Archived
-
-The following generator plugins have been archived. moss focuses on Obsidian users who want to publish, not existing SSG users who already have preview and deployment workflows. See [docs/plans/2026-04-03-archive-ssg-plugins.md](../docs/plans/2026-04-03-archive-ssg-plugins.md).
-
-| Plugin | Status |
-| ------ | ------ |
-| [hugo](archive/hugo) | Archived |
-| [astro](archive/astro) | Archived |
-| [jekyll](archive/jekyll) | Archived |
-| [eleventy](archive/eleventy) | Archived |
-| [gatsby](archive/gatsby) | Archived |
-
-## Development
-
-### Structure
-
-```
-moss-plugins/
-├── github/
-│   ├── package.json
-│   ├── src/
-│   ├── dist/
-│   └── manifest.json
-├── matters/
-│   ├── package.json
-│   ├── src/
-│   ├── dist/
-│   └── manifest.json
-├── .github/workflows/
-│   ├── test.yml           # Run tests on PR/push
-│   └── release-plugin.yml # Build & release on tag
-└── codecov.yml
-```
-
-### Local Development
-
-For hot reload testing with symlinks:
-
-```bash
-# In moss repo, bundled-plugins/ contains symlinks to plugin dist folders
-# Changes to plugin source are immediately available after rebuild
-
-cd github
-npm run dev  # Watch mode - rebuilds on change
-```
-
-### Testing
-
-```bash
-# Test a specific plugin
-cd github
-npm test
-
-# Test with coverage
-npm run test:coverage
-```
-
-### Releasing
-
-Each plugin is versioned independently. To release:
-
-```bash
-# Update version in package.json/Cargo.toml
-# Commit changes
-git tag github-v1.0.0
-git push origin github-v1.0.0
-```
-
-The CI will automatically build and create a GitHub release.
-
-## Plugin Types
-
-### JavaScript Plugins
-
-- Use TypeScript/JavaScript
-- Built with esbuild
-- Output: `dist/main.bundle.js` + `manifest.json`
-
-### Binary Plugins (Rust)
-
-- Use Rust
-- Built for multiple platforms (macOS, Windows, Linux)
-- Output: platform-specific binaries + `manifest.json`
+Archived plugins (no longer maintained) live in `archive/`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Mirror PRs cannot be merged — file issues here, code lands in the monorepo.

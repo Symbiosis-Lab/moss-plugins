@@ -1,25 +1,32 @@
-> **Read-only mirror.** Source lives in the private moss monorepo. See [CONTRIBUTING.md](CONTRIBUTING.md) — PRs against this mirror cannot be merged.
+# moss-plugins
 
-# moss plugins
+> Official moss publishing plugins.
 
-This repository mirrors the `plugins/` directory of the moss monorepo. Each subdirectory is an independently-publishable npm package under `@symbiosis-lab/moss-plugin-<name>`.
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![discussions](https://img.shields.io/github/discussions/Symbiosis-Lab/moss-plugins)](https://github.com/Symbiosis-Lab/moss-plugins/discussions)
 
-## Active plugins
+> **Read-only mirror.** Source lives in the private moss monorepo. PRs cannot be merged here — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- `github` — publishes moss sites to GitHub Pages
-- `matters` — publishes posts to matters.town
-- `douban` — imports content from douban
-- `linkedin` — cross-posts to LinkedIn
-- `substack` — cross-posts to Substack
-- `x` — cross-posts to X
-- `xiaohongshu` — cross-posts to Xiaohongshu
+This repository contains the 7 official moss publishing plugins. Each subdirectory is an independently-publishable npm package under `@symbiosis-lab/moss-plugin-<name>`.
 
-Archived plugins (no longer maintained) live in `archive/`.
+## Plugins
+
+| Plugin | npm | Purpose |
+|---|---|---|
+| [github](./github) | [`@symbiosis-lab/moss-plugin-github`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-github) | Publish moss sites to GitHub Pages |
+| [matters](./matters) | [`@symbiosis-lab/moss-plugin-matters`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-matters) | Publish posts to matters.town |
+| [douban](./douban) | [`@symbiosis-lab/moss-plugin-douban`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-douban) | Import and cross-post content from douban |
+| [linkedin](./linkedin) | [`@symbiosis-lab/moss-plugin-linkedin`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-linkedin) | Cross-post to LinkedIn |
+| [substack](./substack) | [`@symbiosis-lab/moss-plugin-substack`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-substack) | Cross-post to Substack |
+| [x](./x) | [`@symbiosis-lab/moss-plugin-x`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-x) | Cross-post to X |
+| [xiaohongshu](./xiaohongshu) | [`@symbiosis-lab/moss-plugin-xiaohongshu`](https://www.npmjs.com/package/@symbiosis-lab/moss-plugin-xiaohongshu) | Cross-post to Xiaohongshu |
+
+Archived (no longer maintained): `astro`, `eleventy`, `gatsby`, `hugo`, `jekyll` — see `archive/`.
+
+## Stability
+
+All plugins are 0.x. APIs may change between minor versions until 1.0. Each plugin tracks its own [CHANGELOG](./CHANGELOG.md).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Mirror PRs cannot be merged — file issues here, code lands in the monorepo.

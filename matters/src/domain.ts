@@ -9,7 +9,7 @@
  * to load the configured domain and update the API endpoint + manifest.
  */
 
-import { readPluginFile, writePluginFile } from "@symbiosis-lab/moss-api";
+import { readPluginFile, writePluginFile, getPluginEnvVar } from "@symbiosis-lab/moss-api";
 import { getConfig } from "./config";
 import { apiConfig } from "./api";
 
@@ -38,6 +38,16 @@ let currentDomain = DEFAULT_DOMAIN;
 export async function initializeDomain(): Promise<string> {
   const config = await getConfig();
   currentDomain = config.domain || DEFAULT_DOMAIN;
+
+  // Allow MOSS_MATTERS_DOMAIN env var to override config.domain — enables
+  // test-env switching (e.g. matters.icu) via moss-claude.sh without
+  // pre-seeding .moss/plugins/matters/config.json. Must happen before the
+  // endpoint is set so the whole init uses the env-specified domain.
+  const envDomain = await getPluginEnvVar("MOSS_MATTERS_DOMAIN");
+  if (envDomain && envDomain.length > 0) {
+    console.log(`📍 MOSS_MATTERS_DOMAIN override: ${envDomain} (was: ${currentDomain})`);
+    currentDomain = envDomain;
+  }
 
   // Update API endpoint
   apiConfig.endpoint = `https://server.${currentDomain}/graphql`;

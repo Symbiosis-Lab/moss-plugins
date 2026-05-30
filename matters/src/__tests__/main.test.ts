@@ -35,6 +35,16 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),
+  // startTask mock — process hook needs a TaskHandle even when tests
+  // only exercise syndicate helpers; keep it a no-op here.
+  startTask: vi.fn().mockResolvedValue({
+    id: "0",
+    progress: vi.fn().mockResolvedValue(undefined),
+    awaiting: vi.fn().mockResolvedValue(undefined),
+    succeeded: vi.fn().mockResolvedValue(undefined),
+    failed: vi.fn().mockResolvedValue(undefined),
+    cancelled: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 // Mock the api module

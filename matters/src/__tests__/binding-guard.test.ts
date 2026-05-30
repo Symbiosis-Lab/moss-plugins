@@ -34,6 +34,16 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // T8a escape hatch — undefined return = no test profile = production
   // path (which is what these binding-guard tests exercise).
   getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
+  // startTask mock — returns a no-op TaskHandle so process hook can drive
+  // the PanelTask lifecycle without a real Tauri context.
+  startTask: vi.fn().mockResolvedValue({
+    id: "0",
+    progress: vi.fn().mockResolvedValue(undefined),
+    awaiting: vi.fn().mockResolvedValue(undefined),
+    succeeded: vi.fn().mockResolvedValue(undefined),
+    failed: vi.fn().mockResolvedValue(undefined),
+    cancelled: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 vi.mock("../config", () => ({

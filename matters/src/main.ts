@@ -354,14 +354,17 @@ export async function process(context: ProcessContext): Promise<HookResult> {
 
   // Start a PanelTask so the breadcrumb hairline animates during import.
   // hook = "import" — the process hook syncs articles from Matters (an import
-  //   operation), not a transform/enhance. The router maps (Import, OnboardingFlow)
-  //   → (ActionPanel, Ambient) which drives the hairline.
-  // trigger = "onboarding_flow" when running under the e2e test harness
-  //   (MOSS_MATTERS_TEST_PROFILE set), otherwise "background" because the
-  //   process hook runs during the build pipeline without direct user gesture.
+  //   operation), not a transform/enhance.
+  // trigger — moss owns this context (ADR-015): it stamps `context.trigger` when
+  //   it invokes the hook. The onboarding card path → "onboarding_flow", which the
+  //   router maps to (ActionPanel, Ambient) → the hairline; every build/preview
+  //   rebuild → "background" (quiet). The plugin must NOT guess this from its own
+  //   state (e.g. the test-profile env var) — that conflated "test mode" with
+  //   "user-initiated onboarding" and left the hairline dead in production.
+  //   Absent (older moss) ⇒ "background", the safe quiet default.
   const task = await startTask("Importing from Matters", {
     hook: "import",
-    trigger: testProfile ? "onboarding_flow" : "background",
+    trigger: context.trigger ?? "background",
     hasProgress: true,
     cancellable: false,
   });
@@ -394,6 +397,9 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           // Fresh project — require login to bind
           const loginSuccess = await promptLogin();
           if (!loginSuccess) {
+            // Terminate the task before returning, or it stays Running in the
+            // registry forever. Not bound ⇒ nothing to import; a clean success.
+            await task.succeeded("No Matters account bound");
             return {
               success: true,
               message: "No Matters account bound. Skipping sync.",
@@ -462,6 +468,9 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     const syncOnBuild = context.config?.sync_on_build ?? true;
     if (!syncOnBuild) {
       console.log("ℹ️  Sync on build is disabled, skipping...");
+      // Terminate the task before returning (else it leaks as Running).
+      // Authenticated but sync intentionally off ⇒ a clean success.
+      await task.succeeded("Sync disabled");
       return {
         success: true,
         message: "Authenticated (sync disabled)",

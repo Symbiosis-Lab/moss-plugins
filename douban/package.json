@@ -12,7 +12,8 @@
     "watch-assets": "chokidar 'assets/**/*' -c 'npm run copy-assets'",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:unit": "vitest run --project unit"
+    "test:unit": "vitest run --project unit",
+    "test:coverage": "vitest run --project unit --coverage"
   },
   "keywords": ["moss", "plugin", "douban", "syndication", "reviews"],
   "author": "Symbiosis Lab",

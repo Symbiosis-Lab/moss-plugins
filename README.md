@@ -3,7 +3,6 @@
 > Official moss publishing plugins.
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![discussions](https://img.shields.io/github/discussions/Symbiosis-Lab/moss-plugins)](https://github.com/Symbiosis-Lab/moss-plugins/discussions)
 
 > **Read-only mirror.** Source lives in the private moss monorepo. PRs cannot be merged here — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

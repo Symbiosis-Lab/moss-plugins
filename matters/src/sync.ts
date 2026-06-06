@@ -53,14 +53,52 @@ import { isMattersUrl, articleUrl } from "./domain";
 // ============================================================================
 
 /**
- * Get default folder names (no longer language-based).
- * Always returns "articles" for articles and "_drafts" for drafts.
+ * Get default folder names. Only the drafts folder is fixed (`_drafts`); the
+ * article folder is language-aware via `folderNameForLanguage` (see
+ * `getArticleFolderName`).
  */
 export function getDefaultFolderNames(): {
   article: string;
   drafts: string;
 } {
   return { article: "articles", drafts: "_drafts" };
+}
+
+/**
+ * Map a Matters language preference to the article folder name.
+ * Chinese (`zh_hans` / `zh_hant`) → `文章`; everything else → `articles`.
+ * Restores the language-aware naming that had regressed to a hardcoded
+ * `articles` (it was disabled because it read the viewer-only
+ * `settings.language`; we now also accept a public per-article language). (G)
+ */
+export function folderNameForLanguage(language?: string | null): string {
+  return language === "zh_hans" || language === "zh_hant" ? "文章" : "articles";
+}
+
+/**
+ * Resolve the site's language for folder naming. Prefers an explicit/authed
+ * value, then the public per-article majority (the only language signal
+ * available in unauthenticated/public-fetch mode, since `settings.language`
+ * is viewer-only). Returns undefined if no signal — caller defaults to English.
+ */
+export function resolveContentLanguage(
+  explicit: string | null | undefined,
+  articleLanguages: Array<string | null | undefined>,
+): string | undefined {
+  if (explicit) return explicit;
+  const counts = new Map<string, number>();
+  for (const l of articleLanguages) {
+    if (l) counts.set(l, (counts.get(l) ?? 0) + 1);
+  }
+  let best: string | undefined;
+  let bestN = 0;
+  for (const [l, n] of counts) {
+    if (n > bestN) {
+      best = l;
+      bestN = n;
+    }
+  }
+  return best;
 }
 
 /**
@@ -147,7 +185,8 @@ export async function detectBoundUser(): Promise<string | null> {
  * 3. Default "articles" - for new projects
  */
 export async function getArticleFolderName(
-  config: MattersPluginConfig
+  config: MattersPluginConfig,
+  language?: string,
 ): Promise<string> {
   // 1. Check if explicitly configured
   if (config.articleFolder) {
@@ -160,8 +199,8 @@ export async function getArticleFolderName(
     return detected;
   }
 
-  // 3. Fall back to default
-  return "articles";
+  // 3. Fall back to a language-derived default (Chinese → 文章, else articles)
+  return folderNameForLanguage(language ?? config.language);
 }
 
 // ============================================================================
@@ -350,8 +389,17 @@ export async function syncToLocalFiles(
   // Map for internal link rewriting: Matters URL/shortHash → local file path
   const articlePathMap = new Map<string, string>();
 
-  // Get folder names - auto-detect existing folder or use defaults
-  const articleFolder = await getArticleFolderName(config);
+  // Get folder names - auto-detect existing folder, else language-derived
+  // (Chinese → 文章). Language: authed profile.language → stale config.language
+  // → public per-article majority (the only signal in unauthenticated mode). (G)
+  const contentLanguage = resolveContentLanguage(
+    profile?.language ?? (config as MattersPluginConfig).language,
+    articles.map((a) => a.language),
+  );
+  const articleFolder = await getArticleFolderName(
+    config as MattersPluginConfig,
+    contentLanguage,
+  );
   const folders = {
     article: articleFolder,
     drafts: getDefaultFolderNames().drafts,

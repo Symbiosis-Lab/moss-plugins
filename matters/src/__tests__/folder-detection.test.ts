@@ -254,3 +254,36 @@ describe("Sync Drafts Config", () => {
     });
   });
 });
+
+describe("folderNameForLanguage (G — language-aware folder naming)", () => {
+  it("maps Chinese (simplified + traditional) to 文章", async () => {
+    const { folderNameForLanguage } = await import("../sync");
+    expect(folderNameForLanguage("zh_hans")).toBe("文章");
+    expect(folderNameForLanguage("zh_hant")).toBe("文章");
+  });
+
+  it("maps English, other languages, and missing to articles", async () => {
+    const { folderNameForLanguage } = await import("../sync");
+    expect(folderNameForLanguage("en")).toBe("articles");
+    expect(folderNameForLanguage("ja")).toBe("articles");
+    expect(folderNameForLanguage(undefined)).toBe("articles");
+    expect(folderNameForLanguage(null)).toBe("articles");
+  });
+});
+
+describe("resolveContentLanguage (G — public-safe language signal)", () => {
+  it("prefers the explicit/authenticated value over article majority", async () => {
+    const { resolveContentLanguage } = await import("../sync");
+    expect(resolveContentLanguage("en", ["zh_hans", "zh_hans"])).toBe("en");
+  });
+
+  it("falls back to the public per-article majority (unauthenticated mode)", async () => {
+    const { resolveContentLanguage } = await import("../sync");
+    expect(resolveContentLanguage(undefined, ["zh_hans", "zh_hans", "en"])).toBe("zh_hans");
+  });
+
+  it("returns undefined when there is no language signal", async () => {
+    const { resolveContentLanguage } = await import("../sync");
+    expect(resolveContentLanguage(undefined, [null, undefined])).toBeUndefined();
+  });
+});

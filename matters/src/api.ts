@@ -767,6 +767,7 @@ async function fetchUserArticles(userName: string): Promise<{
           shortHash: edge.node.shortHash,
           content: edge.node.content,
           summary: edge.node.summary,
+          language: edge.node.language ?? undefined,
           createdAt: edge.node.createdAt,
           revisedAt: edge.node.revisedAt ?? undefined,
           cover: edge.node.cover ?? undefined,

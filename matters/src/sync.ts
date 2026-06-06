@@ -447,7 +447,10 @@ export async function syncToLocalFiles(
           }
         });
 
-        homepageBody += "\n\n:::grid 3\n" + gridItems.join("\n:::\n") + "\n:::\n";
+        // Cells are separated by moss's canonical `+++` divider; a lone `:::`
+        // is the grid CLOSER, so using it between cells prematurely closes the
+        // grid and corrupts the homepage (B1). The single trailing `:::` closes.
+        homepageBody += "\n\n:::grid 3\n" + gridItems.join("\n+++\n") + "\n:::\n";
       }
 
       const homepageContent = homepageFrontmatter + "\n\n" + homepageBody;

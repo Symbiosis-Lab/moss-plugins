@@ -122,6 +122,15 @@ describe("syncToLocalFiles - homepage grid from pinned works", () => {
     expect(homepage).toContain(":::grid 3");
     expect(homepage).toContain("[Travel Notes](/articles/travel-notes/)");
     expect(homepage).toContain("[Tech Essays](/articles/tech-essays/)");
+    // Grid CELLS must be separated by moss's canonical `+++` divider, NOT `:::`
+    // (a lone `:::` is the grid CLOSER — using it between cells prematurely
+    // closes the grid and corrupts the homepage). Regression guard for B1.
+    expect(homepage).toMatch(
+      /\[Travel Notes\]\([^)]*\)\n\+\+\+\n\[Tech Essays\]\([^)]*\)/
+    );
+    // The grid must open with :::grid and close with a single ::: — exactly two
+    // `:::` occurrences (open marker prefix + closer), no `:::` between cells.
+    expect((homepage!.match(/^:::$/gm) || []).length).toBe(1);
     expect(homepage).toContain(":::");
   });
 

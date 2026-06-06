@@ -80,6 +80,37 @@ export function replaceAssetUrls(
   return { content: newContent, replaced: true };
 }
 
+/**
+ * Replace a full markdown image token `![alt](url)` whose URL contains the
+ * asset id with a filename-only wikilink `![[filename]]` (B2).
+ *
+ * Unlike `replaceAssetUrls` — which swaps only the URL substring and leaves the
+ * `![alt](...)` wrapper plus a depth-dependent relative path (`../assets/…` vs
+ * `../../assets/…`) — this replaces the ENTIRE image token so moss's shared
+ * filename-stem asset resolver (`resolve::asset_class::resolve_asset_ref`)
+ * resolves it from ANY article depth with no `../` chains. The basename carries
+ * the real extension, so the extensionless-ref bug (B8) disappears too. Alt
+ * text is dropped to match moss/Obsidian `![[file]]` embed syntax.
+ */
+export function replaceImageWithWikilink(
+  content: string,
+  assetId: string,
+  filename: string
+): { content: string; replaced: boolean } {
+  // `!\[[^\]]*\]` = the `![alt]` part (alt may be empty); then `(...url...)`
+  // where the url contains the asset id. Mirrors buildAssetUrlPattern's URL body.
+  const pattern = new RegExp(
+    `!\\[[^\\]]*\\]\\(https?://[^)\\s"]*${escapeRegex(assetId)}[^)\\s"]*\\)`,
+    'g'
+  );
+  if (!pattern.test(content)) {
+    return { content, replaced: false };
+  }
+  pattern.lastIndex = 0;
+  const newContent = content.replace(pattern, `![[${filename}]]`);
+  return { content: newContent, replaced: true };
+}
+
 // ============================================================================
 // Fibonacci Backoff
 // ============================================================================
@@ -449,22 +480,26 @@ export async function downloadMediaAndUpdate(): Promise<{
       const localPath = downloadedUuids.get(media.uuid) || existingAssetsByUuid.get(media.uuid);
       if (!localPath) continue;
 
-      const relativePath = calculateRelativePath(file.path, localPath);
+      // Emit a filename-only wikilink (B2/B8): depth-independent, resolved by
+      // moss's shared filename-stem asset resolver from any article depth — no
+      // `../` chains. The basename carries the real extension. Replaces the
+      // prior depth-dependent `calculateRelativePath` + URL-substring rewrite.
+      const filename = localPath.split('/').pop() || localPath;
 
-      // Update body references
+      // Update body references → `![[filename]]`
       if (media.inBody) {
-        const { content: newBody, replaced } = replaceAssetUrls(body, media.uuid, relativePath);
+        const { content: newBody, replaced } = replaceImageWithWikilink(body, media.uuid, filename);
         if (replaced) {
           body = newBody;
           modified = true;
         }
       }
 
-      // Update cover reference
+      // Update cover reference → bare filename (frontmatter; resolver finds it).
       if (media.inCover) {
         const coverStr = String(frontmatter.cover || '');
         if (coverStr.includes(media.uuid)) {
-          frontmatter = { ...frontmatter, cover: relativePath };
+          frontmatter = { ...frontmatter, cover: filename };
           modified = true;
         }
       }

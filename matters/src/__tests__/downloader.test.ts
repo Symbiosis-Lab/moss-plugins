@@ -4,6 +4,7 @@ import {
   escapeRegex,
   buildAssetUrlPattern,
   replaceAssetUrls,
+  replaceImageWithWikilink,
   calculateRelativePath,
 } from "../downloader";
 
@@ -180,6 +181,34 @@ Some text
   });
 });
 
+describe("replaceImageWithWikilink", () => {
+  const assetId = "66296200-de80-43f1-a1a2-ce2b1403a3e2";
+  const filename = "66296200-de80-43f1-a1a2-ce2b1403a3e2.jpg";
+
+  it("replaces the WHOLE image token with a filename-only wikilink (B2)", () => {
+    const content = "![](https://assets.matters.news/embed/66296200-de80-43f1-a1a2-ce2b1403a3e2/file.jpg)";
+    const result = replaceImageWithWikilink(content, assetId, filename);
+    expect(result.replaced).toBe(true);
+    expect(result.content).toBe(`![[${filename}]]`);
+    // No residual relative-markdown wrapper.
+    expect(result.content).not.toContain("](");
+  });
+
+  it("drops alt text and the CDN URL (depth-independent ![[file]])", () => {
+    const content = "before ![some alt](https://imagedelivery.net/xxx/prod/embed/66296200-de80-43f1-a1a2-ce2b1403a3e2/public) after";
+    const result = replaceImageWithWikilink(content, assetId, filename);
+    expect(result.replaced).toBe(true);
+    expect(result.content).toBe(`before ![[${filename}]] after`);
+  });
+
+  it("returns replaced=false when the asset id is absent", () => {
+    const content = "![](https://example.com/other.jpg)";
+    const result = replaceImageWithWikilink(content, assetId, filename);
+    expect(result.replaced).toBe(false);
+    expect(result.content).toBe(content);
+  });
+});
+
 describe("calculateRelativePath", () => {
   it("returns asset path directly for root-level markdown", () => {
     // Markdown at root, asset in assets/
@@ -279,8 +308,8 @@ Some text
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/article.md`)?.content;
     expect(updatedContent).toBeDefined();
 
-    // UUID1 should be replaced with local path
-    expect(updatedContent).toContain(`assets/${uuid1}.jpg`);
+    // UUID1 should be replaced with a filename-only wikilink (B2)
+    expect(updatedContent).toContain(`![[${uuid1}.jpg]]`);
     expect(updatedContent).not.toContain(`https://assets.matters.news/embed/${uuid1}.jpg`);
 
     // UUID2 should remain as remote URL (download failed)
@@ -313,10 +342,10 @@ title: "Test"
 
     // Verify the file was updated
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/test.md`)?.content;
-    expect(updatedContent).toContain(`assets/${uuid}.png`);
+    expect(updatedContent).toContain(`![[${uuid}.png]]`);
   });
 
-  it("handles file in subdirectory with correct relative path", async () => {
+  it("handles file in subdirectory with a depth-independent wikilink", async () => {
     const uuid = "dddddddd-4444-4444-4444-444444444444";
     const markdownContent = `---
 title: "Nested Article"
@@ -340,9 +369,10 @@ title: "Nested Article"
 
     expect(result.imagesDownloaded).toBe(1);
 
-    // Verify relative path is correct (../../assets/uuid.jpg)
+    // Wikilink is depth-INDEPENDENT: identical at any nesting, no `../` chain.
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/文章/游记/article.md`)?.content;
-    expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
+    expect(updatedContent).toContain(`![[${uuid}.jpg]]`);
+    expect(updatedContent).not.toContain("../");
   });
 
   it("skips already existing assets", async () => {
@@ -404,7 +434,10 @@ cover: "https://imagedelivery.net/xxx/prod/embed/${uuid}.jpeg/public"
     expect(result.filesProcessed).toBe(1);
 
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/article.md`)?.content;
-    expect(updatedContent).toContain(`cover: "assets/${uuid}.jpg"`);
+    // Cover → bare filename (the shared asset resolver finds it); no path prefix.
+    expect(updatedContent).toContain(`${uuid}.jpg`);
+    expect(updatedContent).not.toContain("imagedelivery.net");
+    expect(updatedContent).not.toContain("assets/");
   });
 
   it("updates references when asset already exists (self-correcting)", async () => {
@@ -436,8 +469,8 @@ title: "色达"
 
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/文章/游记/色达.md`)?.content;
     expect(updatedContent).toBeDefined();
-    // Should use relative path from nested directory
-    expect(updatedContent).toContain(`../../assets/${uuid}.jpg`);
+    // Depth-independent wikilink (asset on disk is .jpg though the URL was .jpeg).
+    expect(updatedContent).toContain(`![[${uuid}.jpg]]`);
     expect(updatedContent).not.toContain(`https://assets.matters.news/embed/${uuid}.jpeg`);
   });
 
@@ -478,10 +511,11 @@ Some text
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/nested/dir/article.md`)?.content;
     expect(updatedContent).toBeDefined();
 
-    // All 3 should be updated to relative paths
-    expect(updatedContent).toContain(`cover: "../../assets/${uuid1}.jpg"`);
-    expect(updatedContent).toContain(`../../assets/${uuid2}.png`);
-    expect(updatedContent).toContain(`../../assets/${uuid3}.jpeg`);
+    // cover → bare filename; body images → depth-independent wikilinks.
+    expect(updatedContent).toContain(`${uuid1}.jpg`);
+    expect(updatedContent).toContain(`![[${uuid2}.png]]`);
+    expect(updatedContent).toContain(`![[${uuid3}.jpeg]]`);
+    expect(updatedContent).not.toContain("../");
 
     // None should have remote URLs
     expect(updatedContent).not.toContain("https://assets.matters.news");

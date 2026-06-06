@@ -44,8 +44,8 @@ import type {
 import type { MattersPluginConfig } from "./config";
 import { slugify, reportProgress, reportError } from "./utils";
 import { overallProgress } from "./progress";
-import { htmlToMarkdown, generateFrontmatter, parseFrontmatter } from "./converter";
-import { readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
+import { generateFrontmatter, parseFrontmatter } from "./converter";
+import { htmlToMarkdown, readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
 import { isMattersUrl, articleUrl } from "./domain";
 
 // ============================================================================
@@ -652,8 +652,9 @@ export async function syncToLocalFiles(
         continue;
       }
 
-      // Convert HTML to Markdown (keep remote URLs, will be downloaded in phase 2)
-      const markdownContent = htmlToMarkdown(article.content);
+      // Convert HTML to Markdown via moss's shared htmd converter (keep remote
+      // URLs; downloaded + rewritten to wikilinks in phase 2)
+      const markdownContent = await htmlToMarkdown(article.content);
 
       const frontmatter = generateFrontmatter({
         title: article.title,
@@ -712,7 +713,7 @@ export async function syncToLocalFiles(
         }
 
         // Convert HTML to Markdown (keep remote URLs, will be downloaded in phase 2)
-        const markdownContent = htmlToMarkdown(draft.content);
+        const markdownContent = await htmlToMarkdown(draft.content);
 
         const frontmatter = generateFrontmatter({
           title: draft.title || "Untitled Draft",

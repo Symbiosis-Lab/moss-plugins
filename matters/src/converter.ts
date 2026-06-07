@@ -1,114 +1,14 @@
 /**
- * Content conversion utilities: HTML to Markdown and frontmatter handling
+ * Content conversion utilities: frontmatter handling + image/link extraction.
+ *
+ * NOTE: HTML→Markdown is NOT done here. Production converts via moss's shared
+ * Rust `htmd` converter, imported as `htmlToMarkdown` from `@symbiosis-lab/moss-api`
+ * (see `sync.ts`). The hand-rolled DOM-walking converter that used to live here
+ * was deleted (B4) — it duplicated functionality moss already owns and shipped
+ * the lone-backslash `<br>` bug (B3).
  */
 
 import type { FrontmatterData, ParsedFrontmatter } from "./types";
-
-// ============================================================================
-// HTML to Markdown Conversion
-// ============================================================================
-
-/**
- * Convert HTML content to Markdown
- */
-export function htmlToMarkdown(html: string): string {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  return processNode(doc.body);
-}
-
-/**
- * Process a DOM node and convert to Markdown
- */
-function processNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.textContent || "";
-  }
-
-  if (node.nodeType !== Node.ELEMENT_NODE) {
-    return "";
-  }
-
-  const element = node as Element;
-  const tagName = element.tagName.toLowerCase();
-  const children = Array.from(element.childNodes).map(processNode).join("");
-
-  switch (tagName) {
-    case "h1":
-      return `# ${children.trim()}\n\n`;
-    case "h2":
-      return `## ${children.trim()}\n\n`;
-    case "h3":
-      return `### ${children.trim()}\n\n`;
-    case "h4":
-      return `#### ${children.trim()}\n\n`;
-    case "h5":
-      return `##### ${children.trim()}\n\n`;
-    case "h6":
-      return `###### ${children.trim()}\n\n`;
-    case "p":
-      return `${children.trim()}\n\n`;
-    case "br":
-      return "\\\n";
-    case "hr":
-      return "\n---\n\n";
-    case "strong":
-    case "b":
-      return children.trim() ? `**${children}**` : "";
-    case "em":
-    case "i":
-      return `*${children}*`;
-    case "code":
-      if (element.parentElement?.tagName.toLowerCase() === "pre") {
-        return children;
-      }
-      return `\`${children}\``;
-    case "pre": {
-      const codeElement = element.querySelector("code");
-      const codeContent = codeElement ? codeElement.textContent : children;
-      const lang = codeElement?.className?.match(/language-(\w+)/)?.[1] || "";
-      return `\n\`\`\`${lang}\n${codeContent?.trim()}\n\`\`\`\n\n`;
-    }
-    case "a": {
-      const href = element.getAttribute("href") || "";
-      return `[${children}](${href})`;
-    }
-    case "img": {
-      const src = element.getAttribute("src") || "";
-      const alt = element.getAttribute("alt") || "";
-      return `![${alt}](${src})`;
-    }
-    case "ul":
-      return "\n" + children + "\n";
-    case "ol":
-      return "\n" + children + "\n";
-    case "li": {
-      const parent = element.parentElement;
-      if (parent?.tagName.toLowerCase() === "ol") {
-        const index = Array.from(parent.children).indexOf(element) + 1;
-        return `${index}. ${children.trim()}\n`;
-      }
-      return `- ${children.trim()}\n`;
-    }
-    case "blockquote": {
-      const lines = children.trim().split("\n");
-      return lines.map((line) => `> ${line}`).join("\n") + "\n\n";
-    }
-    case "figure":
-      // Figures are block-level elements that need trailing newlines
-      return children.trimEnd() + "\n\n";
-    case "figcaption":
-      // Always add newlines: caption text formatted as italics, or just newlines if empty
-      return children.trim() ? `*${children.trim()}*\n\n` : "\n\n";
-    case "div":
-    case "span":
-    case "section":
-    case "article":
-      return children;
-    default:
-      return children;
-  }
-}
 
 // ============================================================================
 // Frontmatter Handling

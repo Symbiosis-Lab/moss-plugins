@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  htmlToMarkdown,
   generateFrontmatter,
   parseFrontmatter,
   regenerateFrontmatter,
@@ -8,137 +7,12 @@ import {
   extractMarkdownLinks,
 } from "../converter";
 
-describe("htmlToMarkdown", () => {
-  it("converts headings", () => {
-    expect(htmlToMarkdown("<h1>Title</h1>")).toBe("# Title\n\n");
-    expect(htmlToMarkdown("<h2>Subtitle</h2>")).toBe("## Subtitle\n\n");
-    expect(htmlToMarkdown("<h3>Section</h3>")).toBe("### Section\n\n");
-  });
-
-  it("converts paragraphs", () => {
-    expect(htmlToMarkdown("<p>Hello world</p>")).toBe("Hello world\n\n");
-  });
-
-  it("converts bold text", () => {
-    expect(htmlToMarkdown("<strong>bold</strong>")).toBe("**bold**");
-    expect(htmlToMarkdown("<b>bold</b>")).toBe("**bold**");
-  });
-
-  it("converts italic text", () => {
-    expect(htmlToMarkdown("<em>italic</em>")).toBe("*italic*");
-    expect(htmlToMarkdown("<i>italic</i>")).toBe("*italic*");
-  });
-
-  it("converts inline code", () => {
-    expect(htmlToMarkdown("<code>code</code>")).toBe("`code`");
-  });
-
-  it("converts code blocks", () => {
-    const html = "<pre><code>const x = 1;</code></pre>";
-    expect(htmlToMarkdown(html)).toContain("```\nconst x = 1;\n```");
-  });
-
-  it("converts code blocks with language", () => {
-    const html = '<pre><code class="language-js">const x = 1;</code></pre>';
-    expect(htmlToMarkdown(html)).toContain("```js\nconst x = 1;\n```");
-  });
-
-  it("converts links", () => {
-    expect(htmlToMarkdown('<a href="https://example.com">link</a>')).toBe(
-      "[link](https://example.com)"
-    );
-  });
-
-  it("converts images", () => {
-    expect(
-      htmlToMarkdown('<img src="https://example.com/img.jpg" alt="image">')
-    ).toBe("![image](https://example.com/img.jpg)");
-  });
-
-  it("converts unordered lists", () => {
-    const html = "<ul><li>Item 1</li><li>Item 2</li></ul>";
-    const result = htmlToMarkdown(html);
-    expect(result).toContain("- Item 1");
-    expect(result).toContain("- Item 2");
-  });
-
-  it("converts ordered lists", () => {
-    const html = "<ol><li>First</li><li>Second</li></ol>";
-    const result = htmlToMarkdown(html);
-    expect(result).toContain("1. First");
-    expect(result).toContain("2. Second");
-  });
-
-  it("converts blockquotes", () => {
-    const html = "<blockquote>Quote text</blockquote>";
-    expect(htmlToMarkdown(html)).toContain("> Quote text");
-  });
-
-  it("converts horizontal rules", () => {
-    expect(htmlToMarkdown("<hr>")).toContain("---");
-  });
-
-  it("converts <br> to backslash hard line break", () => {
-    expect(htmlToMarkdown("line1<br>line2")).toBe("line1\\\nline2");
-  });
-
-  it("converts multiple <br> tags in a paragraph", () => {
-    const html = "<p>line one<br>line two<br>line three</p>";
-    expect(htmlToMarkdown(html)).toBe("line one\\\nline two\\\nline three\n\n");
-  });
-
-  it("handles nested elements", () => {
-    const html = "<p><strong><em>bold italic</em></strong></p>";
-    expect(htmlToMarkdown(html)).toBe("***bold italic***\n\n");
-  });
-
-  it("handles figcaption", () => {
-    const html = "<figure><img src='img.jpg' alt='test'><figcaption>Caption</figcaption></figure>";
-    expect(htmlToMarkdown(html)).toContain("*Caption*");
-  });
-
-  it("handles empty figcaption without producing **", () => {
-    const html = "<figure><img src='img.jpg' alt='test'><figcaption></figcaption></figure>";
-    const result = htmlToMarkdown(html);
-    expect(result).not.toContain("**");
-  });
-
-  // Bug #1: Figure/figcaption should produce trailing newlines
-  describe("figure/figcaption newline handling", () => {
-    it("figure with image only produces trailing newlines", () => {
-      const html = "<figure><img src='img.jpg' alt='test'></figure>";
-      const result = htmlToMarkdown(html);
-      expect(result).toBe("![test](img.jpg)\n\n");
-    });
-
-    it("figure with empty figcaption produces trailing newlines", () => {
-      const html = "<figure><img src='img.jpg' alt='test'><figcaption></figcaption></figure>";
-      const result = htmlToMarkdown(html);
-      expect(result).toBe("![test](img.jpg)\n\n");
-    });
-
-    it("figure with figcaption content produces image and caption with trailing newlines", () => {
-      const html = "<figure><img src='img.jpg' alt='test'><figcaption>Caption text</figcaption></figure>";
-      const result = htmlToMarkdown(html);
-      expect(result).toBe("![test](img.jpg)*Caption text*\n\n");
-    });
-
-    it("image followed by heading should be separated by newlines", () => {
-      // This reproduces the actual bug from 中国历史中的佛教-笔记.md
-      const html = "<figure><img src='img.jpg' alt=''><figcaption></figcaption></figure><h2>Heading</h2>";
-      const result = htmlToMarkdown(html);
-      // Should NOT be: "![](img.jpg)## Heading"
-      // Should be: "![](img.jpg)\n\n## Heading\n\n"
-      expect(result).toBe("![](img.jpg)\n\n## Heading\n\n");
-    });
-
-    it("multiple figures in sequence are properly separated", () => {
-      const html = "<figure><img src='a.jpg' alt='a'></figure><figure><img src='b.jpg' alt='b'></figure>";
-      const result = htmlToMarkdown(html);
-      expect(result).toBe("![a](a.jpg)\n\n![b](b.jpg)\n\n");
-    });
-  });
-});
+// NOTE: the `htmlToMarkdown` describe block was deleted with the hand-rolled
+// converter (B4). Production HTML→Markdown now runs through moss's shared Rust
+// `htmd` converter (imported from `@symbiosis-lab/moss-api`), so the old tests
+// no longer have a unit under test. They also enshrined the lone-backslash
+// `<br>` output (`line1\\\nline2`) — i.e. the exact B3 bug the project fixed —
+// which would be false confidence to keep.
 
 describe("generateFrontmatter", () => {
   it("generates basic frontmatter", () => {

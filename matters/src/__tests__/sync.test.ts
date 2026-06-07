@@ -450,6 +450,62 @@ describe("syncToLocalFiles - folder-mode collection order", () => {
 import { vi, beforeEach, afterEach } from "vitest";
 import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";
 
+// ============================================================================
+// Tag whitespace trimming (B10)
+// ============================================================================
+
+describe("syncToLocalFiles - tag whitespace trimming", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("trims leading/trailing whitespace from article tags and drops empties (B10)", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1",
+          title: "Tagged Article",
+          slug: "tagged-article",
+          shortHash: "tag123",
+          content: "<p>Content</p>",
+          summary: "Summary",
+          createdAt: "2024-01-01T00:00:00Z",
+          // Matters can hand us tags with surrounding whitespace + an all-blank one.
+          tags: [
+            { id: "t1", content: " tag " },
+            { id: "t2", content: "React\t" },
+            { id: "t3", content: "   " },
+          ],
+        },
+      ],
+      [],
+      [],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    const article = ctx.filesystem.getFile(
+      `${ctx.projectPath}/articles/tagged-article.md`
+    )?.content;
+    expect(article).toBeDefined();
+    // Emitted trimmed — exact list entries, never the padded form.
+    expect(article).toContain('  - "tag"');
+    expect(article).toContain('  - "React"');
+    expect(article).not.toContain('  - " tag "');
+    expect(article).not.toContain('React\t');
+    // The all-whitespace tag is dropped entirely (no empty list entry).
+    expect(article).not.toContain('  - ""');
+  });
+});
+
 describe("syncToLocalFiles - skip unchanged content", () => {
   let ctx: MockTauriContext;
 

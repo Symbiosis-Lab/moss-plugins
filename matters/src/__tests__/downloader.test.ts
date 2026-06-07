@@ -5,6 +5,7 @@ import {
   buildAssetUrlPattern,
   replaceAssetUrls,
   replaceImageWithWikilink,
+  replaceImageUrlWithWikilink,
   calculateRelativePath,
 } from "../downloader";
 
@@ -212,6 +213,34 @@ describe("replaceImageWithWikilink", () => {
   it("returns replaced=false when the asset id is absent", () => {
     const content = "![](https://example.com/other.jpg)";
     const result = replaceImageWithWikilink(content, assetId, filename);
+    expect(result.replaced).toBe(false);
+    expect(result.content).toBe(content);
+  });
+});
+
+describe("replaceImageUrlWithWikilink (B6 — legacy non-UUID assets)", () => {
+  // A legacy cloudfront URL with no UUID segment to key on.
+  const url = "https://d1y0vy6cjcgwlk.cloudfront.net/legacy/photo.jpg";
+  const filename = "photo.jpg";
+
+  it("replaces the whole image token for an exact non-UUID URL", () => {
+    const content = `before ![cap](${url}) after`;
+    const result = replaceImageUrlWithWikilink(content, url, filename);
+    expect(result.replaced).toBe(true);
+    expect(result.content).toBe(`before ![[${filename}]] after`);
+    expect(result.content).not.toContain("cloudfront.net");
+  });
+
+  it("handles an htmd title trailer ![alt](url \"title\")", () => {
+    const content = `![cap](${url} "A caption")`;
+    const result = replaceImageUrlWithWikilink(content, url, filename);
+    expect(result.replaced).toBe(true);
+    expect(result.content).toBe(`![[${filename}]]`);
+  });
+
+  it("only matches the exact URL, not a different one", () => {
+    const content = "![](https://d1y0vy6cjcgwlk.cloudfront.net/legacy/other.jpg)";
+    const result = replaceImageUrlWithWikilink(content, url, filename);
     expect(result.replaced).toBe(false);
     expect(result.content).toBe(content);
   });
@@ -558,6 +587,41 @@ Already using local path.
     expect(result.imagesSkipped).toBe(0);
     // File should NOT be processed (no changes needed)
     expect(result.filesProcessed).toBe(0);
+  });
+
+  it("localizes a legacy non-UUID CDN image (B6)", async () => {
+    // A legacy cloudfront URL with NO UUID segment — previously Phase 3 skipped
+    // it (`if (!media.uuid) continue;`), leaving the dead CDN URL in the body.
+    const legacyUrl = "https://d1y0vy6cjcgwlk.cloudfront.net/legacy/photo.jpg";
+    const markdownContent = `---
+title: "Legacy Image Article"
+---
+
+![a caption](${legacyUrl})
+`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/文章/old-post.md`, markdownContent);
+
+    // The download succeeds; moss derives a local filename for the non-UUID asset.
+    ctx.urlConfig.setResponse(legacyUrl, {
+      status: 200,
+      ok: true,
+      contentType: "image/jpeg",
+      bytesWritten: 1024,
+      actualPath: "assets/photo.jpg",
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate();
+
+    expect(result.imagesDownloaded).toBe(1);
+    expect(result.filesProcessed).toBe(1);
+
+    const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/文章/old-post.md`)?.content;
+    expect(updatedContent).toBeDefined();
+    // The legacy image is now a depth-independent wikilink; the CDN URL is gone.
+    expect(updatedContent).toContain("![[photo.jpg]]");
+    expect(updatedContent).not.toContain("cloudfront.net");
+    expect(updatedContent).not.toContain("../");
   });
 
   it("should not write file if replacement results in identical content", async () => {

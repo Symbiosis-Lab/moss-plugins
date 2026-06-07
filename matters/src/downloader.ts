@@ -11,6 +11,7 @@
 
 import {
   reportProgress,
+  reportError,
   sleep,
 } from "./utils";
 import { overallProgress } from "./progress";
@@ -103,6 +104,34 @@ export function replaceImageWithWikilink(
   // would be left in the body — an orphaned-asset / broken-image leak).
   const pattern = new RegExp(
     `!\\[[^\\]]*\\]\\(https?://[^)\\s"]*${escapeRegex(assetId)}[^)\\s"]*(?:\\s+"[^"]*")?\\)`,
+    'g'
+  );
+  if (!pattern.test(content)) {
+    return { content, replaced: false };
+  }
+  pattern.lastIndex = 0;
+  const newContent = content.replace(pattern, `![[${filename}]]`);
+  return { content: newContent, replaced: true };
+}
+
+/**
+ * Replace a full markdown image token whose URL is the EXACT given URL with a
+ * filename-only wikilink `![[filename]]` (B6 — legacy non-UUID CDN assets).
+ *
+ * `replaceImageWithWikilink` keys on a Matters asset UUID; legacy cloudfront
+ * images (e.g. `assets.matters.news/.../image.jpg` with no UUID segment) have
+ * no UUID to key on, so their references were never rewritten — the dead remote
+ * CDN URL leaked into the published body. This matches on the literal URL
+ * instead, so a downloaded legacy asset still localizes. The optional ` "title"`
+ * trailer matches htmd's `![alt](url "title")` output.
+ */
+export function replaceImageUrlWithWikilink(
+  content: string,
+  url: string,
+  filename: string
+): { content: string; replaced: boolean } {
+  const pattern = new RegExp(
+    `!\\[[^\\]]*\\]\\(${escapeRegex(url)}(?:\\s+"[^"]*")?\\)`,
     'g'
   );
   if (!pattern.test(content)) {
@@ -427,25 +456,37 @@ export async function downloadMediaAndUpdate(): Promise<{
 
   const downloadResults = await Promise.allSettled(downloadPromises);
 
-  // Build uuid → localPath map from successful downloads
+  // Build uuid → localPath map from successful downloads. Also key by the
+  // literal URL so legacy non-UUID assets (no UUID to key on) can still be
+  // localized in Phase 3 (B6).
   const downloadedUuids = new Map<string, string>();
+  const downloadedByUrl = new Map<string, string>();
 
   for (const settled of downloadResults) {
     if (settled.status === "fulfilled") {
       const { media, downloadResult } = settled.value;
       if (downloadResult.success) {
         result.imagesDownloaded++;
+        downloadedByUrl.set(media.url, downloadResult.actualPath);
         // Track by UUID for dedup and reference updates
         if (media.uuid) {
           downloadedUuids.set(media.uuid, downloadResult.actualPath);
           existingAssetsByUuid.set(media.uuid, downloadResult.actualPath);
         }
       } else {
+        // Surface the failure as a user-visible diagnostic (not just a count +
+        // a console line). A failed download leaves the dead CDN URL in the
+        // body, so the user needs to know which image broke (B6). Non-fatal:
+        // sync continues, partial success is allowed.
+        const msg = `Image download failed (${downloadResult.error}): ${media.url}`;
         result.errors.push(`${media.url}: ${downloadResult.error}`);
+        await reportError(msg, "downloading_media", false);
       }
     } else {
       // Promise rejected (shouldn't happen with our try/catch in downloadAssetWithRetry)
+      const msg = `Image download failed: ${settled.reason}`;
       result.errors.push(`Download failed: ${settled.reason}`);
+      await reportError(msg, "downloading_media", false);
     }
   }
 
@@ -476,10 +517,13 @@ export async function downloadMediaAndUpdate(): Promise<{
 
     // Update references for each media
     for (const media of uniqueMedia) {
-      if (!media.uuid) continue;
-
-      // Get local path from downloaded or existing assets
-      const localPath = downloadedUuids.get(media.uuid) || existingAssetsByUuid.get(media.uuid);
+      // Resolve the downloaded/existing local path. UUID assets key on UUID;
+      // legacy non-UUID CDN assets (no UUID segment) key on the literal URL
+      // (B6) — previously these were skipped (`if (!media.uuid) continue;`)
+      // and their dead CDN URL leaked into the published body.
+      const localPath = media.uuid
+        ? (downloadedUuids.get(media.uuid) || existingAssetsByUuid.get(media.uuid))
+        : downloadedByUrl.get(media.url);
       if (!localPath) continue;
 
       // Emit a filename-only wikilink (B2/B8): depth-independent, resolved by
@@ -488,9 +532,12 @@ export async function downloadMediaAndUpdate(): Promise<{
       // prior depth-dependent `calculateRelativePath` + URL-substring rewrite.
       const filename = localPath.split('/').pop() || localPath;
 
-      // Update body references → `![[filename]]`
+      // Update body references → `![[filename]]`. UUID assets match any CDN URL
+      // carrying the UUID; non-UUID assets match the exact URL.
       if (media.inBody) {
-        const { content: newBody, replaced } = replaceImageWithWikilink(body, media.uuid, filename);
+        const { content: newBody, replaced } = media.uuid
+          ? replaceImageWithWikilink(body, media.uuid, filename)
+          : replaceImageUrlWithWikilink(body, media.url, filename);
         if (replaced) {
           body = newBody;
           modified = true;
@@ -500,7 +547,10 @@ export async function downloadMediaAndUpdate(): Promise<{
       // Update cover reference → bare filename (frontmatter; resolver finds it).
       if (media.inCover) {
         const coverStr = String(frontmatter.cover || '');
-        if (coverStr.includes(media.uuid)) {
+        const coverMatches = media.uuid
+          ? coverStr.includes(media.uuid)
+          : coverStr === media.url;
+        if (coverMatches) {
           frontmatter = { ...frontmatter, cover: filename };
           modified = true;
         }

@@ -709,7 +709,12 @@ export async function syncToLocalFiles(
         description: article.summary,
         date: article.createdAt,
         updated: article.revisedAt,
-        tags: article.tags.map((t) => t.content),
+        // Matters tag strings can carry leading/trailing whitespace (e.g.
+        // `"React "`). Trim each and drop any that collapse to empty so the
+        // frontmatter `tags:` list is clean (B10).
+        tags: article.tags
+          .map((t) => t.content.trim())
+          .filter((t) => t.length > 0),
         cover: article.cover,  // Keep remote URL, will be downloaded in phase 2
         syndicated: [mattersUrl],
         collections: collectionsField,
@@ -767,7 +772,10 @@ export async function syncToLocalFiles(
           title: draft.title || "Untitled Draft",
           date: draft.createdAt,
           updated: draft.updatedAt,
-          tags: draft.tags || [],
+          // Trim + drop empties, same as the published-article path (B10).
+          tags: (draft.tags || [])
+            .map((t) => t.trim())
+            .filter((t) => t.length > 0),
           cover: draft.cover,  // Keep remote URL, will be downloaded in phase 2
           syndicated: [],
         });

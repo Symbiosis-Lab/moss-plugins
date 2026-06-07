@@ -214,6 +214,7 @@ query UserArticles($userName: String!, $after: String) {
           shortHash
           content
           summary
+          language
           createdAt
           revisedAt
           tags {

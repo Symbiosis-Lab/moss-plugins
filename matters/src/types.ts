@@ -41,6 +41,7 @@ export interface MattersArticle {
   revisedAt?: string;
   tags: MattersTag[];
   cover?: string;
+  language?: string; // e.g. "zh_hans" / "zh_hant" / "en" — public per-article language (G)
 }
 
 export interface MattersDraft {

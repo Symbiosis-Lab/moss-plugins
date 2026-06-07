@@ -97,10 +97,12 @@ export function replaceImageWithWikilink(
   assetId: string,
   filename: string
 ): { content: string; replaced: boolean } {
-  // `!\[[^\]]*\]` = the `![alt]` part (alt may be empty); then `(...url...)`
-  // where the url contains the asset id. Mirrors buildAssetUrlPattern's URL body.
+  // `!\[[^\]]*\]` = the `![alt]` part (alt may be empty); then `(url[ "title"])`
+  // where the url contains the asset id. The optional ` "title"` trailer matches
+  // htmd's `![alt](url "title")` output for <img title=...> (else the CDN URL
+  // would be left in the body — an orphaned-asset / broken-image leak).
   const pattern = new RegExp(
-    `!\\[[^\\]]*\\]\\(https?://[^)\\s"]*${escapeRegex(assetId)}[^)\\s"]*\\)`,
+    `!\\[[^\\]]*\\]\\(https?://[^)\\s"]*${escapeRegex(assetId)}[^)\\s"]*(?:\\s+"[^"]*")?\\)`,
     'g'
   );
   if (!pattern.test(content)) {

@@ -201,6 +201,14 @@ describe("replaceImageWithWikilink", () => {
     expect(result.content).toBe(`before ![[${filename}]] after`);
   });
 
+  it("handles a markdown title attribute ![alt](url \"title\") (htmd emits these)", () => {
+    const content = `![cap](https://assets.matters.news/embed/66296200-de80-43f1-a1a2-ce2b1403a3e2/file.jpg "A caption")`;
+    const result = replaceImageWithWikilink(content, assetId, filename);
+    expect(result.replaced).toBe(true);
+    expect(result.content).toBe(`![[${filename}]]`);
+    expect(result.content).not.toContain("https://"); // CDN url fully removed
+  });
+
   it("returns replaced=false when the asset id is absent", () => {
     const content = "![](https://example.com/other.jpg)";
     const result = replaceImageWithWikilink(content, assetId, filename);

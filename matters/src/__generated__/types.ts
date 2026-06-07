@@ -162,6 +162,21 @@ export type AppreciationPurpose =
   | 'joinByTask'
   | 'systemSubsidy';
 
+export type ArchiveUserFailure = {
+  id: Scalars['ID']['output'];
+  message: Scalars['String']['output'];
+};
+
+export type ArchiveUsersInput = {
+  ids: Array<Scalars['ID']['input']>;
+  password: Scalars['String']['input'];
+};
+
+export type ArchiveUsersResult = {
+  archived: Array<User>;
+  skipped: Array<ArchiveUserFailure>;
+};
+
 /**
  * This type contains metadata, content, hash and related data of an article. If you
  * want information about article's comments. Please check Comment type.
@@ -228,6 +243,10 @@ export type Article = Node & PinnableWork & {
   donations: ArticleDonationConnection;
   /** List of featured comments of this article. */
   featuredComments: CommentConnection;
+  /** Computed federation export eligibility for this article. */
+  federationEligibility: ArticleFederationEligibility;
+  /** Article-level federation setting override. */
+  federationSetting?: Maybe<ArticleFederationSetting>;
   /** This value determines if current viewer has appreciated or not. */
   hasAppreciate: Scalars['Boolean']['output'];
   /** Unique ID of this article */
@@ -509,6 +528,18 @@ export type ArticleEdge = {
   node: Article;
 };
 
+export type ArticleFederationEligibility = {
+  effectiveArticleSetting: FederationArticleSettingState;
+  eligible: Scalars['Boolean']['output'];
+  reason: FederationExportDecisionReason;
+};
+
+export type ArticleFederationSetting = {
+  articleId: Scalars['ID']['output'];
+  state: FederationArticleSettingState;
+  updatedBy?: Maybe<Scalars['ID']['output']>;
+};
+
 export type ArticleInput = {
   mediaHash?: InputMaybe<Scalars['String']['input']>;
   shortHash?: InputMaybe<Scalars['String']['input']>;
@@ -701,6 +732,8 @@ export type Badge = {
 
 export type BadgeType =
   | 'architect'
+  | 'carbon_based'
+  | 'community_watch'
   | 'golden_motor'
   | 'grand_slam'
   | 'nomad1'
@@ -1177,8 +1210,20 @@ export type ClaimLogbooksResult = {
   txHash: Scalars['String']['output'];
 };
 
+export type ClaimPersonhoodBadgeInput = {
+  certChainProof: Scalars['String']['input'];
+  certChainType?: InputMaybe<Scalars['String']['input']>;
+  handoffToken: Scalars['String']['input'];
+  userSigProof: Scalars['String']['input'];
+};
+
 export type ClassifyArticlesChannelsInput = {
   ids: Array<Scalars['ID']['input']>;
+};
+
+export type ClearCommunityWatchOriginalContentInput = {
+  note?: InputMaybe<Scalars['String']['input']>;
+  uuid: Scalars['ID']['input'];
 };
 
 export type ClearReadHistoryInput = {
@@ -1260,6 +1305,8 @@ export type Comment = Node & {
   author: User;
   /** Descendant comments of this comment. */
   comments: CommentConnection;
+  /** Community Watch audit action when this comment was removed by Community Watch. */
+  communityWatchAction?: Maybe<CommunityWatchAction>;
   /** Content of this comment. */
   content?: Maybe<Scalars['String']['output']>;
   /** Time of this comment was created. */
@@ -1400,6 +1447,82 @@ export type CommentsInput = {
   sort?: InputMaybe<CommentSort>;
 };
 
+export type CommunityWatchAction = {
+  actionState: CommunityWatchActionState;
+  actorDisplayName: Scalars['String']['output'];
+  appealState: CommunityWatchAppealState;
+  commentId: Scalars['ID']['output'];
+  contentCleared: Scalars['Boolean']['output'];
+  /** SHA-256 hash of normalized original content for OSS clustering without re-spreading spam text. */
+  contentHash?: Maybe<Scalars['String']['output']>;
+  createdAt: Scalars['DateTime']['output'];
+  originalContent?: Maybe<Scalars['String']['output']>;
+  reason: CommunityWatchRemoveCommentReason;
+  /** Whether this Community Watch action also created the normal user report flow for staff review. */
+  reportSynced: Scalars['Boolean']['output'];
+  reviewState: CommunityWatchReviewState;
+  sourceId: Scalars['ID']['output'];
+  sourceTitle: Scalars['String']['output'];
+  sourceType: CommunityWatchActionSourceType;
+  /** Public Matters URL for the removed comment when the source still has a public route. */
+  sourceUrl?: Maybe<Scalars['String']['output']>;
+  /** Public identifier used by the Community Watch transparency page. */
+  uuid: Scalars['ID']['output'];
+};
+
+export type CommunityWatchActionConnection = Connection & {
+  edges?: Maybe<Array<CommunityWatchActionEdge>>;
+  pageInfo: PageInfo;
+  totalCount: Scalars['Int']['output'];
+};
+
+export type CommunityWatchActionEdge = {
+  cursor: Scalars['String']['output'];
+  node: CommunityWatchAction;
+};
+
+export type CommunityWatchActionInput = {
+  uuid: Scalars['ID']['input'];
+};
+
+export type CommunityWatchActionSourceType =
+  | 'article'
+  | 'moment';
+
+export type CommunityWatchActionState =
+  | 'active'
+  | 'restored'
+  | 'voided';
+
+export type CommunityWatchActionsInput = {
+  actionState?: InputMaybe<CommunityWatchActionState>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  appealState?: InputMaybe<CommunityWatchAppealState>;
+  first?: InputMaybe<Scalars['first_Int_min_0']['input']>;
+  reason?: InputMaybe<CommunityWatchRemoveCommentReason>;
+  reviewState?: InputMaybe<CommunityWatchReviewState>;
+};
+
+export type CommunityWatchAppealState =
+  | 'none'
+  | 'received'
+  | 'resolved';
+
+export type CommunityWatchRemoveCommentInput = {
+  id: Scalars['ID']['input'];
+  reason: CommunityWatchRemoveCommentReason;
+};
+
+export type CommunityWatchRemoveCommentReason =
+  | 'porn_ad'
+  | 'spam_ad';
+
+export type CommunityWatchReviewState =
+  | 'pending'
+  | 'reason_adjusted'
+  | 'reversed'
+  | 'upheld';
+
 export type ConfirmVerificationCodeInput = {
   code: Scalars['String']['input'];
   email: Scalars['email_String_NotNull_format_email']['input'];
@@ -1424,6 +1547,11 @@ export type ConnectionArgs = {
   filter?: InputMaybe<FilterInput>;
   first?: InputMaybe<Scalars['first_Int_min_0']['input']>;
   oss?: InputMaybe<Scalars['Boolean']['input']>;
+};
+
+export type CreatePersonhoodHandoffInput = {
+  challenge: Scalars['String']['input'];
+  challengeExpiresAt?: InputMaybe<Scalars['DateTime']['input']>;
 };
 
 export type CryptoWallet = {
@@ -1710,6 +1838,7 @@ export type FeatureName =
   | 'circle_interact'
   | 'circle_management'
   | 'fingerprint'
+  | 'hottest_moment_feed'
   | 'payment'
   | 'payout'
   | 'spam_detection'
@@ -1726,6 +1855,21 @@ export type FeaturedTagsInput = {
   /**  tagIds  */
   ids: Array<Scalars['ID']['input']>;
 };
+
+export type FederationArticleSettingState =
+  | 'disabled'
+  | 'enabled'
+  | 'inherit';
+
+export type FederationAuthorSettingState =
+  | 'disabled'
+  | 'enabled';
+
+export type FederationExportDecisionReason =
+  | 'article_disabled'
+  | 'article_not_public'
+  | 'author_not_opted_in'
+  | 'eligible';
 
 export type FilterInput = {
   inRangeEnd?: InputMaybe<Scalars['DateTime']['input']>;
@@ -1952,6 +2096,7 @@ export type MigrationType =
   | 'medium';
 
 export type Moment = Node & {
+  adStatus: AdStatus;
   articles: Array<Article>;
   assets: Array<Asset>;
   author: User;
@@ -1984,6 +2129,32 @@ export type MomentConnection = Connection & {
 export type MomentEdge = {
   cursor: Scalars['String']['output'];
   node: Moment;
+};
+
+export type MomentFeedApplication = {
+  createdAt: Scalars['DateTime']['output'];
+  reviewedBy?: Maybe<MomentFeedUserReviewedBy>;
+  reviewer?: Maybe<User>;
+  state: MomentFeedUserState;
+  updatedAt: Scalars['DateTime']['output'];
+};
+
+export type MomentFeedUserReviewedBy =
+  | 'admin'
+  | 'seed'
+  | 'system';
+
+export type MomentFeedUserState =
+  | 'approved'
+  | 'pending'
+  | 'rejected'
+  | 'revoked';
+
+export type MomentFeedUsersInput = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['first_Int_min_0']['input']>;
+  states?: InputMaybe<Array<MomentFeedUserState>>;
+  userName?: InputMaybe<Scalars['String']['input']>;
 };
 
 export type MomentInput = {
@@ -2029,20 +2200,31 @@ export type Mutation = {
   /** Add a wallet login to current user. */
   addWalletLogin: User;
   applyCampaign: Campaign;
+  applyMomentFeed: User;
   /** Appreciate an article. */
   appreciateArticle: Article;
+  /** Archive multiple users from OSS with per-user results. */
+  archiveUsers: ArchiveUsersResult;
   banCampaignArticles: Campaign;
   /** Let Traveloggers owner claims a Logbook, returns transaction hash */
   claimLogbooks: ClaimLogbooksResult;
+  /** Claim the carbon based badge with a verified zkID personhood proof. */
+  claimPersonhoodBadge: User;
   classifyArticlesChannels: Scalars['Boolean']['output'];
+  /** Clear stored original content for a Community Watch action as staff. */
+  clearCommunityWatchOriginalContent: CommunityWatchAction;
   /** Clear read history for user. */
   clearReadHistory: User;
   /** Clear search history for user. */
   clearSearchHistory?: Maybe<Scalars['Boolean']['output']>;
+  /** Remove a spam comment as a Community Watch member. */
+  communityWatchRemoveComment: Comment;
   /** Confirm verification code from email. */
   confirmVerificationCode: Scalars['ID']['output'];
   /** Create Stripe Connect account for Payout */
   connectStripeAccount: ConnectStripeAccountResult;
+  /** Create a short-lived token that binds a verifier challenge to the current viewer. */
+  createPersonhoodHandoff: PersonhoodHandoff;
   deleteAnnouncements: Scalars['Boolean']['output'];
   /** Delete blocked search keywords from search_history db */
   deleteBlockedSearchKeywords?: Maybe<Scalars['Boolean']['output']>;
@@ -2083,6 +2265,7 @@ export type Mutation = {
   /** Publish an article onto IPFS. */
   publishArticle: Draft;
   putAnnouncement: Announcement;
+  putArticleFederationSetting: ArticleFederationSetting;
   /** Create or update a Circle. */
   putCircle: Circle;
   /**
@@ -2108,6 +2291,7 @@ export type Mutation = {
   putTagChannel: Tag;
   putTopicChannel: TopicChannel;
   putUserFeatureFlags: Array<User>;
+  putUserFederationSetting: UserFederationSetting;
   putWritingChallenge: WritingChallenge;
   /** Read an article. */
   readArticle: Article;
@@ -2123,11 +2307,15 @@ export type Mutation = {
   resetLikerId: User;
   /** Reset user or payment password. */
   resetPassword?: Maybe<Scalars['Boolean']['output']>;
+  /** Restore a comment removed by Community Watch as staff. */
+  restoreCommunityWatchComment: CommunityWatchAction;
   reviewTopicChannelFeedback: TopicChannelFeedback;
   sendCampaignAnnouncement?: Maybe<Scalars['Boolean']['output']>;
   /** Send verification code for email. */
   sendVerificationCode?: Maybe<Scalars['Boolean']['output']>;
   setAdStatus: Article;
+  /** Set current author's Fediverse federation preference for an article. */
+  setArticleFederationSetting: ArticleFederationSetting;
   setArticleTopicChannels: Article;
   setBoost: Node;
   /** Set user currency preference. */
@@ -2140,6 +2328,9 @@ export type Mutation = {
   setSpamStatus: Writing;
   /** Set user name. */
   setUserName: User;
+  /** Set current viewer's Fediverse federation preference. */
+  setViewerFederationSetting: UserFederationSetting;
+  setWritingAdStatus: Writing;
   /** Upload a single file. */
   singleFileUpload: Asset;
   /** Login/Signup via social accounts. */
@@ -2192,6 +2383,9 @@ export type Mutation = {
   updateCampaignApplicationState: Campaign;
   /** Update a comments' state. */
   updateCommentsState: Array<Comment>;
+  /** Update Community Watch appeal, review, or reason as staff. */
+  updateCommunityWatchActionState: CommunityWatchAction;
+  updateMomentFeedApplicationState: User;
   /** Update user notification settings. */
   updateNotificationSetting: User;
   /** Update referralCode of a user, used in OSS. */
@@ -2255,6 +2449,11 @@ export type MutationAppreciateArticleArgs = {
 };
 
 
+export type MutationArchiveUsersArgs = {
+  input: ArchiveUsersInput;
+};
+
+
 export type MutationBanCampaignArticlesArgs = {
   input: BanCampaignArticlesInput;
 };
@@ -2265,13 +2464,28 @@ export type MutationClaimLogbooksArgs = {
 };
 
 
+export type MutationClaimPersonhoodBadgeArgs = {
+  input: ClaimPersonhoodBadgeInput;
+};
+
+
 export type MutationClassifyArticlesChannelsArgs = {
   input: ClassifyArticlesChannelsInput;
 };
 
 
+export type MutationClearCommunityWatchOriginalContentArgs = {
+  input: ClearCommunityWatchOriginalContentInput;
+};
+
+
 export type MutationClearReadHistoryArgs = {
   input: ClearReadHistoryInput;
+};
+
+
+export type MutationCommunityWatchRemoveCommentArgs = {
+  input: CommunityWatchRemoveCommentInput;
 };
 
 
@@ -2282,6 +2496,11 @@ export type MutationConfirmVerificationCodeArgs = {
 
 export type MutationConnectStripeAccountArgs = {
   input: ConnectStripeAccountInput;
+};
+
+
+export type MutationCreatePersonhoodHandoffArgs = {
+  input: CreatePersonhoodHandoffInput;
 };
 
 
@@ -2405,6 +2624,11 @@ export type MutationPutAnnouncementArgs = {
 };
 
 
+export type MutationPutArticleFederationSettingArgs = {
+  input: PutArticleFederationSettingInput;
+};
+
+
 export type MutationPutCircleArgs = {
   input: PutCircleInput;
 };
@@ -2485,6 +2709,11 @@ export type MutationPutUserFeatureFlagsArgs = {
 };
 
 
+export type MutationPutUserFederationSettingArgs = {
+  input: PutUserFederationSettingInput;
+};
+
+
 export type MutationPutWritingChallengeArgs = {
   input: PutWritingChallengeInput;
 };
@@ -2525,6 +2754,11 @@ export type MutationResetPasswordArgs = {
 };
 
 
+export type MutationRestoreCommunityWatchCommentArgs = {
+  input: RestoreCommunityWatchCommentInput;
+};
+
+
 export type MutationReviewTopicChannelFeedbackArgs = {
   input: ReviewTopicChannelFeedbackInput;
 };
@@ -2542,6 +2776,11 @@ export type MutationSendVerificationCodeArgs = {
 
 export type MutationSetAdStatusArgs = {
   input: SetAdStatusInput;
+};
+
+
+export type MutationSetArticleFederationSettingArgs = {
+  input: SetArticleFederationSettingInput;
 };
 
 
@@ -2582,6 +2821,16 @@ export type MutationSetSpamStatusArgs = {
 
 export type MutationSetUserNameArgs = {
   input: SetUserNameInput;
+};
+
+
+export type MutationSetViewerFederationSettingArgs = {
+  input: SetViewerFederationSettingInput;
+};
+
+
+export type MutationSetWritingAdStatusArgs = {
+  input: SetAdStatusInput;
 };
 
 
@@ -2722,6 +2971,16 @@ export type MutationUpdateCampaignApplicationStateArgs = {
 
 export type MutationUpdateCommentsStateArgs = {
   input: UpdateCommentsStateInput;
+};
+
+
+export type MutationUpdateCommunityWatchActionStateArgs = {
+  input: UpdateCommunityWatchActionStateInput;
+};
+
+
+export type MutationUpdateMomentFeedApplicationStateArgs = {
+  input: UpdateMomentFeedApplicationStateInput;
 };
 
 
@@ -2905,6 +3164,7 @@ export type Oss = {
   badgedUsers: UserConnection;
   comments: CommentConnection;
   icymiTopics: IcymiTopicConnection;
+  momentFeedUsers: UserConnection;
   moments: MomentConnection;
   oauthClients: OAuthClientConnection;
   reports: ReportConnection;
@@ -2937,6 +3197,11 @@ export type OssIcymiTopicsArgs = {
 };
 
 
+export type OssMomentFeedUsersArgs = {
+  input: MomentFeedUsersInput;
+};
+
+
 export type OssMomentsArgs = {
   input: ConnectionArgs;
 };
@@ -2948,7 +3213,7 @@ export type OssOauthClientsArgs = {
 
 
 export type OssReportsArgs = {
-  input: ConnectionArgs;
+  input: OssReportsInput;
 };
 
 
@@ -2992,6 +3257,16 @@ export type OssArticlesInput = {
   filter?: InputMaybe<OssArticlesFilterInput>;
   first?: InputMaybe<Scalars['first_Int_min_0']['input']>;
   sort?: InputMaybe<ArticlesSort>;
+};
+
+export type OssReportsFilter = {
+  source?: InputMaybe<ReportSource>;
+};
+
+export type OssReportsInput = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  filter?: InputMaybe<OssReportsFilter>;
+  first?: InputMaybe<Scalars['first_Int_min_0']['input']>;
 };
 
 export type Oauth1CredentialInput = {
@@ -3061,6 +3336,11 @@ export type PayoutInput = {
 
 export type Person = {
   email: Scalars['email_String_NotNull_format_email']['output'];
+};
+
+export type PersonhoodHandoff = {
+  expiresAt: Scalars['DateTime']['output'];
+  token: Scalars['String']['output'];
 };
 
 export type PinCommentInput = {
@@ -3133,6 +3413,11 @@ export type PutAnnouncementInput = {
   title?: InputMaybe<Array<TranslationInput>>;
   type?: InputMaybe<AnnouncementType>;
   visible?: InputMaybe<Scalars['Boolean']['input']>;
+};
+
+export type PutArticleFederationSettingInput = {
+  id: Scalars['ID']['input'];
+  state: FederationArticleSettingState;
 };
 
 export type PutCircleArticlesInput = {
@@ -3290,6 +3575,11 @@ export type PutUserFeatureFlagsInput = {
   ids: Array<Scalars['ID']['input']>;
 };
 
+export type PutUserFederationSettingInput = {
+  id: Scalars['ID']['input'];
+  state: FederationAuthorSettingState;
+};
+
 export type PutWritingChallengeInput = {
   announcements?: InputMaybe<Array<Scalars['ID']['input']>>;
   applicationPeriod?: InputMaybe<DatetimeRangeInput>;
@@ -3321,6 +3611,10 @@ export type Query = {
   channel?: Maybe<Channel>;
   channels: Array<Channel>;
   circle?: Maybe<Circle>;
+  /** One public Community Watch audit record. */
+  communityWatchAction?: Maybe<CommunityWatchAction>;
+  /** Recent public Community Watch audit records. */
+  communityWatchActions: CommunityWatchActionConnection;
   exchangeRates?: Maybe<Array<ExchangeRate>>;
   frequentSearch?: Maybe<Array<Scalars['String']['output']>>;
   moment?: Maybe<Moment>;
@@ -3368,6 +3662,16 @@ export type QueryChannelsArgs = {
 
 export type QueryCircleArgs = {
   input: CircleInput;
+};
+
+
+export type QueryCommunityWatchActionArgs = {
+  input: CommunityWatchActionInput;
+};
+
+
+export type QueryCommunityWatchActionsArgs = {
+  input: CommunityWatchActionsInput;
 };
 
 
@@ -3476,6 +3780,7 @@ export type Recommendation = {
   following: FollowingActivityConnection;
   /** Global articles sort by latest activity time. */
   hottest: ArticleConnection;
+  hottestMoments: MomentConnection;
   /** 'In case you missed it' recommendation. */
   icymi: ArticleConnection;
   /** 'In case you missed it' topic. */
@@ -3498,6 +3803,11 @@ export type RecommendationFollowingArgs = {
 
 
 export type RecommendationHottestArgs = {
+  input: RecommendInput;
+};
+
+
+export type RecommendationHottestMomentsArgs = {
   input: RecommendInput;
 };
 
@@ -3584,10 +3894,14 @@ export type ReorderMoveInput = {
 };
 
 export type Report = Node & {
+  /** The audit record when this report originates from a community watch action. */
+  communityWatchAction?: Maybe<CommunityWatchAction>;
   createdAt: Scalars['DateTime']['output'];
   id: Scalars['ID']['output'];
   reason: ReportReason;
   reporter: User;
+  /** Whether this record originates from a direct in-site report or a community watch action. */
+  source: ReportSource;
   target: Node;
 };
 
@@ -3603,11 +3917,21 @@ export type ReportEdge = {
 };
 
 export type ReportReason =
+  /** Pornographic/adult advertising flagged by a community watch member. */
+  | 'community_watch_porn_ad'
+  /** Spam advertising flagged by a community watch member. */
+  | 'community_watch_spam_ad'
   | 'discrimination_insult_hatred'
   | 'illegal_advertising'
   | 'other'
   | 'pornography_involving_minors'
   | 'tort';
+
+export type ReportSource =
+  /** Created automatically when a community watch member removes a comment. */
+  | 'community_watch'
+  /** Submitted directly via the in-site report form. */
+  | 'direct';
 
 export type ResetLikerIdInput = {
   id: Scalars['ID']['input'];
@@ -3649,6 +3973,11 @@ export type ResponsesInput = {
   includeAfter?: InputMaybe<Scalars['Boolean']['input']>;
   includeBefore?: InputMaybe<Scalars['Boolean']['input']>;
   sort?: InputMaybe<ResponseSort>;
+};
+
+export type RestoreCommunityWatchCommentInput = {
+  note?: InputMaybe<Scalars['String']['input']>;
+  uuid: Scalars['ID']['input'];
 };
 
 export type ReviewTopicChannelFeedbackInput = {
@@ -3733,6 +4062,11 @@ export type SetAdStatusInput = {
   isAd: Scalars['Boolean']['input'];
 };
 
+export type SetArticleFederationSettingInput = {
+  id: Scalars['ID']['input'];
+  state: FederationArticleSettingState;
+};
+
 export type SetArticleTopicChannelsInput = {
   channels: Array<Scalars['ID']['input']>;
   id: Scalars['ID']['input'];
@@ -3769,6 +4103,10 @@ export type SetSpamStatusInput = {
 
 export type SetUserNameInput = {
   userName: Scalars['String']['input'];
+};
+
+export type SetViewerFederationSettingInput = {
+  state: FederationAuthorSettingState;
 };
 
 export type SigningMessagePurpose =
@@ -3836,6 +4174,7 @@ export type SocialAccount = {
 export type SocialAccountType =
   | 'Facebook'
   | 'Google'
+  | 'Threads'
   | 'Twitter';
 
 export type SocialLoginInput = {
@@ -4358,6 +4697,19 @@ export type UpdateCommentsStateInput = {
   state: CommentState;
 };
 
+export type UpdateCommunityWatchActionStateInput = {
+  appealState?: InputMaybe<CommunityWatchAppealState>;
+  note?: InputMaybe<Scalars['String']['input']>;
+  reason?: InputMaybe<CommunityWatchRemoveCommentReason>;
+  reviewState?: InputMaybe<CommunityWatchReviewState>;
+  uuid: Scalars['ID']['input'];
+};
+
+export type UpdateMomentFeedApplicationStateInput = {
+  id: Scalars['ID']['input'];
+  state: MomentFeedUserState;
+};
+
 export type UpdateNotificationSettingInput = {
   enabled: Scalars['Boolean']['input'];
   type: NotificationSettingType;
@@ -4418,6 +4770,10 @@ export type User = Node & {
   displayName?: Maybe<Scalars['String']['output']>;
   /** Drafts authored by current user. */
   drafts: DraftConnection;
+  /** Public-safe feature eligibility for current viewer. */
+  features: UserFeatures;
+  /** User-level federation opt-in setting. */
+  federationSetting?: Maybe<UserFederationSetting>;
   /** Followers of this user. */
   followers: UserConnection;
   /** Following contents of this user. */
@@ -4434,6 +4790,7 @@ export type User = Node & {
   isFollowee: Scalars['Boolean']['output'];
   /** Whether current user is following viewer. */
   isFollower: Scalars['Boolean']['output'];
+  isMomentFeedApplied: Scalars['Boolean']['output'];
   /** user latest articles or collections */
   latestWorks: Array<PinnableWork>;
   /** Liker info of current user */
@@ -4638,8 +4995,23 @@ export type UserFeatureFlag = {
 
 export type UserFeatureFlagType =
   | 'bypassSpamDetection'
+  | 'communityWatch'
+  | 'fediverseBeta'
   | 'readSpamStatus'
   | 'unlimitedArticleFetch';
+
+export type UserFeatures = {
+  /** Whether current viewer can use Community Watch controls. */
+  communityWatch: Scalars['Boolean']['output'];
+  /** Whether current viewer can access Fediverse beta controls. */
+  fediverseBeta: Scalars['Boolean']['output'];
+};
+
+export type UserFederationSetting = {
+  state: FederationAuthorSettingState;
+  updatedBy?: Maybe<Scalars['ID']['output']>;
+  userId: Scalars['ID']['output'];
+};
 
 export type UserGroup =
   | 'a'
@@ -4710,11 +5082,13 @@ export type UserNotice = Notice & {
 };
 
 export type UserNoticeType =
+  | 'MomentFeedApproved'
   | 'UserNewFollower';
 
 export type UserOss = {
   boost: Scalars['Float']['output'];
   featureFlags: Array<UserFeatureFlag>;
+  momentFeedApplication?: Maybe<MomentFeedApplication>;
   restrictions: Array<UserRestriction>;
   score: Scalars['Float']['output'];
 };
@@ -4937,7 +5311,7 @@ export type UserArticlesQueryVariables = Exact<{
 }>;
 
 
-export type UserArticlesQuery = { user?: { id: string, userName?: string | null | undefined, articles: { totalCount: number, pageInfo: { endCursor?: string | null | undefined, hasNextPage: boolean }, edges?: Array<{ node: { id: string, title: string, slug: string, shortHash: string, content: string, summary: string, createdAt: any, revisedAt?: any | null | undefined, cover?: string | null | undefined, tags?: Array<{ id: string, content: string }> | null | undefined } }> | null | undefined } } | null | undefined };
+export type UserArticlesQuery = { user?: { id: string, userName?: string | null | undefined, articles: { totalCount: number, pageInfo: { endCursor?: string | null | undefined, hasNextPage: boolean }, edges?: Array<{ node: { id: string, title: string, slug: string, shortHash: string, content: string, summary: string, language?: string | null | undefined, createdAt: any, revisedAt?: any | null | undefined, cover?: string | null | undefined, tags?: Array<{ id: string, content: string }> | null | undefined } }> | null | undefined } } | null | undefined };
 
 export type UserCollectionsQueryVariables = Exact<{
   userName: Scalars['String']['input'];

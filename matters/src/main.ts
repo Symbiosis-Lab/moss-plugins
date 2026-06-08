@@ -542,6 +542,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       context.config || {},
       profile,
       context.project_info.homepage_file,
+      context.project_info.folder_name,
     );
 
     // Build summary message

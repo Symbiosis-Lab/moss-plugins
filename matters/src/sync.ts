@@ -378,6 +378,11 @@ export async function syncToLocalFiles(
   // logic as moss-core's home::detect_home_file_in_folder(), which considers index stems,
   // self-named folder notes, and alphabetical fallback.
   homepageFile?: string | null,
+  // The root folder's basename (e.g. "刘果"), from moss's project_info.folder_name.
+  // When we DO generate a home, we name it self-named (`<folder>.md`) with a
+  // `home: true` marker to match moss's folder-home convention. Falls back to
+  // `index.md` when absent (older hosts that don't supply it).
+  folderName?: string | null,
 ): Promise<SyncResultWithMap> {
   const result: SyncResult = {
     created: 0,
@@ -468,8 +473,13 @@ export async function syncToLocalFiles(
     result.skipped++;
   } else {
     try {
+      // Self-named home (`<folder>.md`) + `home: true` marker, matching moss's
+      // folder-home convention. Falls back to `index.md` when the host didn't
+      // tell us the folder name.
+      const homeFilename = folderName ? `${folderName}.md` : "index.md";
       const homepageFrontmatter = generateFrontmatter({
         title: profile.displayName,
+        home: true,
       });
 
       let homepageBody = profile.description || "";
@@ -503,20 +513,29 @@ export async function syncToLocalFiles(
 
       const homepageContent = homepageFrontmatter + "\n\n" + homepageBody;
 
-      // Check if homepage already exists with same content
+      // Don't overwrite an existing home. moss's homepageFile check (above) already
+      // covers homes it detected; this is the on-disk backstop for the self-named
+      // target and a legacy index.md.
       let existingHomepage: string | null = null;
-      try {
-        existingHomepage = await readFile("index.md");
-      } catch {
-        // File doesn't exist
+      let existingPath = "";
+      for (const candidate of [homeFilename, "index.md"]) {
+        try {
+          existingHomepage = await readFile(candidate);
+        } catch {
+          existingHomepage = null;
+        }
+        if (existingHomepage !== null) {
+          existingPath = candidate;
+          break;
+        }
       }
 
-      if (existingHomepage) {
-        console.log(`   ⏭️  Skipping homepage (already exists): index.md`);
+      if (existingHomepage !== null) {
+        console.log(`   ⏭️  Skipping homepage (already exists): ${existingPath}`);
         result.skipped++;
       } else {
-        await writeFile("index.md", homepageContent);
-        console.log(`   ✅ Created homepage: index.md`);
+        await writeFile(homeFilename, homepageContent);
+        console.log(`   ✅ Created homepage: ${homeFilename}`);
         result.created++;
       }
     } catch (error) {
@@ -547,7 +566,7 @@ export async function syncToLocalFiles(
       // All collections live under the article/ folder
       const collectionPath = useFileMode
         ? `${folders.article}/${collectionSlug}.md`  // File mode: collection as .md file
-        : `${folders.article}/${collectionSlug}/index.md`;  // Folder mode: collection as folder with index.md
+        : `${folders.article}/${collectionSlug}/${collectionSlug}.md`;  // Folder mode: self-named folder home
 
       // In folder mode, skip if the folder already has a home file (self-named note, etc.)
       if (!useFileMode) {
@@ -590,6 +609,9 @@ export async function syncToLocalFiles(
 
       const frontmatter = generateFrontmatter({
         title: collection.title,
+        // A folder-mode collection's landing page IS that folder's home.
+        // (File-mode collections are plain `.md` pages, not folder homes.)
+        home: !useFileMode,
         description: collection.description,
         cover: collection.cover,  // Keep remote URL, will be downloaded in phase 2
         order: orderField,
@@ -597,7 +619,7 @@ export async function syncToLocalFiles(
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
 
-      if (existingContent) {
+      if (existingContent !== null) {
         console.log(`   ⏭️  Skipping collection (already exists): ${collectionPath}`);
         result.skipped++;
         continue;

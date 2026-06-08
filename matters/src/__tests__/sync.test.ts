@@ -342,6 +342,70 @@ describe("syncToLocalFiles - skip homepage when homepageFile is set", () => {
 });
 
 // ============================================================================
+// Self-named home + home:true marker (bug #2)
+// Generated homes follow moss's folder-home convention: a self-named
+// `<folder>.md` file carrying a `home: true` frontmatter marker.
+// ============================================================================
+
+describe("syncToLocalFiles - self-named home with home:true marker", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  const baseProfile = {
+    displayName: "Test User",
+    userName: "testuser",
+    description: "Bio",
+    pinnedWorks: [],
+  };
+
+  it("creates a self-named <folder>.md home carrying home:true when none exists", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {}, baseProfile,
+      null,    // homepageFile — moss detected none
+      "刘果",  // folderName — root folder basename
+    );
+
+    expect(result.result.created).toBeGreaterThanOrEqual(1);
+    const home = ctx.filesystem.getFile(`${ctx.projectPath}/刘果.md`)?.content;
+    expect(home).toBeDefined();
+    expect(home).toContain("home: true");
+    // Must NOT create a competing index.md.
+    expect(ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)).toBeUndefined();
+  });
+
+  it("falls back to index.md (still carrying home:true) when folderName is absent", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles([], [], [], "testuser", {}, baseProfile, null);
+
+    const home = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
+    expect(home).toBeDefined();
+    expect(home).toContain("home: true");
+  });
+
+  it("does not overwrite an existing self-named home", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    ctx.filesystem.setFile(`${ctx.projectPath}/刘果.md`, "---\nhome: true\n---\n# Mine\n");
+
+    const result = await syncToLocalFiles(
+      [], [], [], "testuser", {}, baseProfile,
+      null,   // moss didn't flag it, but the file is on disk
+      "刘果",
+    );
+
+    expect(result.result.skipped).toBeGreaterThanOrEqual(1);
+    expect(ctx.filesystem.getFile(`${ctx.projectPath}/刘果.md`)?.content).toContain("# Mine");
+  });
+});
+
+// ============================================================================
 // Folder-mode Collection Order Tests
 // ============================================================================
 
@@ -387,13 +451,46 @@ describe("syncToLocalFiles - folder-mode collection order", () => {
       { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
     );
 
-    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`)?.content;
+    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/my-collection.md`)?.content;
     expect(collectionIndex).toBeDefined();
     expect(collectionIndex).toContain("order:");
     expect(collectionIndex).toContain("first-article");
     expect(collectionIndex).toContain("second-article");
     // In folder mode, order should NOT have full paths
     expect(collectionIndex).not.toContain("posts/");
+  });
+
+  it("creates a self-named collection home <slug>.md carrying home:true in folder mode", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    await syncToLocalFiles(
+      [
+        {
+          id: "a1", title: "First Article", slug: "first-article", shortHash: "hash1",
+          content: "<p>First</p>", summary: "First",
+          createdAt: "2024-01-01T00:00:00Z", tags: [],
+        },
+      ],
+      [],
+      [{
+        id: "c1",
+        title: "My Collection",
+        description: "Collection desc",
+        cover: undefined,
+        articles: [
+          { id: "a1", shortHash: "hash1", title: "First Article", slug: "first-article" },
+        ],
+      }],
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
+    );
+
+    const home = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/my-collection.md`)?.content;
+    expect(home).toBeDefined();
+    expect(home).toContain("home: true");
+    expect(home).toContain("order:");
+    // No competing index.md in the collection folder.
+    expect(ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`)).toBeUndefined();
   });
 
   it("should preserve article ordering from Matters API", async () => {
@@ -431,7 +528,7 @@ describe("syncToLocalFiles - folder-mode collection order", () => {
       { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
     );
 
-    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/ordered-collection/index.md`)?.content;
+    const collectionIndex = ctx.filesystem.getFile(`${ctx.projectPath}/articles/ordered-collection/ordered-collection.md`)?.content;
     expect(collectionIndex).toBeDefined();
     // Order should match Matters API order: first, second, third
     const orderMatch = collectionIndex!.match(/order:\n([\s\S]*?)---/);
@@ -784,7 +881,7 @@ describe("syncToLocalFiles - skip collection index when folder has home file", (
     expect(result.result.created).toBeGreaterThanOrEqual(0);
   });
 
-  it("should still create collection index.md when folder only has non-home files", async () => {
+  it("should still create the self-named collection home when folder only has non-home files", async () => {
     // Folder has an article but no home file
     ctx.filesystem.setFile(
       `${ctx.projectPath}/articles/my-collection/some-article.md`,
@@ -813,9 +910,12 @@ describe("syncToLocalFiles - skip collection index when folder has home file", (
       { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] }
     );
 
-    // Collection index.md SHOULD be created since some-article.md is not a home file
-    const indexFile = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`);
-    expect(indexFile).toBeDefined();
+    // Self-named collection home SHOULD be created since some-article.md is not a home file
+    const home = ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/my-collection.md`);
+    expect(home).toBeDefined();
+    expect(home?.content).toContain("home: true");
+    // and no competing index.md
+    expect(ctx.filesystem.getFile(`${ctx.projectPath}/articles/my-collection/index.md`)).toBeUndefined();
   });
 });
 

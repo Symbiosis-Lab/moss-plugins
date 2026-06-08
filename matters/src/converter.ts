@@ -29,6 +29,10 @@ export function generateFrontmatter(data: FrontmatterData): string {
 
   lines.push(`title: "${escapeYaml(data.title)}"`);
 
+  if (data.home) {
+    lines.push("home: true");
+  }
+
   if (data.description) {
     lines.push(`description: "${escapeYaml(data.description)}"`);
   }

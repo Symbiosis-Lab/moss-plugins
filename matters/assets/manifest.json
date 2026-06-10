@@ -19,5 +19,10 @@
     "add_canonical_link": "boolean",
     "sync_on_build": "boolean",
     "sync_drafts": "boolean"
+  },
+  "contributes": {
+    "jobs": {
+      "syndicate": { "verb": "Syndicated", "noun": "posts" }
+    }
   }
 }

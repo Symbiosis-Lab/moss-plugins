@@ -41,6 +41,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
     id: "0",
     progress: vi.fn().mockResolvedValue(undefined),
     awaiting: vi.fn().mockResolvedValue(undefined),
+    advise: vi.fn().mockResolvedValue(undefined),
     succeeded: vi.fn().mockResolvedValue(undefined),
     failed: vi.fn().mockResolvedValue(undefined),
     cancelled: vi.fn().mockResolvedValue(undefined),

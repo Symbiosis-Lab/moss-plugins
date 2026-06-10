@@ -725,8 +725,25 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
 
   console.log("📡 Matters: Starting syndication...");
 
+  // Drive a moss Job for the syndication run (Step 3 Phase 5 Task 5.3).
+  // The verb/noun MEANING is declared in the manifest's `contributes.jobs`
+  // ("Syndicated" · "posts"); moss normalizes the verb (R13) and renders the
+  // receipt "Syndicated · N posts". A partial failure is PROPOSED as an
+  // advisory via `task.advise(...)`; moss holds the severity gavel.
+  // Syndication runs after deploy (no onboarding gesture), so the trigger is
+  // "background" — the quiet Workspace+Ambient surface. moss does not stamp a
+  // `trigger` on SyndicateContext (unlike ProcessContext), so we choose the
+  // safe quiet default directly rather than reading a field that isn't there.
+  const task = await startTask("Syndicate", {
+    hook: "syndicate",
+    trigger: "background",
+    hasProgress: true,
+    cancellable: false,
+  });
+
   try {
     if (!context.deployment) {
+      await task.failed("No deployment information available");
       return {
         success: false,
         message: "No deployment information available",
@@ -744,6 +761,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
 
     if (articlesToSyndicate.length === 0) {
       console.log("ℹ️  No new articles to syndicate (all already syndicated to Matters)");
+      await task.succeeded("No new articles to syndicate");
       return {
         success: true,
         message: "No new articles to syndicate",
@@ -765,6 +783,17 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       const loginSuccess = await promptLogin();
       if (!loginSuccess) {
         await showToast({ message: "Login cancelled", variant: "warning", duration: 3000 });
+        // Propose an actionable account advisory: the user must sign in to
+        // finish. moss holds the gavel — a NeedsAction stays a quiet dot, an
+        // actionable Blocking pops the panel; here we let moss decide.
+        await task.advise({
+          scope: "Account",
+          severity: "NeedsAction",
+          item: null,
+          what: "Sign in to Matters to syndicate your posts",
+          action: { InApp: { op: "SignIn", args: null, label: "Sign in" } },
+        });
+        await task.failed("Login required for syndication");
         return {
           success: false,
           message: "Login required for syndication",
@@ -789,7 +818,10 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     let draftsCreated = 0;
     const errors: string[] = [];
 
+    const totalToSyndicate = articlesToSyndicate.length;
+    let processed = 0;
     for (const article of articlesToSyndicate) {
+      await task.progress(processed / totalToSyndicate, `Syndicating ${article.title}`);
       try {
         // Verify article is actually live at its deployed URL before syndicating.
         // Prevents publishing broken links (e.g., new article not yet deployed,
@@ -797,6 +829,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
         const live = await isArticleLive(siteUrl, article.url_path);
         if (!live) {
           console.log(`    ⏭ Skipping ${article.title} — not yet live at ${siteUrl}/${article.url_path}`);
+          processed++;
           continue;
         }
 
@@ -814,6 +847,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
         console.error(`    ✗ Failed to syndicate ${article.title}:`, error);
         errors.push(`${article.title}: ${error}`);
       }
+      processed++;
     }
 
     const parts: string[] = [];
@@ -823,15 +857,30 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
 
     const summary = parts.join(", ");
 
+    // A partial failure is PROPOSED as a per-run advisory (R13); moss clamps
+    // it. ShippedDegraded ⇒ a quiet hairline dot (the run still succeeded).
     if (errors.length > 0) {
-      console.warn(`⚠️  Syndication complete: ${summary}`);
-      return {
-        success: true,
-        message: `Syndication: ${summary}`,
-      };
+      await task.advise({
+        scope: "Remote",
+        severity: "ShippedDegraded",
+        item: null,
+        what: `${errors.length} post(s) could not be syndicated: ${errors[0]}`,
+        action: "None",
+      });
     }
 
-    console.log(`✅ Syndication complete: ${summary}`);
+    // Terminal receipt: moss renders "Syndicated · N posts" from the verb the
+    // manifest declares + the count we report here. `posts` = articles
+    // actually pushed to Matters (published + drafts created).
+    const syndicatedCount = published + draftsCreated;
+    const receipt = `Syndicated · ${syndicatedCount} ${syndicatedCount === 1 ? "post" : "posts"}`;
+
+    if (errors.length > 0) {
+      console.warn(`⚠️  Syndication complete: ${summary}`);
+    } else {
+      console.log(`✅ Syndication complete: ${summary}`);
+    }
+    await task.succeeded(receipt);
 
     return {
       success: true,
@@ -839,6 +888,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     };
   } catch (error) {
     console.error("❌ Matters: Syndication failed:", error);
+    await task.failed(`Syndication failed: ${error}`);
     return {
       success: false,
       message: `Syndication failed: ${error}`,

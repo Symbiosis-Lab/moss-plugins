@@ -536,6 +536,31 @@ export async function clearStoredToken(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Session state
+// ============================================================================
+
+/**
+ * Decode the `exp` claim from a JWT, in milliseconds since epoch.
+ *
+ * No signature verification: we are reading our own stored credential to
+ * predict whether the server will accept it, not authenticating anyone.
+ * Returns null when the token is not a decodable JWT or has no numeric exp,
+ * in which case the caller must fall back to runtime detection.
+ */
+export function decodeJwtExpiryMs(token: string): number | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const claims = JSON.parse(atob(padded));
+    return typeof claims.exp === "number" ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Get access token, preferring project-scoped storage over global cookies.
  *

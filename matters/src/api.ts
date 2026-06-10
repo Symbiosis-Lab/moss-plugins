@@ -630,7 +630,13 @@ export async function getSessionState(): Promise<SessionState> {
  */
 export async function markSessionInvalidated(): Promise<void> {
   cachedAccessToken = null;
-  const record = (await loadAuthRecord()) ?? {};
+  const record = await loadAuthRecord();
+  if (!record || typeof record.accessToken !== "string") {
+    // Nothing to invalidate. Stamping {invalidatedAt} alone would diverge
+    // the checks: getSessionState would say "none" while isRecordDead says
+    // dead. Clearing the cache above is still wanted.
+    return;
+  }
   record.invalidatedAt = new Date().toISOString();
   try {
     await writePluginFile(AUTH_FILE, JSON.stringify(record, null, 2));
@@ -710,13 +716,28 @@ export async function getAccessToken(fromCookie = false): Promise<string | null 
 
     if (tokenCookie) {
       console.log(`Found __access_token cookie (length: ${tokenCookie.value?.length ?? 0})`);
-      cachedAccessToken = tokenCookie.value;
+      // Dead-cookie filter: the shared WebKit store can still hold a token
+      // the server has revoked (matches the invalidatedAt-stamped record) or
+      // one whose exp already passed. Capturing it here would persist it via
+      // saveStoredToken (erasing the invalidatedAt stamp) and end the login
+      // poll with a dead credential, looping the user out of re-login. A
+      // rejected cookie behaves as "no token found" so the poll keeps
+      // waiting for the fresh one.
+      const value = tokenCookie.value;
+      const currentRecord = await loadAuthRecord();
+      if (isRecordDead({ accessToken: value })) {
+        console.warn("🍪 Ignoring expired __access_token cookie (stale login state)");
+      } else if (currentRecord?.invalidatedAt && currentRecord.accessToken === value) {
+        console.warn("🍪 Ignoring __access_token cookie matching the server-invalidated token");
+      } else {
+        cachedAccessToken = value;
 
-      // Immediately persist to project storage so future calls don't need cookies
-      try {
-        await saveStoredToken(tokenCookie.value);
-      } catch (e) {
-        console.warn(`Failed to persist token to storage: ${e}`);
+        // Immediately persist to project storage so future calls don't need cookies
+        try {
+          await saveStoredToken(value);
+        } catch (e) {
+          console.warn(`Failed to persist token to storage: ${e}`);
+        }
       }
     } else {
       console.warn("__access_token cookie NOT found");
@@ -797,7 +818,7 @@ async function handleGraphqlResponse<T>(
   }
   const result = parsed as { errors?: GraphqlErrorShape[]; data: T } | null;
   if (!result) {
-    throw new Error(`GraphQL request failed (${response.status}): non-JSON response`);
+    throw new Error(`GraphQL request failed (${response.status}): non-JSON response: ${bodySnippet(text)}`);
   }
   if (result.errors && result.errors.length > 0) {
     throw new Error(result.errors[0]?.message || "GraphQL error");

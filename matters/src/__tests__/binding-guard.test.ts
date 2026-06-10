@@ -18,6 +18,15 @@ const mockGetAccessToken = vi.fn();
 const mockFetchUserProfile = vi.fn();
 const mockOpenBrowser = vi.fn();
 const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
+// vi.hoisted: the ../api factory passes this object through by VALUE
+// (`apiConfig: mockApiConfig`), which evaluates at factory time — a plain
+// top-level const would hit the vi.mock hoisting TDZ. Shared and MUTATED
+// across tests (public_fallback flips it), so beforeEach resets it.
+const mockApiConfig = vi.hoisted(() => ({
+  queryMode: "viewer",
+  testUserName: "Matty",
+  endpoint: "https://server.matters.town/graphql",
+}));
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   getPluginCookie: vi.fn(),
@@ -69,7 +78,7 @@ vi.mock("../api", () => ({
   fetchUserProfile: (...args: unknown[]) => mockFetchUserProfile(...args),
   fetchArticleComments: vi.fn().mockResolvedValue({ comments: [], donations: [], appreciations: [] }),
   fetchAllArticleCommentCounts: vi.fn().mockResolvedValue(new Map()),
-  apiConfig: { queryMode: "viewer", testUserName: "Matty", endpoint: "https://server.matters.town/graphql" },
+  apiConfig: mockApiConfig,
   getSessionState: vi.fn().mockResolvedValue("none"),
   shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
 }));
@@ -126,6 +135,8 @@ describe("process hook binding guard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApiConfig.queryMode = "viewer";
+    mockApiConfig.testUserName = "Matty";
   });
 
   it("proceeds normally when boundUserName is already set", async () => {
@@ -177,10 +188,16 @@ describe("process hook binding guard", () => {
     });
     mockGetAccessToken.mockResolvedValue(null); // no token
 
-    const result = await process(baseContext);
+    // A present-user trigger is required to reach promptLogin at all — the
+    // background gate exits before it (spec §3.3). Without this trigger the
+    // window-close mocks above are dead setup and the path is uncovered.
+    const result = await process({ ...baseContext, trigger: "onboarding_flow" });
 
     expect(result.success).toBe(true);
     expect(result.message).toContain("No Matters account bound");
+    // The login window must actually have been opened (guards against the
+    // trigger gate silently short-circuiting this test again).
+    expect(mockOpenBrowser).toHaveBeenCalled();
     // Should NOT have saved any config
     expect(mockSaveConfig).not.toHaveBeenCalled();
   });

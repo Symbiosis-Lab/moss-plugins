@@ -180,7 +180,7 @@ describe("process hook auth routing", () => {
     expect(mockShowToast).toHaveBeenCalledTimes(1);
     expect(mockShowToast.mock.calls[0][0].message).toContain("session expired");
     expect(mockShowToast.mock.calls[0][0].message).not.toContain("—");
-    expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain("log in to resume");
+    expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain(". Matters session expired");
   });
 
   it("nudge toast suppressed when the persisted throttle says no (logs only)", async () => {
@@ -216,7 +216,7 @@ describe("process hook auth routing", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
     expect(mockApiConfig.queryMode).toBe("user");
     expect(result.success).toBe(true);
-    expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain("log in to also import drafts");
+    expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain(". Not logged in");
     expect(mockShowToast).not.toHaveBeenCalled(); // no session event, no toast
   });
 
@@ -227,6 +227,30 @@ describe("process hook auth routing", () => {
     expect(mockShowToast).not.toHaveBeenCalled();
     expect(mockApiConfig.queryMode).toBe("viewer");
     expect(result.success).toBe(true);
+  });
+
+  it("queryMode reset: a fallback run does not leak public mode into the next run", async () => {
+    // Module state persists across hook invocations in the webview runtime;
+    // public_fallback flips queryMode to "user" and a later valid-session
+    // run must start back in "viewer".
+    mockGetSessionState.mockResolvedValue("expired");
+    await processHook(makeContext("background"));
+    expect(mockApiConfig.queryMode).toBe("user");
+    mockGetSessionState.mockResolvedValue("valid");
+    await processHook(makeContext("background"));
+    expect(mockApiConfig.queryMode).toBe("viewer");
+  });
+
+  it("sync_on_build:false on a fallback route does not claim 'Authenticated'", async () => {
+    mockGetSessionState.mockResolvedValue("expired");
+    const ctx = {
+      trigger: "background",
+      config: { sync_on_build: false },
+      project_info: { folder_name: "test", homepage_file: null, lang: "en" },
+    } as never;
+    const result = await processHook(ctx);
+    expect(result.success).toBe(true);
+    expect(result.message).not.toContain("Authenticated");
   });
 });
 

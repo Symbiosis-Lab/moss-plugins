@@ -479,7 +479,13 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     await task.progress(overallProgress("authentication", 0, 1) / 100, "Checking authentication...");
     const sessionState = await getSessionState();
     const authConfig = await getConfig();
-    // Test profile already flipped apiConfig to public mode before this phase.
+    // queryMode may be stale from a previous fallback run: public_fallback
+    // flips it to "user" and module state persists across hook invocations
+    // in the webview runtime. Reset to "viewer" here; the test profile owns
+    // the flip when set (applied before this phase).
+    if (!testProfile) {
+      apiConfig.queryMode = "viewer";
+    }
     const route = testProfile
       ? "proceed"
       : resolveAuthRoute(sessionState, context.trigger, Boolean(authConfig.userName));
@@ -539,11 +545,13 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     if (!syncOnBuild) {
       console.log("ℹ️  Sync on build is disabled, skipping...");
       // Terminate the task before returning (else it leaks as Running).
-      // Authenticated but sync intentionally off ⇒ a clean success.
+      // Sync intentionally off ⇒ a clean success, but only claim
+      // "Authenticated" when the route actually proceeded with a usable
+      // session; fallback/expired routes get the plain message.
       await task.succeeded("Sync disabled");
       return {
         success: true,
-        message: "Authenticated (sync disabled)",
+        message: route === "proceed" ? "Authenticated (sync disabled)" : "Sync disabled",
       };
     }
 
@@ -777,10 +785,12 @@ export async function process(context: ProcessContext): Promise<HookResult> {
 
     // Honest receipt for EVERY unauthenticated-mode run (spec §3.3),
     // state-aware: expired session vs never-logged-in route differently.
+    // Leading ". " closes the unpunctuated summary before it (otherwise
+    // the receipt reads "no changes Matters session expired; ...").
     const unauthNote = usingUnauthenticatedMode
       ? sessionState === "expired"
-        ? " Matters session expired; log in to resume drafts and syndication."
-        : " Not logged in; log in to also import drafts."
+        ? ". Matters session expired; log in to resume drafts and syndication."
+        : ". Not logged in; log in to also import drafts."
       : "";
 
     if (criticalErrors.length === 0) {

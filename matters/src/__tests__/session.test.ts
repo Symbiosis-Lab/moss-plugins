@@ -56,8 +56,14 @@ import {
   loadStoredToken,
   saveStoredToken,
   clearTokenCache,
+  getAccessToken,
 } from "../api";
-import { pluginFileExists, readPluginFile, writePluginFile } from "@symbiosis-lab/moss-api";
+import {
+  getPluginCookie,
+  pluginFileExists,
+  readPluginFile,
+  writePluginFile,
+} from "@symbiosis-lab/moss-api";
 
 const FUTURE = Math.floor(Date.now() / 1000) + 90 * 24 * 3600;
 const PAST = Math.floor(Date.now() / 1000) - 24 * 3600;
@@ -147,10 +153,60 @@ describe("loadStoredToken dead-token filtering", () => {
   });
 });
 
+describe("getAccessToken cookie-branch dead-token filter (login poll)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearTokenCache();
+    vi.mocked(writePluginFile).mockResolvedValue(undefined);
+  });
+
+  it("rejects an expired-exp cookie: resolves null and does NOT write auth.json", async () => {
+    mockAuthFile(null); // no stored record
+    vi.mocked(getPluginCookie).mockResolvedValue([
+      { name: "__access_token", value: fakeJwt({ exp: PAST }) },
+    ]);
+    expect(await getAccessToken(true)).toBeNull();
+    expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cookie identical to the invalidatedAt-stamped record's token", async () => {
+    // Server-revoked token: future exp, cookie still live in the shared
+    // WebKit store. The exp check can't catch it; identity to the stamped
+    // record must.
+    const revoked = fakeJwt({ exp: FUTURE });
+    mockAuthFile({ accessToken: revoked, invalidatedAt: "2026-06-10T03:00:00.000Z" });
+    vi.mocked(getPluginCookie).mockResolvedValue([
+      { name: "__access_token", value: revoked },
+    ]);
+    expect(await getAccessToken(true)).toBeNull();
+    expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled();
+  });
+
+  it("accepts a fresh future-exp cookie different from the stamped token and persists it", async () => {
+    const revoked = fakeJwt({ exp: FUTURE, id: "old" });
+    const fresh = fakeJwt({ exp: FUTURE, id: "new" });
+    mockAuthFile({ accessToken: revoked, invalidatedAt: "2026-06-10T03:00:00.000Z" });
+    vi.mocked(getPluginCookie).mockResolvedValue([
+      { name: "__access_token", value: fresh },
+    ]);
+    expect(await getAccessToken(true)).toBe(fresh);
+    expect(vi.mocked(writePluginFile)).toHaveBeenCalledWith(
+      "auth.json",
+      expect.stringContaining(fresh)
+    );
+  });
+});
+
 describe("markSessionInvalidated", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearTokenCache();
+  });
+
+  it("skips the file write when there is no token to invalidate", async () => {
+    mockAuthFile(null);
+    await markSessionInvalidated();
+    expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled();
   });
 
   it("stamps invalidatedAt while preserving the token", async () => {
@@ -272,6 +328,18 @@ describe("graphqlQuery auth-error detection", () => {
     await expect(graphqlQuery("query { viewer { id } }")).resolves.toEqual({
       viewer: { id: "abc" },
     });
+  });
+
+  it("keeps body evidence when a 200 response is not JSON", async () => {
+    const text = "<html>oops</html>";
+    vi.mocked(httpPost).mockResolvedValue({
+      status: 200,
+      ok: true,
+      contentType: "text/html",
+      body: new TextEncoder().encode(text),
+      text: () => text,
+    });
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toThrow(/oops/);
   });
 });
 

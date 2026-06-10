@@ -22,6 +22,7 @@ const mockOpenBrowser = vi.fn();
 const mockCloseBrowser = vi.fn().mockResolvedValue(undefined);
 const mockGetSessionState = vi.fn();
 const mockShouldNudge = vi.fn();
+const mockFetchAllArticlesSince = vi.fn().mockResolvedValue({ articles: [], userName: "testuser" });
 const mockShowToast = vi.fn().mockResolvedValue(undefined);
 const mockTaskFailed = vi.fn().mockResolvedValue(undefined);
 const mockTaskSucceeded = vi.fn().mockResolvedValue(undefined);
@@ -81,7 +82,7 @@ vi.mock("../api", () => ({
   saveStoredToken: vi.fn().mockResolvedValue(undefined),
   loadStoredToken: vi.fn().mockResolvedValue(null),
   clearStoredToken: vi.fn().mockResolvedValue(undefined),
-  fetchAllArticlesSince: vi.fn().mockResolvedValue({ articles: [], userName: "testuser" }),
+  fetchAllArticlesSince: (...args: unknown[]) => mockFetchAllArticlesSince(...args),
   fetchAllDraftsSince: vi.fn().mockResolvedValue([]),
   fetchAllCollections: vi.fn().mockResolvedValue([]),
   fetchUserProfile: (...args: unknown[]) => mockFetchUserProfile(...args),
@@ -135,7 +136,10 @@ vi.mock("../social", () => ({
   mergeSocialData: vi.fn().mockReturnValue({}),
 }));
 
-import { process as processHook } from "../main";
+import { process as processHook, syndicate } from "../main";
+// Resolves to the class in our ../api mock, so instanceof matches what
+// main.ts (which imports from the same mocked module) catches.
+import { MattersAuthError } from "../api";
 
 // ============================================================================
 // Fixtures
@@ -242,5 +246,77 @@ describe("binding guard trigger gating", () => {
     mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
     await processHook(makeContext("onboarding_flow"));
     expect(mockOpenBrowser).toHaveBeenCalled();
+  });
+});
+
+describe("mid-sync auth failure (process)", () => {
+  beforeEach(() => {
+    mockGetSessionState.mockResolvedValue("valid"); // passes pre-flight...
+  });
+
+  it("MattersAuthError during fetch → clean session-expired failure, no Error: nesting", async () => {
+    // ...then the server revokes mid-run:
+    mockFetchAllArticlesSince.mockRejectedValueOnce(
+      new MattersAuthError("TOKEN_INVALID", "Matters rejected the session (TOKEN_INVALID)")
+    );
+    const result = await processHook(makeContext("background"));
+    expect(result.success).toBe(false);
+    const failedMsg = String(mockTaskFailed.mock.calls[0][0]);
+    expect(failedMsg).toContain("session expired");
+    expect(failedMsg).not.toContain("Error:");
+    expect(failedMsg).not.toContain("500");
+    expect(mockShowToast).toHaveBeenCalledTimes(1); // nudge
+  });
+
+  it("non-auth error during fetch keeps the cause, de-nested (no 'Error:' prefix)", async () => {
+    mockFetchAllArticlesSince.mockRejectedValueOnce(
+      new Error("GraphQL request failed (502): upstream connect error")
+    );
+    const result = await processHook(makeContext("background"));
+    expect(result.success).toBe(false);
+    const failedMsg = String(mockTaskFailed.mock.calls[0][0]);
+    expect(failedMsg).toContain("502");
+    expect(failedMsg).not.toContain("Error:"); // the de-nesting is the change under test
+  });
+});
+
+describe("syndicate session gate", () => {
+  // One unsyndicated article so execution reaches the session gate: an
+  // empty list early-returns "No new articles to syndicate" BEFORE the
+  // gate. Both tests still exit before the per-article loop (login fails /
+  // fetchUserProfile rejects), so isArticleLive is never reached.
+  const SYNDICATE_CONTEXT = {
+    deployment: { url: "https://example.com", deployed_at: "2026-06-10T00:00:00Z" },
+    articles: [
+      {
+        title: "A post",
+        content: "body",
+        url_path: "posts/a-post.html",
+        tags: [],
+        frontmatter: {},
+      },
+    ],
+    config: {},
+    project_info: { folder_name: "test", homepage_file: null, lang: "en" },
+  } as never;
+
+  it("expired session → prompts login before syndicating", async () => {
+    mockGetSessionState.mockResolvedValue("expired");
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
+    const result = await syndicate(SYNDICATE_CONTEXT);
+    expect(mockOpenBrowser).toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Login required");
+  });
+
+  it("MattersAuthError outside the loop → session-expired publish copy", async () => {
+    mockGetSessionState.mockResolvedValue("valid");
+    mockGetConfig.mockResolvedValue({ ...BOUND_CONFIG, userName: undefined }); // forces fetchUserProfile
+    mockFetchUserProfile.mockRejectedValueOnce(
+      new MattersAuthError("TOKEN_INVALID", "Matters rejected the session (TOKEN_INVALID)")
+    );
+    const result = await syndicate(SYNDICATE_CONTEXT);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("session expired, log in again to publish.");
   });
 });

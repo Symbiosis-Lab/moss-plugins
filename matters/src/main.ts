@@ -33,6 +33,7 @@ import {
   apiConfig,
   getSessionState,
   shouldNudgeSessionExpired,
+  MattersAuthError,
 } from "./api";
 import { resolveAuthRoute, isUserPresent } from "./auth-route";
 import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
@@ -204,26 +205,6 @@ async function notifySessionExpired(): Promise<void> {
       variant: "warning",
       duration: 8000,
     });
-  }
-}
-
-/**
- * Check if user is authenticated with Matters.town
- */
-async function checkAuthentication(): Promise<boolean> {
-  console.log("🔍 Checking Matters.town authentication...");
-
-  try {
-    const token = await getAccessToken();
-    // undefined = no context, null = no token, string = token found
-    const isAuthenticated = typeof token === "string";
-    console.log(
-      `Authentication check result: ${isAuthenticated ? "AUTHENTICATED" : "NOT AUTHENTICATED"}`
-    );
-    return isAuthenticated;
-  } catch (error) {
-    console.error(`Failed to check authentication: ${error}`);
-    return false;
   }
 }
 
@@ -813,12 +794,23 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       message: finalMessage,
     };
   } catch (error) {
-    await task.failed(`Sync failed: ${error}`);
-    await reportError(`Sync failed: ${error}`, "process", true);
-    console.error(`❌ Matters: Sync failed: ${error}`);
+    if (error instanceof MattersAuthError) {
+      // Pre-flight passed but the server revoked the token mid-run (rare).
+      // graphqlQuery already stamped invalidatedAt, so the NEXT run routes
+      // through the expired-session table; here we fail with honest copy.
+      const message = "session expired, log in again to import.";
+      await notifySessionExpired();
+      await task.failed(message, true);
+      console.error("❌ Matters: sync aborted, session rejected by server");
+      return { success: false, message };
+    }
+    const cause = error instanceof Error ? error.message : String(error);
+    await task.failed(`Sync failed: ${cause}`);
+    await reportError(`Sync failed: ${cause}`, "process", true);
+    console.error(`❌ Matters: Sync failed: ${cause}`);
     return {
       success: false,
-      message: `Sync failed: ${error}`,
+      message: `Sync failed: ${cause}`,
     };
   }
 }
@@ -891,10 +883,13 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     // Show starting toast
     await showToast({ message: "Starting Matters syndication...", variant: "info", duration: 3000 });
 
-    // Check authentication
-    const isAuthenticated = await checkAuthentication();
-    if (!isAuthenticated) {
-      console.log("🔐 Not authenticated, prompting login...");
+    // Check the session. Syndication is user-initiated by construction
+    // (every trigger site is inside the user-clicked publish flow) and
+    // write-scoped: no public fallback exists, so any non-valid session
+    // goes straight to login.
+    const sessionState = await getSessionState();
+    if (sessionState !== "valid") {
+      console.log(`🔐 Session state: ${sessionState}, prompting login...`);
       await showToast({ message: "Matters login required", variant: "info", duration: 5000 });
       const loginSuccess = await promptLogin();
       if (!loginSuccess) {
@@ -960,6 +955,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
           draftsCreated++;
         }
       } catch (error) {
+        if (error instanceof MattersAuthError) throw error; // session is dead: abort the run
         console.error(`    ✗ Failed to syndicate ${article.title}:`, error);
         errors.push(`${article.title}: ${error}`);
       }
@@ -1004,11 +1000,22 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       message: `Syndication: ${summary}`,
     };
   } catch (error) {
-    console.error("❌ Matters: Syndication failed:", error);
-    await task.failed(`Syndication failed: ${error}`);
+    if (error instanceof MattersAuthError) {
+      // Same contract as the process hook's catch: the server revoked the
+      // token mid-run; fail the task with honest copy (recoverable=true —
+      // a re-login fixes it) and nudge the session-expired surface.
+      const message = "session expired, log in again to publish.";
+      await notifySessionExpired();
+      await task.failed(message, true);
+      console.error("❌ Matters: syndication aborted, session rejected by server");
+      return { success: false, message };
+    }
+    const cause = error instanceof Error ? error.message : String(error);
+    console.error("❌ Matters: Syndication failed:", cause);
+    await task.failed(`Syndication failed: ${cause}`);
     return {
       success: false,
-      message: `Syndication failed: ${error}`,
+      message: `Syndication failed: ${cause}`,
     };
   }
 }

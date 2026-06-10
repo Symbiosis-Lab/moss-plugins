@@ -499,19 +499,18 @@ export function clearTokenCache(): void {
 }
 
 /**
- * Load the stored access token from project-scoped plugin storage.
- * Returns null if no token is stored or the file is invalid.
+ * Load a USABLE access token from project-scoped plugin storage.
+ *
+ * Credential supply, not session evidence: returns null for expired or
+ * server-invalidated tokens so no caller (graphqlQuery, and critically the
+ * login flow's waitForToken poll, which reads storage FIRST) can pick up a
+ * dead credential. getSessionState reads the raw record instead.
  */
 export async function loadStoredToken(): Promise<string | null> {
-  try {
-    const exists = await pluginFileExists(AUTH_FILE);
-    if (!exists) return null;
-    const content = await readPluginFile(AUTH_FILE);
-    const data = JSON.parse(content);
-    return typeof data.accessToken === "string" ? data.accessToken : null;
-  } catch {
-    return null;
-  }
+  const record = await loadAuthRecord();
+  if (!record || typeof record.accessToken !== "string") return null;
+  if (isRecordDead(record)) return null;
+  return record.accessToken;
 }
 
 /**
@@ -559,6 +558,105 @@ export function decodeJwtExpiryMs(token: string): number | null {
   } catch {
     return null;
   }
+}
+
+export type SessionState = "valid" | "expired" | "none";
+
+/** Tokens within this margin of expiry count as expired (clock skew). */
+const EXPIRY_SKEW_MS = 60_000;
+
+interface AuthRecord {
+  accessToken?: string;
+  savedAt?: string;
+  /** Stamped when the server rejected the token (TOKEN_INVALID). */
+  invalidatedAt?: string;
+  /** Stamped when the expired-session nudge was shown for this record. */
+  nudgedAt?: string;
+}
+
+async function loadAuthRecord(): Promise<AuthRecord | null> {
+  try {
+    const exists = await pluginFileExists(AUTH_FILE);
+    if (!exists) return null;
+    return JSON.parse(await readPluginFile(AUTH_FILE)) as AuthRecord;
+  } catch {
+    return null;
+  }
+}
+
+/** A record whose token the server would reject (past exp or server-stamped). */
+function isRecordDead(record: AuthRecord): boolean {
+  if (record.invalidatedAt) return true;
+  if (typeof record.accessToken !== "string") return false;
+  const expMs = decodeJwtExpiryMs(record.accessToken);
+  return expMs !== null && expMs <= Date.now() + EXPIRY_SKEW_MS;
+}
+
+/**
+ * Honest session check: distinguishes a usable token ("valid"), a token the
+ * server will reject ("expired": past JWT exp or server-stamped invalid),
+ * and no token at all ("none"). Replaces the old presence-only check that
+ * logged AUTHENTICATED for a 30-days-dead token. Reads the RAW record:
+ * the expired token stays on disk as the "session expired" marker.
+ */
+export async function getSessionState(): Promise<SessionState> {
+  const record = await loadAuthRecord();
+  if (!record || typeof record.accessToken !== "string") return "none";
+
+  if (record.invalidatedAt) {
+    console.log(`🔑 Token present but server-invalidated at ${record.invalidatedAt}`);
+    return "expired";
+  }
+
+  const expMs = decodeJwtExpiryMs(record.accessToken);
+  if (expMs === null) {
+    console.log("🔑 Token present (not a decodable JWT; assuming valid, runtime check will verify)");
+    return "valid";
+  }
+  if (expMs <= Date.now() + EXPIRY_SKEW_MS) {
+    console.log(`🔑 Token present but EXPIRED since ${new Date(expMs).toISOString()}`);
+    return "expired";
+  }
+  console.log(`🔑 Token present, expires ${new Date(expMs).toISOString()}`);
+  return "valid";
+}
+
+/**
+ * The server rejected the token (TOKEN_INVALID/UNAUTHENTICATED). Stamp the
+ * auth record so every later check is offline; keep the token so "expired
+ * session" stays distinguishable from "never logged in" (they route
+ * differently). A fresh login overwrites the whole record via
+ * saveStoredToken, clearing the stamp.
+ */
+export async function markSessionInvalidated(): Promise<void> {
+  cachedAccessToken = null;
+  const record = (await loadAuthRecord()) ?? {};
+  record.invalidatedAt = new Date().toISOString();
+  try {
+    await writePluginFile(AUTH_FILE, JSON.stringify(record, null, 2));
+  } catch {
+    // Best-effort: the runtime backstop fires again on the next request.
+  }
+}
+
+/**
+ * Once-per-expiry-event throttle for the "session expired" toast, persisted
+ * in the auth record (NOT module state: the off-webview engine migration
+ * allows per-build contexts, under which module flags reset every build and
+ * sync_on_build would toast every build). Fresh login rewrites the record,
+ * clearing nudgedAt, so the next expiry event nudges again.
+ */
+export async function shouldNudgeSessionExpired(): Promise<boolean> {
+  const record = await loadAuthRecord();
+  if (!record || typeof record.accessToken !== "string") return false;
+  if (record.nudgedAt) return false;
+  record.nudgedAt = new Date().toISOString();
+  try {
+    await writePluginFile(AUTH_FILE, JSON.stringify(record, null, 2));
+  } catch {
+    // Failing to persist means we may nudge again next build; harmless.
+  }
+  return true;
 }
 
 /**

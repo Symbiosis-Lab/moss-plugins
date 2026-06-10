@@ -729,6 +729,82 @@ export async function getAccessToken(fromCookie = false): Promise<string | null 
   }
 }
 
+/** GraphQL extensions.code values that mean "the session is dead". */
+const AUTH_ERROR_CODES = new Set(["TOKEN_INVALID", "UNAUTHENTICATED"]);
+
+/**
+ * The Matters server rejected our credential. Matters signals this with
+ * HTTP 500 (not 401) + extensions.code, so callers must catch this type
+ * rather than match on status.
+ */
+export class MattersAuthError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "MattersAuthError";
+    this.code = code;
+  }
+}
+
+interface GraphqlErrorShape {
+  message?: string;
+  extensions?: { code?: string };
+}
+
+function findAuthErrorCode(parsed: unknown): string | null {
+  const errors = (parsed as { errors?: GraphqlErrorShape[] } | null)?.errors;
+  if (!Array.isArray(errors)) return null;
+  for (const e of errors) {
+    const code = e?.extensions?.code;
+    if (code && AUTH_ERROR_CODES.has(code)) return code;
+  }
+  return null;
+}
+
+/** One-line, length-capped body excerpt for error messages and logs. */
+function bodySnippet(text: string, max = 120): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length <= max ? oneLine : oneLine.slice(0, max) + "…";
+}
+
+/**
+ * Shared response handling. `authenticated` gates auth-code detection: only
+ * the token-bearing path may interpret TOKEN_INVALID/UNAUTHENTICATED as
+ * evidence about OUR session and stamp it; the public path sends no token,
+ * so the same body there is just a failed request.
+ */
+async function handleGraphqlResponse<T>(
+  response: { ok: boolean; status: number; text(): string },
+  authenticated: boolean
+): Promise<T> {
+  const text = response.text();
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // non-JSON body (e.g. an HTML error page); fall through to status check
+  }
+
+  if (authenticated) {
+    const authCode = findAuthErrorCode(parsed);
+    if (authCode) {
+      await markSessionInvalidated();
+      throw new MattersAuthError(authCode, `Matters rejected the session (${authCode})`);
+    }
+  }
+  if (!response.ok) {
+    throw new Error(`GraphQL request failed (${response.status}): ${bodySnippet(text)}`);
+  }
+  const result = parsed as { errors?: GraphqlErrorShape[]; data: T } | null;
+  if (!result) {
+    throw new Error(`GraphQL request failed (${response.status}): non-JSON response`);
+  }
+  if (result.errors && result.errors.length > 0) {
+    throw new Error(result.errors[0]?.message || "GraphQL error");
+  }
+  return result.data;
+}
+
 // ============================================================================
 // GraphQL Client
 // ============================================================================
@@ -756,15 +832,7 @@ export async function graphqlQuery<T>(
     }
   );
 
-  if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.status}`);
-  }
-
-  const result = JSON.parse(response.text());
-  if (result.errors && result.errors.length > 0) {
-    throw new Error(result.errors[0]?.message || "GraphQL error");
-  }
-  return result.data;
+  return handleGraphqlResponse<T>(response, true);
 }
 
 /**
@@ -791,15 +859,7 @@ export async function graphqlQueryPublic<T>(
 
   console.log(`[matters] graphqlQueryPublic: response status ${response.status}`);
 
-  if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.status}`);
-  }
-
-  const result = JSON.parse(response.text());
-  if (result.errors && result.errors.length > 0) {
-    throw new Error(result.errors[0]?.message || "GraphQL error");
-  }
-  return result.data;
+  return handleGraphqlResponse<T>(response, false);
 }
 
 // ============================================================================

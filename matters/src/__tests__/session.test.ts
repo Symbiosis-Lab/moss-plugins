@@ -204,3 +204,104 @@ describe("shouldNudgeSessionExpired (persisted once-per-expiry-event throttle)",
     expect(await shouldNudgeSessionExpired()).toBe(false);
   });
 });
+
+import { MattersAuthError, graphqlQuery, graphqlQueryPublic } from "../api";
+import { httpPost } from "@symbiosis-lab/moss-api";
+
+function mockHttpResponse(status: number, bodyObj: unknown) {
+  const text = JSON.stringify(bodyObj);
+  vi.mocked(httpPost).mockResolvedValue({
+    status,
+    ok: status >= 200 && status < 300,
+    contentType: "application/json",
+    body: new TextEncoder().encode(text),
+    text: () => text,
+  });
+}
+
+const TOKEN_INVALID_BODY = {
+  errors: [{ message: "token invalid", extensions: { code: "TOKEN_INVALID" } }],
+};
+
+describe("graphqlQuery auth-error detection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearTokenCache();
+    mockAuthFile({ accessToken: fakeJwt({ exp: FUTURE }) });
+    vi.mocked(writePluginFile).mockResolvedValue(undefined);
+  });
+
+  it("throws MattersAuthError on 500 + TOKEN_INVALID body (real Matters shape)", async () => {
+    mockHttpResponse(500, TOKEN_INVALID_BODY);
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toBeInstanceOf(MattersAuthError);
+  });
+
+  it("stamps invalidatedAt when an auth error is detected", async () => {
+    mockHttpResponse(500, TOKEN_INVALID_BODY);
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toThrow();
+    const writes = vi.mocked(writePluginFile).mock.calls.filter(([f]) => f === "auth.json");
+    expect(writes.length).toBe(1);
+    expect(JSON.parse(writes[0][1] as string).invalidatedAt).toBeTruthy();
+  });
+
+  it("throws MattersAuthError on 200 + UNAUTHENTICATED errors array", async () => {
+    mockHttpResponse(200, {
+      errors: [{ message: "unauthenticated", extensions: { code: "UNAUTHENTICATED" } }],
+      data: null,
+    });
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toBeInstanceOf(MattersAuthError);
+  });
+
+  it("throws a generic error carrying a body snippet for non-auth failures", async () => {
+    mockHttpResponse(502, { error: "upstream connect error before downstream thing" });
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toThrow(
+      /GraphQL request failed \(502\): .*upstream connect error/
+    );
+  });
+
+  it("still throws the first GraphQL error message for 200 + non-auth errors", async () => {
+    mockHttpResponse(200, {
+      errors: [{ message: "invalid globalId", extensions: { code: "BAD_USER_INPUT" } }],
+      data: null,
+    });
+    await expect(graphqlQuery("query { viewer { id } }")).rejects.toThrow("invalid globalId");
+  });
+
+  it("returns data unchanged on success", async () => {
+    mockHttpResponse(200, { data: { viewer: { id: "abc" } } });
+    await expect(graphqlQuery("query { viewer { id } }")).resolves.toEqual({
+      viewer: { id: "abc" },
+    });
+  });
+});
+
+describe("graphqlQueryPublic (token-less path)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearTokenCache();
+    mockAuthFile({ accessToken: fakeJwt({ exp: FUTURE }) }); // a valid session exists...
+    vi.mocked(writePluginFile).mockResolvedValue(undefined);
+  });
+
+  it("auth-code body does NOT stamp the session and is NOT a MattersAuthError", async () => {
+    mockHttpResponse(500, TOKEN_INVALID_BODY);
+    const err = await graphqlQueryPublic("query { user { id } }").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(MattersAuthError);
+    expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled(); // valid session untouched
+  });
+
+  it("carries a body snippet on failures", async () => {
+    mockHttpResponse(502, { error: "bad gateway from upstream" });
+    await expect(graphqlQueryPublic("query { user { id } }")).rejects.toThrow(
+      /GraphQL request failed \(502\): .*bad gateway/
+    );
+  });
+
+  it("returns data on success", async () => {
+    mockHttpResponse(200, { data: { user: { id: "u1" } } });
+    await expect(graphqlQueryPublic("query { user { id } }")).resolves.toEqual({
+      user: { id: "u1" },
+    });
+  });
+});

@@ -739,6 +739,11 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     trigger: "background",
     hasProgress: true,
     cancellable: false,
+    // Reference the manifest's `contributes.jobs.syndicate` descriptor
+    // ("Syndicated" · "posts"). moss normalizes the verb (R13) and, on the
+    // terminal `succeeded(_, count)`, renders "Syndicated · N posts" from its
+    // OWN verb + amount — we no longer hand it a pre-formatted string.
+    job: "syndicate",
   });
 
   try {
@@ -869,18 +874,19 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       });
     }
 
-    // Terminal receipt: moss renders "Syndicated · N posts" from the verb the
-    // manifest declares + the count we report here. `posts` = articles
+    // Terminal: report the COUNT, not a pre-formatted string. moss owns the
+    // receipt — it pairs the manifest's normalized verb ("Syndicated") with
+    // this count + the declared noun ("posts") to render "Syndicated · N posts"
+    // from its OWN value objects (Step 3 Phase 5, §8 + R13). `posts` = articles
     // actually pushed to Matters (published + drafts created).
     const syndicatedCount = published + draftsCreated;
-    const receipt = `Syndicated · ${syndicatedCount} ${syndicatedCount === 1 ? "post" : "posts"}`;
 
     if (errors.length > 0) {
       console.warn(`⚠️  Syndication complete: ${summary}`);
     } else {
       console.log(`✅ Syndication complete: ${summary}`);
     }
-    await task.succeeded(receipt);
+    await task.succeeded(undefined, syndicatedCount);
 
     return {
       success: true,

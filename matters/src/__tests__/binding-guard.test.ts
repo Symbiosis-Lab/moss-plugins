@@ -70,6 +70,8 @@ vi.mock("../api", () => ({
   fetchArticleComments: vi.fn().mockResolvedValue({ comments: [], donations: [], appreciations: [] }),
   fetchAllArticleCommentCounts: vi.fn().mockResolvedValue(new Map()),
   apiConfig: { queryMode: "viewer", testUserName: "Matty", endpoint: "https://server.matters.town/graphql" },
+  getSessionState: vi.fn().mockResolvedValue("none"),
+  shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock("../domain", () => ({
@@ -203,7 +205,9 @@ describe("process hook binding guard", () => {
       language: "en",
     });
 
-    const result = await process(baseContext);
+    // Login-to-bind requires a present user since the trigger gate (spec
+    // §3.3): background/absent triggers exit quietly instead of prompting.
+    const result = await process({ ...baseContext, trigger: "onboarding_flow" });
 
     expect(result.success).toBe(true);
     // Should have saved boundUserName from profile

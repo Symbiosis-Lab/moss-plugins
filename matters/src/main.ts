@@ -31,7 +31,10 @@ import {
   uploadCoverByUrl,
   uploadEmbedByUrl,
   apiConfig,
+  getSessionState,
+  shouldNudgeSessionExpired,
 } from "./api";
+import { resolveAuthRoute, isUserPresent } from "./auth-route";
 import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
@@ -187,6 +190,22 @@ import {
 // ============================================================================
 // Authentication Helpers
 // ============================================================================
+
+/**
+ * Session-expired nudge. Throttled once per expiry event via a nudgedAt
+ * stamp in auth.json (engine-independent: module state may reset per build
+ * under the off-webview runtime). Every suppressed occurrence still logs.
+ */
+async function notifySessionExpired(): Promise<void> {
+  console.warn("⚠️ Matters session expired; drafts and syndication paused until re-login");
+  if (await shouldNudgeSessionExpired()) {
+    await showToast({
+      message: "Matters session expired. Log in to resume drafts and syndication.",
+      variant: "warning",
+      duration: 8000,
+    });
+  }
+}
 
 /**
  * Check if user is authenticated with Matters.town
@@ -441,7 +460,17 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           await saveConfig({ ...bindingConfig, boundUserName: detectedUser, userName: detectedUser });
           console.log(`🔗 Auto-bound to @${detectedUser} from existing articles`);
         } else {
-          // Fresh project — require login to bind
+          // Fresh project — binding requires login, which only a present
+          // user can do. Background rebuilds exit quietly (spec §3.3:
+          // background never opens a login window).
+          if (!isUserPresent(context.trigger)) {
+            console.log("🔗 Not bound and no user present; skipping sync quietly");
+            await task.succeeded("No Matters account bound");
+            return {
+              success: true,
+              message: "No Matters account bound. Skipping sync.",
+            };
+          }
           const loginSuccess = await promptLogin();
           if (!loginSuccess) {
             // Terminate the task before returning, or it stays Running in the
@@ -464,34 +493,39 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       }
     }
 
-    // Phase 1: Authentication
+    // Phase 1: Authentication — tri-state session check + trigger routing.
+    // Background must never open a login window (spec §3.3).
     await task.progress(overallProgress("authentication", 0, 1) / 100, "Checking authentication...");
-    let isAuthenticated = await checkAuthentication();
+    const sessionState = await getSessionState();
+    const authConfig = await getConfig();
+    // Test profile already flipped apiConfig to public mode before this phase.
+    const route = testProfile
+      ? "proceed"
+      : resolveAuthRoute(sessionState, context.trigger, Boolean(authConfig.userName));
+    let isAuthenticated = sessionState === "valid";
     let usingUnauthenticatedMode = false;
 
-    if (!isAuthenticated) {
-      // Check if we have a saved userName in config for unauthenticated fallback
-      const config = await getConfig();
+    switch (route) {
+      case "proceed":
+        await task.progress(overallProgress("authentication", 1, 1) / 100, "Authenticated");
+        console.log("✅ Matters: session usable, proceeding");
+        break;
 
-      if (config.userName) {
-        // Use unauthenticated mode with saved userName
-        console.log(`🔓 Not authenticated, using saved username: @${config.userName}`);
+      case "public_fallback":
+        console.log(`🔓 Session ${sessionState}, importing public articles for @${authConfig.userName}`);
         console.log("   Note: Drafts will not be available in unauthenticated mode");
-
-        // Configure API to use public user queries
         apiConfig.queryMode = "user";
-        apiConfig.testUserName = config.userName;
+        apiConfig.testUserName = authConfig.userName!;
         usingUnauthenticatedMode = true;
+        isAuthenticated = false;
+        if (sessionState === "expired") await notifySessionExpired();
+        await task.progress(overallProgress("authentication", 1, 1) / 100, `Using saved user: @${authConfig.userName}`);
+        break;
 
-        await task.progress(overallProgress("authentication", 1, 1) / 100, `Using saved user: @${config.userName}`);
-        console.log(`✅ Matters: Using unauthenticated mode for @${config.userName}`);
-      } else {
-        // No saved username, prompt for login
-        console.warn("🔓 Not authenticated, will prompt login...");
+      case "prompt_login": {
+        console.log(`🔐 Session ${sessionState}, prompting login (trigger: ${context.trigger})...`);
         await task.progress(overallProgress("authentication", 0, 1) / 100, "Waiting for login...");
-
         const loginSuccess = await promptLogin();
-
         if (!loginSuccess) {
           await task.failed("Login failed or timeout", true);
           await reportError("Login failed or timeout", "authentication", true);
@@ -500,15 +534,23 @@ export async function process(context: ProcessContext): Promise<HookResult> {
             message: "Login failed or timeout. Please try again.",
           };
         }
-
         isAuthenticated = true;
         await task.progress(overallProgress("authentication", 1, 1) / 100, "Authenticated");
         console.log("✅ Matters: Authenticated");
+        break;
       }
-    } else {
-      console.log("✅ Already authenticated, skipping browser");
-      await task.progress(overallProgress("authentication", 1, 1) / 100, "Authenticated");
-      console.log("✅ Matters: Authenticated");
+
+      case "soft_fail": {
+        // 'expired' gets the nudge; 'none' is quiet (no session event to
+        // report, and sync_on_build would re-toast every build).
+        const message =
+          sessionState === "expired"
+            ? "session expired, log in again to import."
+            : "not logged in, log in to import.";
+        if (sessionState === "expired") await notifySessionExpired();
+        await task.failed(message, true);
+        return { success: false, message };
+      }
     }
 
     // Check if sync is enabled
@@ -752,8 +794,16 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     const criticalErrors = syncResult.errors;
     const finalMessage = `Synced from Matters: ${summary}${mediaSummary}${linkSummary}${socialSummary}`;
 
+    // Honest receipt for EVERY unauthenticated-mode run (spec §3.3),
+    // state-aware: expired session vs never-logged-in route differently.
+    const unauthNote = usingUnauthenticatedMode
+      ? sessionState === "expired"
+        ? " Matters session expired; log in to resume drafts and syndication."
+        : " Not logged in; log in to also import drafts."
+      : "";
+
     if (criticalErrors.length === 0) {
-      await task.succeeded(`${summary}${mediaSummary}${linkSummary}${socialSummary}`);
+      await task.succeeded(`${summary}${mediaSummary}${linkSummary}${socialSummary}${unauthNote}`);
     } else {
       await task.failed(`${criticalErrors.length} sync error(s)`, true);
     }

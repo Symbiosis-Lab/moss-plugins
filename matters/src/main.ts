@@ -56,6 +56,53 @@ import {
 } from "./domain";
 
 // ============================================================================
+// Social-fetch predicates (exported for unit tests — used in Phase 8 below)
+// ============================================================================
+
+/**
+ * Should the social fetch for this article be SKIPPED?
+ *
+ * Skip only when:
+ * - remoteCounts discovery succeeded (remoteCount defined)
+ * - we've synced before with this code path (storedCount defined)
+ * - remote count matches what we last recorded
+ * - AND we genuinely have data: either zero comments everywhere, or we have
+ *   stored comments to prove the count was accurate on last sync.
+ *
+ * A poisoned entry (storedCount=57, existingComments=[]) must NOT skip —
+ * the count was recorded without actually fetching the data.
+ */
+export function shouldSkipSocialFetch(
+  remoteCount: number | undefined,
+  storedCount: number | undefined,
+  existingCommentsLength: number,
+): boolean {
+  return (
+    remoteCount !== undefined &&
+    storedCount !== undefined &&
+    remoteCount === storedCount &&
+    (remoteCount === 0 || existingCommentsLength > 0)
+  );
+}
+
+/**
+ * What sinceTimestamp should be passed to fetchArticleComments?
+ *
+ * Pass lastSyncedAt only when we already have local comments AND the stored
+ * count is defined. An entry whose count was cleared by reconcile (poisoned
+ * entry) but which still has a FEW stored comments must do a FULL refetch —
+ * giving it lastSyncedAt would drop all older comments via the since-filter,
+ * re-recording a near-empty count and re-locking the skip permanently.
+ */
+export function resolveSinceTimestamp(
+  existingCommentsLength: number,
+  storedCount: number | undefined,
+  lastSyncedAt: string | undefined,
+): string | undefined {
+  return existingCommentsLength > 0 && storedCount !== undefined ? lastSyncedAt : undefined;
+}
+
+// ============================================================================
 // Draft Tracking
 // ============================================================================
 
@@ -653,44 +700,21 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           }
 
           // Skip the comments fetch when the remote count exactly matches
-          // what we saw last sync. We require remoteCounts to be populated
-          // (discovery succeeded) and storedCount to be defined (we've
-          // synced this article at least once before with this code path).
-          //
-          // Fix #793 (count-skip unlock): additionally require that we
-          // actually have stored comments (existingComments.length > 0) OR
-          // that the remote count is 0. Without this guard, a poisoned entry
-          // (storedCount=57, comments=[]) is permanently frozen — the skip
-          // fires even though no data was ever fetched.
-          //
-          // Known soft-correctness gap: if a comment is deleted AND another
-          // is added between two syncs (net count unchanged), we'll skip
-          // and keep the deleted comment in local storage. mergeComments is
-          // upsert-only, so this matches the pre-change behavior anyway —
-          // local storage is never pruned. Acceptable for now; if it ever
-          // matters, force a periodic full refetch.
+          // what we saw last sync. See shouldSkipSocialFetch (above) for the
+          // full predicate rationale and known soft-correctness gap.
           const remoteCount = remoteCounts?.get(article.shortHash);
           const storedCount = socialData.articles[socialKey]?.lastKnownCommentCount;
 
           // Pass known comment IDs for early-exit pagination optimization
           const existingComments = socialData.articles[socialKey]?.comments || [];
-          if (
-            remoteCount !== undefined &&
-            storedCount !== undefined &&
-            remoteCount === storedCount &&
-            (remoteCount === 0 || existingComments.length > 0)
-          ) {
+          if (shouldSkipSocialFetch(remoteCount, storedCount, existingComments.length)) {
             skipped++;
             continue;
           }
 
           const knownIds = new Set(existingComments.map(c => c.id));
-          // Fix #793 (first-fetch poisoning): pass lastSyncedAt only when we
-          // already have local comments for this key. On a fresh key,
-          // lastSyncedAt acts as a since-filter and drops all older comments,
-          // recording a near-empty array while the full remote count is stored —
-          // freezing the entry on the next sync via the count-skip above.
-          const sinceTimestamp = existingComments.length > 0 ? lastSyncedAt : undefined;
+          // See resolveSinceTimestamp (above) for the full rationale.
+          const sinceTimestamp = resolveSinceTimestamp(existingComments.length, storedCount, lastSyncedAt);
           const comments = await fetchArticleComments(article.shortHash, knownIds, sinceTimestamp);
 
           mergeSocialData(socialData, socialKey, comments, [], [], remoteCount);

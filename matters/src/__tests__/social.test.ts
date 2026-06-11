@@ -654,6 +654,90 @@ describe("Social Module", () => {
       // Count matches actual comments — must be preserved
       expect(current.articles[uid].lastKnownCommentCount).toBe(2);
     });
+
+    it("carries over a legacy entry whose key maps to no known shortHash/uid unchanged", async () => {
+      // An entry keyed by an arbitrary string that is NOT in the shortHashToUid
+      // mapping (e.g., a very old entry keyed by a path or an unrecognised hash)
+      // must be preserved as-is so we don't silently drop historical data.
+      const unknownKey = "totally-unknown-key-not-in-mapping";
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        articles: {
+          [unknownKey]: {
+            comments: [makeComment("c1"), makeComment("c2")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 2,
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      // Empty mapping: the unknown key cannot be remapped.
+      const migrated = await reconcileLegacySocialData(current, new Map());
+
+      expect(migrated).toBe(true);
+      // The entry must survive under its original key (fallback path: uid ?? legacyKey).
+      expect(current.articles[unknownKey]).toBeDefined();
+      expect(current.articles[unknownKey].comments).toHaveLength(2);
+      expect(current.articles[unknownKey].lastKnownCommentCount).toBe(2);
+    });
+
+    it("run-twice idempotence: second run from the file state produced by the first run is a no-op", async () => {
+      // Set up: legacy file with one article.
+      const uid = "uid-idempotent";
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        articles: {
+          [uid]: {
+            comments: [makeComment("c1")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 1,
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      // First run: performs migration.
+      const current1: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      const migrated1 = await reconcileLegacySocialData(current1, new Map());
+      expect(migrated1).toBe(true);
+      expect(current1.articles[uid]).toBeDefined();
+
+      // The migrated-bak file now exists in the mock FS (written by the first run).
+      // Re-load canonical state from the mock FS to simulate the next sync startup.
+      const canonicalContent = ctx.filesystem.getFile(
+        `${ctx.projectPath}/.moss/data/social/matters.json`
+      );
+      expect(canonicalContent).toBeDefined();
+      const current2: MattersSocialData = JSON.parse(canonicalContent!.content);
+
+      // Second run: the migrated-bak guard fires — must be a no-op.
+      const migrated2 = await reconcileLegacySocialData(current2, new Map());
+      expect(migrated2).toBe(false);
+
+      // Data unchanged after the second run.
+      expect(current2.articles[uid]).toBeDefined();
+      expect(current2.articles[uid].comments).toHaveLength(1);
+    });
   });
 
   // ============================================================================

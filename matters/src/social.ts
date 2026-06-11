@@ -106,10 +106,12 @@ export async function reconcileLegacySocialData(
   const migratedExists = await fileExists(LEGACY_SOCIAL_FILE_MIGRATED);
   if (migratedExists) return false;
 
+  // Read the legacy file ONCE and reuse the content for both parse and bak-copy.
+  let legacyContent: string;
   let legacyData: MattersSocialData;
   try {
-    const content = await readFile(LEGACY_SOCIAL_FILE_PATH);
-    legacyData = JSON.parse(content) as MattersSocialData;
+    legacyContent = await readFile(LEGACY_SOCIAL_FILE_PATH);
+    legacyData = JSON.parse(legacyContent) as MattersSocialData;
     if (!legacyData.schemaVersion || !legacyData.articles) {
       console.warn("[matters] Legacy social file invalid — skipping reconcile");
       return false;
@@ -158,9 +160,8 @@ export async function reconcileLegacySocialData(
   // Write the merged result to the canonical path.
   await saveSocialData(current);
 
-  // Retire the legacy file by writing a migrated-bak copy.
+  // Retire the legacy file by writing a migrated-bak copy (reuse already-read content).
   try {
-    const legacyContent = await readFile(LEGACY_SOCIAL_FILE_PATH);
     await writeFile(LEGACY_SOCIAL_FILE_MIGRATED, legacyContent);
     console.log("[matters] Legacy social file archived to .migrated-bak");
   } catch (e) {

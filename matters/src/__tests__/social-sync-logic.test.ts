@@ -7,52 +7,16 @@
  *    remoteCount but we have zero stored comments (poisoned entry).
  *
  * 2. First-fetch poisoning fix: `sinceTimestamp` must be undefined (not
- *    lastSyncedAt) when the social key has no prior data.
+ *    lastSyncedAt) when the social key has no prior data OR when the stored
+ *    count was cleared by reconcile (storedCount is undefined).
  *
- * Both conditions are expressed as pure predicates here so they can be
- * tested without spinning up the full process hook.
+ * Both conditions are tested via the REAL exported predicates from main.ts,
+ * not local mirrors — so this test file can never drift from the production
+ * implementation.
  */
 
 import { describe, it, expect } from "vitest";
-
-// ============================================================================
-// Extracted predicates (mirror the inline expressions in main.ts Phase 8)
-// ============================================================================
-
-/**
- * Should the social fetch for this article be SKIPPED?
- *
- * Mirrors the condition at main.ts Phase 8 after the fix (issue #793):
- *   remoteCount !== undefined
- *   && storedCount !== undefined
- *   && remoteCount === storedCount
- *   && (remoteCount === 0 || existingComments.length > 0)
- */
-function shouldSkipSocialFetch(
-  remoteCount: number | undefined,
-  storedCount: number | undefined,
-  existingCommentsLength: number,
-): boolean {
-  return (
-    remoteCount !== undefined &&
-    storedCount !== undefined &&
-    remoteCount === storedCount &&
-    (remoteCount === 0 || existingCommentsLength > 0)
-  );
-}
-
-/**
- * What sinceTimestamp should be passed to fetchArticleComments?
- *
- * Mirrors the expression at main.ts Phase 8 after the fix (issue #793):
- *   existingComments.length > 0 ? lastSyncedAt : undefined
- */
-function resolveSinceTimestamp(
-  existingCommentsLength: number,
-  lastSyncedAt: string | undefined,
-): string | undefined {
-  return existingCommentsLength > 0 ? lastSyncedAt : undefined;
-}
+import { shouldSkipSocialFetch, resolveSinceTimestamp } from "../main";
 
 // ============================================================================
 // Count-skip unlock tests
@@ -104,33 +68,40 @@ describe("shouldSkipSocialFetch — count-skip unlock (issue #793)", () => {
 describe("resolveSinceTimestamp — first-fetch poisoning fix (issue #793)", () => {
   const oldTimestamp = "2024-01-01T00:00:00.000Z";
 
-  it("returns undefined for a new key with no prior data", () => {
-    // This is the core fix: for a fresh social key, we must NOT pass
-    // lastSyncedAt as sinceTimestamp — it would drop all older comments.
-    expect(resolveSinceTimestamp(0, oldTimestamp)).toBeUndefined();
+  it("returns undefined for a new key with no prior data (no comments, no storedCount)", () => {
+    // Fresh social key: no lastSyncedAt filter, must fetch everything.
+    expect(resolveSinceTimestamp(0, undefined, oldTimestamp)).toBeUndefined();
   });
 
-  it("returns lastSyncedAt when existing comments are present", () => {
-    // For established keys, pass the timestamp to skip already-known pages.
-    expect(resolveSinceTimestamp(42, oldTimestamp)).toBe(oldTimestamp);
+  it("returns lastSyncedAt when existing comments are present AND storedCount is defined", () => {
+    // Established key: safe to filter by timestamp, comments + count are consistent.
+    expect(resolveSinceTimestamp(42, 42, oldTimestamp)).toBe(oldTimestamp);
   });
 
   it("returns undefined when existing comments=0, even if lastSyncedAt is set", () => {
-    expect(resolveSinceTimestamp(0, "2025-06-10T00:00:00.000Z")).toBeUndefined();
+    expect(resolveSinceTimestamp(0, undefined, "2025-06-10T00:00:00.000Z")).toBeUndefined();
   });
 
   it("returns undefined when lastSyncedAt is also undefined (no prior sync)", () => {
-    expect(resolveSinceTimestamp(0, undefined)).toBeUndefined();
+    expect(resolveSinceTimestamp(0, undefined, undefined)).toBeUndefined();
   });
 
   it("returns undefined even when lastSyncedAt is defined and comments=0", () => {
     // Regression guard: this was the poisoning path. The timestamp exists
     // from a prior process hook run, but no comments were fetched yet.
-    expect(resolveSinceTimestamp(0, "2026-06-10T00:00:00.000Z")).toBeUndefined();
+    expect(resolveSinceTimestamp(0, undefined, "2026-06-10T00:00:00.000Z")).toBeUndefined();
   });
 
   it("returns lastSyncedAt=undefined when existing comments > 0 but lastSyncedAt is undefined", () => {
     // Edge case: first-ever sync (no timestamp) but somehow we have comments.
-    expect(resolveSinceTimestamp(3, undefined)).toBeUndefined();
+    expect(resolveSinceTimestamp(3, 3, undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when comments > 0 but storedCount is undefined (cleared by reconcile)", () => {
+    // Re-poisoning loop fix: an entry with a FEW comments but cleared storedCount
+    // (reconcile detected poisoning) must do a FULL refetch. If we passed
+    // lastSyncedAt here the since-filter would drop older comments, re-record
+    // the full remote count against few stored, and re-lock the skip forever.
+    expect(resolveSinceTimestamp(3, undefined, oldTimestamp)).toBeUndefined();
   });
 });

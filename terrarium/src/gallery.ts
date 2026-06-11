@@ -199,11 +199,30 @@ export function renderGallery(windows: Window[]): string {
     }
   }
 
+  async function fireModal(w, el) {
+    setState(el, "firing", "opening modal…");
+    try {
+      var ev = window.__TAURI__ && window.__TAURI__.event;
+      if (!ev || typeof ev.emitTo !== "function") {
+        throw new Error("__TAURI__.event.emitTo unavailable (needs withGlobalTauri:true, dev build)");
+      }
+      await ev.emitTo("main", "moss-dev:open-modal", {
+        modalId: w.payload.modalId,
+        opts: w.payload.opts,
+      });
+      setState(el, null, "");
+    } catch (e) {
+      console.error("[terrarium] modal '" + w.id + "' failed:", e);
+      setState(el, "error", "failed: " + e);
+    }
+  }
+
   function fire(id, el) {
     var w = byId[id];
     if (!w) { console.error("[terrarium] no window '" + id + "'"); return; }
     if (w.driver === "sim") return fireSim(w, el);
     if (w.driver === "plugin") return firePlugin(w, el);
+    if (w.driver === "modal") return fireModal(w, el);
     console.error("[terrarium] unknown driver on '" + id + "':", w.driver);
   }
 

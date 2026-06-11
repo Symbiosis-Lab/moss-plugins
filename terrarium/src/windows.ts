@@ -81,13 +81,20 @@ export interface PluginPayload {
   terminal: PluginTerminal;
 }
 
+// ── modal driver payload (opens a modal overlay in the main shell webview) ─
+export interface ModalPayload {
+  /** "first-publish" | "reverify" */
+  modalId: string;
+  opts: Record<string, unknown>;
+}
+
 export interface Window {
   id: string;
   label: string;
-  group: "Deploy" | "Domain" | "Plugin" | "Build";
+  group: "Deploy" | "Domain" | "Plugin" | "Build" | "Modal";
   surface: string;
-  driver: "plugin" | "sim";
-  payload: PluginPayload | SimPayload;
+  driver: "plugin" | "sim" | "modal";
+  payload: PluginPayload | SimPayload | ModalPayload;
 }
 
 // ── small builders (mirror advisory-windows.js helpers) ─────────────────────
@@ -319,6 +326,37 @@ export const WINDOWS: Window[] = [
           ),
         ]),
       ],
+    },
+  },
+
+  // ── Modals (cross-webview event to main shell) ────────────────────────────
+  {
+    id: "modal-first-publish",
+    label: "First Publish — setup state",
+    group: "Modal",
+    surface: "modal overlay · main webview",
+    driver: "modal",
+    payload: {
+      modalId: "first-publish",
+      opts: {
+        domain: "liu-guo.com",
+        resolvedSiteName: "Liu Guo",
+      },
+    },
+  },
+  {
+    id: "modal-reverify",
+    label: "Re-verify confirm",
+    group: "Modal",
+    surface: "modal overlay · main webview",
+    driver: "modal",
+    payload: {
+      modalId: "reverify",
+      opts: {
+        siteId: "test-site",
+        email: "dev@example.com",
+        siteUrl: "test.mosspub.com",
+      },
     },
   },
 ];

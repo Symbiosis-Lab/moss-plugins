@@ -1,0 +1,36 @@
+{
+  "name": "@symbiosis-lab/moss-plugin-terrarium",
+  "version": "0.1.0",
+  "description": "moss advisory-window review harness (dev/test)",
+  "main": "dist/main.bundle.js",
+  "scripts": {
+    "clean": "rm -rf dist && mkdir -p dist",
+    "bundle": "esbuild src/main.ts --bundle --format=iife --global-name=TerrariumPlugin --outfile=dist/main.bundle.js",
+    "copy-assets": "cp assets/* dist/",
+    "build": "npm run clean && npm run bundle && npm run copy-assets",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "moss",
+    "plugin",
+    "advisory",
+    "harness",
+    "dev"
+  ],
+  "author": "moss team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Symbiosis-Lab/moss-plugins.git",
+    "directory": "terrarium"
+  },
+  "devDependencies": {
+    "@symbiosis-lab/moss-api": "workspace:*",
+    "@tauri-apps/api": "^2.9.1",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.27.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  }
+}

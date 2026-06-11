@@ -110,9 +110,7 @@ export function renderGallery(windows: Window[]): string {
       rows.push(`<div class="group">${escapeHtml(w.group)}</div>`);
     }
     rows.push(
-      `<button class="row" type="button" data-window-id="${escapeHtml(w.id)}" data-driver="${escapeHtml(
-        w.driver,
-      )}">` +
+      `<button class="row" type="button" data-window-id="${escapeHtml(w.id)}">` +
         `<span class="label">${escapeHtml(w.label)}</span>` +
         `<span class="surface">${escapeHtml(w.surface)}</span>` +
         `<span class="state" aria-live="polite"></span>` +

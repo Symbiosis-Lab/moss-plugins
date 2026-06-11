@@ -230,7 +230,7 @@ export const WINDOWS: Window[] = [
       hook: "syndicate",
       trigger: "background",
       label: "Syndicating to Matters",
-      terminal: { kind: "succeeded", receipt: "Syndicated · 3 posts", advisories: [], amount: 3 },
+      terminal: { kind: "succeeded", receipt: "Syndicated · 3 posts", advisories: [] },
     },
   },
   {

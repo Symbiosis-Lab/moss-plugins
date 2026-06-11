@@ -229,7 +229,7 @@ export interface FrontmatterData {
 }
 
 // ============================================================================
-// Social Data Types (for .moss/social/matters.json)
+// Social Data Types (for .moss/data/social/matters.json)
 // ============================================================================
 
 /**
@@ -290,7 +290,7 @@ export interface ArticleSocialData {
 }
 
 /**
- * Complete social data stored in .moss/social/matters.json
+ * Complete social data stored in .moss/data/social/matters.json
  *
  * Schema:
  * - schemaVersion: Version string for future migrations (currently "1.0.0")

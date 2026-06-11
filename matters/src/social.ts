@@ -2,7 +2,7 @@
  * Social data storage module for Matters plugin
  *
  * Stores social interactions (comments, donations, appreciations) in
- * .moss/social/matters.json following the per-plugin file pattern.
+ * .moss/data/social/matters.json (moved from .moss/social/ in commit 3436fd636).
  *
  * Schema Documentation:
  * ---------------------
@@ -23,11 +23,11 @@
  * - Existing items (by ID) are updated
  * - Items are NEVER removed (to preserve data from different sync runs)
  *
- * This allows multiple plugins to write to separate files in .moss/social/
+ * This allows multiple plugins to write to separate files in .moss/data/social/
  * and moss can aggregate them when rendering.
  */
 
-import { writeFile, readFile } from "@symbiosis-lab/moss-api";
+import { writeFile, readFile, fileExists } from "@symbiosis-lab/moss-api";
 import type {
   MattersSocialData,
   ArticleSocialData,
@@ -40,8 +40,155 @@ import type {
 // Constants
 // ============================================================================
 
-const SOCIAL_FILE_PATH = ".moss/social/matters.json";
+/** Canonical path: written and read by both the plugin and moss readers. */
+const SOCIAL_FILE_PATH = ".moss/data/social/matters.json";
+
+/**
+ * Legacy path written by plugin versions prior to commit 3436fd636 (Apr 8).
+ * moss readers moved to .moss/data/social/ but the plugin continued writing
+ * the old path — see issue #793.  reconcileLegacySocialData() detects this
+ * file, merges it into SOCIAL_FILE_PATH, and renames it to
+ * LEGACY_SOCIAL_FILE_MIGRATED so the one-time migration is idempotent.
+ */
+const LEGACY_SOCIAL_FILE_PATH = ".moss/social/matters.json";
+const LEGACY_SOCIAL_FILE_MIGRATED = ".moss/social/matters.json.migrated-bak";
 const SCHEMA_VERSION = "1.0.0";
+
+// ============================================================================
+// Legacy Migration
+// ============================================================================
+
+/**
+ * Merge comments from legacy into current, deduped by ID.
+ * Prefers the entry with MORE comments when both sides have the same article.
+ */
+export function mergeCommentsDeduped(
+  current: MattersComment[],
+  legacy: MattersComment[]
+): MattersComment[] {
+  const commentMap = new Map<string, MattersComment>();
+  for (const c of current) commentMap.set(c.id, c);
+  for (const c of legacy) {
+    if (!commentMap.has(c.id)) commentMap.set(c.id, c);
+  }
+  return Array.from(commentMap.values());
+}
+
+/**
+ * Reconcile legacy .moss/social/matters.json into .moss/data/social/matters.json.
+ *
+ * One-time migration: if the legacy file exists, its articles are union-merged
+ * into `current` (the data already loaded from the canonical path):
+ *
+ * - shortHash-keyed entries in legacy are remapped → uid via `shortHashToUid`.
+ * - uid-keyed entries merge directly.
+ * - unknown keys carry over as-is (archive).
+ * - Comments are deduped by ID; the side with MORE comments wins per article.
+ * - `lastKnownCommentCount` is cleared when it exceeds the actual stored count
+ *   (poisoned entries) so the next sync refetches.
+ *
+ * After merging, the result is written to SOCIAL_FILE_PATH and the legacy file
+ * is renamed to LEGACY_SOCIAL_FILE_MIGRATED.  Idempotent: if legacy file does
+ * not exist (or the migrated-bak file already exists) this is a no-op.
+ *
+ * @param current - Already-loaded canonical store (mutated in place).
+ * @param shortHashToUid - Mapping produced by scanLocalArticles(): shortHash → uid.
+ * @returns `true` if a migration was performed, `false` if no-op.
+ */
+export async function reconcileLegacySocialData(
+  current: MattersSocialData,
+  shortHashToUid: Map<string, string>
+): Promise<boolean> {
+  // Idempotent guard: legacy file must exist and not yet migrated.
+  const legacyExists = await fileExists(LEGACY_SOCIAL_FILE_PATH);
+  if (!legacyExists) return false;
+
+  const migratedExists = await fileExists(LEGACY_SOCIAL_FILE_MIGRATED);
+  if (migratedExists) return false;
+
+  let legacyData: MattersSocialData;
+  try {
+    const content = await readFile(LEGACY_SOCIAL_FILE_PATH);
+    legacyData = JSON.parse(content) as MattersSocialData;
+    if (!legacyData.schemaVersion || !legacyData.articles) {
+      console.warn("[matters] Legacy social file invalid — skipping reconcile");
+      return false;
+    }
+  } catch (e) {
+    console.warn(`[matters] Could not read legacy social file: ${e}`);
+    return false;
+  }
+
+  console.log(`[matters] Reconciling legacy social data (${Object.keys(legacyData.articles).length} entries)`);
+
+  for (const [legacyKey, legacyArticle] of Object.entries(legacyData.articles)) {
+    // Resolve the canonical key: remap shortHash → uid if we have a mapping.
+    const uid = shortHashToUid.get(legacyKey);
+    const canonicalKey = uid ?? legacyKey;
+
+    const existing = current.articles[canonicalKey];
+    if (existing) {
+      // Prefer the richer side (more comments) then deduplicate.
+      const merged = existing.comments.length >= legacyArticle.comments.length
+        ? mergeCommentsDeduped(existing.comments, legacyArticle.comments)
+        : mergeCommentsDeduped(legacyArticle.comments, existing.comments);
+
+      // Clear a poisoned lastKnownCommentCount (stored count > actual comments).
+      const mergedCount = merged.length;
+      const storedCount = existing.lastKnownCommentCount;
+      const clearCount = storedCount !== undefined && storedCount > mergedCount;
+
+      current.articles[canonicalKey] = {
+        ...existing,
+        comments: merged,
+        lastKnownCommentCount: clearCount ? undefined : storedCount,
+      };
+    } else {
+      // No existing entry — bring the legacy article in as-is.
+      const storedCount = legacyArticle.lastKnownCommentCount;
+      const clearCount =
+        storedCount !== undefined && storedCount > legacyArticle.comments.length;
+      current.articles[canonicalKey] = {
+        ...legacyArticle,
+        lastKnownCommentCount: clearCount ? undefined : storedCount,
+      };
+    }
+  }
+
+  // Write the merged result to the canonical path.
+  await saveSocialData(current);
+
+  // Retire the legacy file by writing a migrated-bak copy.
+  try {
+    const legacyContent = await readFile(LEGACY_SOCIAL_FILE_PATH);
+    await writeFile(LEGACY_SOCIAL_FILE_MIGRATED, legacyContent);
+    console.log("[matters] Legacy social file archived to .migrated-bak");
+  } catch (e) {
+    // Non-fatal: canonical data is already saved; the guard on migratedExists
+    // will run the migration again on the next sync, which is safe (idempotent
+    // merge). Log only so operators can inspect.
+    console.warn(`[matters] Could not write migrated-bak (will retry next sync): ${e}`);
+    return true;
+  }
+
+  // Overwrite legacy path with a forwarding stub so naive readers see a message
+  // rather than stale data.
+  try {
+    const stub = JSON.stringify({
+      schemaVersion: "1.0.0",
+      updatedAt: new Date().toISOString(),
+      articles: {},
+      _migrated: true,
+      _note: "Data moved to .moss/data/social/matters.json (issue #793)",
+    }, null, 2);
+    await writeFile(LEGACY_SOCIAL_FILE_PATH, stub);
+  } catch {
+    // Non-fatal; backed-up copy is already in migrated-bak.
+  }
+
+  console.log(`[matters] Legacy reconcile complete: ${Object.keys(legacyData.articles).length} entries merged`);
+  return true;
+}
 
 // ============================================================================
 // Core Functions
@@ -70,7 +217,7 @@ function createEmptyArticleSocialData(): ArticleSocialData {
 }
 
 /**
- * Load social data from .moss/social/matters.json
+ * Load social data from .moss/data/social/matters.json
  *
  * Returns empty data structure if file doesn't exist or is invalid.
  */
@@ -93,9 +240,9 @@ export async function loadSocialData(): Promise<MattersSocialData> {
 }
 
 /**
- * Save social data to .moss/social/matters.json
+ * Save social data to .moss/data/social/matters.json
  *
- * Creates the .moss/social/ directory if it doesn't exist (handled by writeFile).
+ * Creates the .moss/data/social/ directory if it doesn't exist (handled by writeFile).
  *
  * @throws Error if the file cannot be written (permissions, disk full, etc.)
  */

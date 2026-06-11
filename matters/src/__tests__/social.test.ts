@@ -6,6 +6,8 @@ import {
   mergeSocialData,
   getArticleSocialData,
   getSocialCounts,
+  reconcileLegacySocialData,
+  mergeCommentsDeduped,
 } from "../social";
 import type {
   MattersSocialData,
@@ -47,7 +49,7 @@ describe("Social Module", () => {
         },
       };
       ctx.filesystem.setFile(
-        `${ctx.projectPath}/.moss/social/matters.json`,
+        `${ctx.projectPath}/.moss/data/social/matters.json`,
         JSON.stringify(existingData)
       );
 
@@ -59,7 +61,7 @@ describe("Social Module", () => {
 
     it("returns empty data on invalid JSON", async () => {
       ctx.filesystem.setFile(
-        `${ctx.projectPath}/.moss/social/matters.json`,
+        `${ctx.projectPath}/.moss/data/social/matters.json`,
         "invalid json {{{"
       );
 
@@ -71,7 +73,7 @@ describe("Social Module", () => {
 
     it("returns empty data when schemaVersion is missing", async () => {
       ctx.filesystem.setFile(
-        `${ctx.projectPath}/.moss/social/matters.json`,
+        `${ctx.projectPath}/.moss/data/social/matters.json`,
         JSON.stringify({ articles: {} })
       );
 
@@ -83,7 +85,7 @@ describe("Social Module", () => {
 
     it("returns empty data when articles field is missing", async () => {
       ctx.filesystem.setFile(
-        `${ctx.projectPath}/.moss/social/matters.json`,
+        `${ctx.projectPath}/.moss/data/social/matters.json`,
         JSON.stringify({ schemaVersion: "1.0.0" })
       );
 
@@ -111,7 +113,7 @@ describe("Social Module", () => {
       await saveSocialData(data);
 
       const savedContent = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       expect(savedContent).toBeDefined();
 
@@ -131,7 +133,7 @@ describe("Social Module", () => {
       await saveSocialData(data);
 
       const savedContent = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedContent!.content);
 
@@ -460,6 +462,243 @@ describe("Social Module", () => {
       expect(counts.donations).toBe(1);
       expect(counts.appreciations).toBe(2);
       expect(counts.totalClaps).toBe(15);
+    });
+  });
+
+  // ============================================================================
+  // reconcileLegacySocialData
+  // ============================================================================
+
+  describe("reconcileLegacySocialData", () => {
+    const makeComment = (id: string): MattersComment => ({
+      id,
+      content: `comment ${id}`,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      state: "active",
+      upvotes: 0,
+      author: { id: "a1", userName: "user", displayName: "User" },
+    });
+
+    it("no-op when legacy file does not exist", async () => {
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      const migrated = await reconcileLegacySocialData(current, new Map());
+      expect(migrated).toBe(false);
+      // current unchanged
+      expect(Object.keys(current.articles)).toHaveLength(0);
+    });
+
+    it("no-op when migrated-bak already exists (idempotent)", async () => {
+      // Place both legacy and migrated-bak in the mock fs.
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        articles: { "uid-abc": { comments: [makeComment("c1")], donations: [], appreciations: [] } },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json.migrated-bak`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      const migrated = await reconcileLegacySocialData(current, new Map());
+      expect(migrated).toBe(false);
+    });
+
+    it("remaps shortHash keys to uid via provided mapping", async () => {
+      const shortHash = "abcd1234";
+      const uid = "uid-of-article";
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        articles: {
+          [shortHash]: {
+            comments: [makeComment("c1"), makeComment("c2")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 2,
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      const mapping = new Map([[shortHash, uid]]);
+      const migrated = await reconcileLegacySocialData(current, mapping);
+
+      expect(migrated).toBe(true);
+      // Entry remapped to uid key
+      expect(current.articles[uid]).toBeDefined();
+      expect(current.articles[uid].comments).toHaveLength(2);
+      // Old shortHash key NOT in current
+      expect(current.articles[shortHash]).toBeUndefined();
+    });
+
+    it("deduplicates comments by id, prefers richer (more) side", async () => {
+      const uid = "uid-123";
+      // Current has 1 comment; legacy has 3 (includes the same c1 + 2 new)
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          [uid]: {
+            comments: [makeComment("c1"), makeComment("c2"), makeComment("c3")],
+            donations: [],
+            appreciations: [],
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          [uid]: {
+            comments: [makeComment("c1")],
+            donations: [],
+            appreciations: [],
+          },
+        },
+      };
+      const migrated = await reconcileLegacySocialData(current, new Map());
+
+      expect(migrated).toBe(true);
+      const merged = current.articles[uid].comments;
+      // All 3 unique comments (c1 deduplicated, c2+c3 added from legacy)
+      expect(merged).toHaveLength(3);
+      const ids = merged.map(c => c.id);
+      expect(ids).toContain("c1");
+      expect(ids).toContain("c2");
+      expect(ids).toContain("c3");
+    });
+
+    it("clears lastKnownCommentCount when stored count exceeds actual comments", async () => {
+      const uid = "uid-poisoned";
+      // Legacy has storedCount=57 but only 1 comment (poisoned entry)
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          [uid]: {
+            comments: [makeComment("c1")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 57,
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      await reconcileLegacySocialData(current, new Map());
+
+      // Poisoned count must be cleared so next sync refetches
+      expect(current.articles[uid].lastKnownCommentCount).toBeUndefined();
+    });
+
+    it("preserves lastKnownCommentCount when consistent with actual comments", async () => {
+      const uid = "uid-clean";
+      const legacyData: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {
+          [uid]: {
+            comments: [makeComment("c1"), makeComment("c2")],
+            donations: [],
+            appreciations: [],
+            lastKnownCommentCount: 2,
+          },
+        },
+      };
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/social/matters.json`,
+        JSON.stringify(legacyData)
+      );
+
+      const current: MattersSocialData = {
+        schemaVersion: "1.0.0",
+        updatedAt: "",
+        articles: {},
+      };
+      await reconcileLegacySocialData(current, new Map());
+
+      // Count matches actual comments — must be preserved
+      expect(current.articles[uid].lastKnownCommentCount).toBe(2);
+    });
+  });
+
+  // ============================================================================
+  // mergeCommentsDeduped (unit)
+  // ============================================================================
+
+  describe("mergeCommentsDeduped", () => {
+    const makeComment = (id: string): MattersComment => ({
+      id,
+      content: `comment ${id}`,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      state: "active",
+      upvotes: 0,
+      author: { id: "a1", userName: "user", displayName: "User" },
+    });
+
+    it("returns union of both arrays, deduped by id", () => {
+      const current = [makeComment("c1"), makeComment("c2")];
+      const legacy = [makeComment("c2"), makeComment("c3")];
+      const result = mergeCommentsDeduped(current, legacy);
+      expect(result).toHaveLength(3);
+      const ids = result.map(c => c.id);
+      expect(ids).toContain("c1");
+      expect(ids).toContain("c2");
+      expect(ids).toContain("c3");
+    });
+
+    it("current version of duplicate wins (current iterated first)", () => {
+      const current = [{ ...makeComment("c1"), content: "current version" }];
+      const legacy = [{ ...makeComment("c1"), content: "legacy version" }];
+      const result = mergeCommentsDeduped(current, legacy);
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe("current version");
+    });
+
+    it("handles empty current", () => {
+      const legacy = [makeComment("c1"), makeComment("c2")];
+      const result = mergeCommentsDeduped([], legacy);
+      expect(result).toHaveLength(2);
+    });
+
+    it("handles empty legacy", () => {
+      const current = [makeComment("c1")];
+      const result = mergeCommentsDeduped(current, []);
+      expect(result).toHaveLength(1);
     });
   });
 });

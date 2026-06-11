@@ -1,6 +1,6 @@
 {
   "name": "@symbiosis-lab/moss-plugin-matters",
-  "version": "0.0.1",
+  "version": "1.3.0",
   "description": "Syndicate articles between local system and Matters.town",
   "main": "dist/main.bundle.js",
   "scripts": {

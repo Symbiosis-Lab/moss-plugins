@@ -36,7 +36,7 @@ import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { overallProgress } from "./progress";
-import { loadSocialData, saveSocialData, mergeSocialData } from "./social";
+import { loadSocialData, saveSocialData, mergeSocialData, reconcileLegacySocialData } from "./social";
 import {
   readFile,
   writeFile,
@@ -595,6 +595,29 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     const articlesForSocialFetch = await scanLocalArticles();
     console.log(`📊 Checking social data for ${articlesForSocialFetch.length} local articles`);
 
+    // Build shortHash → uid map for the legacy reconcile (issue #793).
+    // scanLocalArticles() returns both fields; a null uid means the file
+    // hasn't been built yet — those entries stay keyed by shortHash.
+    const shortHashToUid = new Map<string, string>();
+    for (const a of articlesForSocialFetch) {
+      if (a.uid) shortHashToUid.set(a.shortHash, a.uid);
+    }
+
+    // One-time migration: if .moss/social/matters.json (legacy path) still
+    // exists, merge it into .moss/data/social/matters.json and retire it.
+    // loadSocialData() loads from the new canonical path; reconcile is called
+    // on the initial load result so the merge happens before any fetch below.
+    //
+    // We call reconcile here (after scanLocalArticles) because the uid↔shortHash
+    // mapping is needed to remap legacy shortHash-keyed entries to uid keys.
+    {
+      const preReconcile = await loadSocialData();
+      const migrated = await reconcileLegacySocialData(preReconcile, shortHashToUid);
+      if (migrated) {
+        console.log("[matters] Legacy social data reconciled — reloading canonical store");
+      }
+    }
+
     if (articlesForSocialFetch.length > 0) {
       await task.progress(overallProgress("fetching_social", 0, articlesForSocialFetch.length) / 100, "Checking for new comments...");
 
@@ -634,6 +657,12 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           // (discovery succeeded) and storedCount to be defined (we've
           // synced this article at least once before with this code path).
           //
+          // Fix #793 (count-skip unlock): additionally require that we
+          // actually have stored comments (existingComments.length > 0) OR
+          // that the remote count is 0. Without this guard, a poisoned entry
+          // (storedCount=57, comments=[]) is permanently frozen — the skip
+          // fires even though no data was ever fetched.
+          //
           // Known soft-correctness gap: if a comment is deleted AND another
           // is added between two syncs (net count unchanged), we'll skip
           // and keep the deleted comment in local storage. mergeComments is
@@ -642,19 +671,27 @@ export async function process(context: ProcessContext): Promise<HookResult> {
           // matters, force a periodic full refetch.
           const remoteCount = remoteCounts?.get(article.shortHash);
           const storedCount = socialData.articles[socialKey]?.lastKnownCommentCount;
+
+          // Pass known comment IDs for early-exit pagination optimization
+          const existingComments = socialData.articles[socialKey]?.comments || [];
           if (
             remoteCount !== undefined &&
             storedCount !== undefined &&
-            remoteCount === storedCount
+            remoteCount === storedCount &&
+            (remoteCount === 0 || existingComments.length > 0)
           ) {
             skipped++;
             continue;
           }
 
-          // Pass known comment IDs for early-exit pagination optimization
-          const existingComments = socialData.articles[socialKey]?.comments || [];
           const knownIds = new Set(existingComments.map(c => c.id));
-          const comments = await fetchArticleComments(article.shortHash, knownIds, lastSyncedAt);
+          // Fix #793 (first-fetch poisoning): pass lastSyncedAt only when we
+          // already have local comments for this key. On a fresh key,
+          // lastSyncedAt acts as a since-filter and drops all older comments,
+          // recording a near-empty array while the full remote count is stored —
+          // freezing the entry on the next sync via the count-skip above.
+          const sinceTimestamp = existingComments.length > 0 ? lastSyncedAt : undefined;
+          const comments = await fetchArticleComments(article.shortHash, knownIds, sinceTimestamp);
 
           mergeSocialData(socialData, socialKey, comments, [], [], remoteCount);
 

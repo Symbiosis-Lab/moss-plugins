@@ -2,7 +2,7 @@
  * Integration tests for social data storage
  *
  * These tests verify the complete flow of loading, merging, and saving social data
- * to ensure the .moss/social/matters.json file is created correctly.
+ * to ensure the .moss/data/social/matters.json file is created correctly (issue #793).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -86,7 +86,7 @@ describe("Social Data Integration", () => {
 
       // Verify file was created at correct path
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
 
       expect(savedFile).toBeDefined();
@@ -115,7 +115,7 @@ describe("Social Data Integration", () => {
         },
       };
       ctx.filesystem.setFile(
-        `${ctx.projectPath}/.moss/social/matters.json`,
+        `${ctx.projectPath}/.moss/data/social/matters.json`,
         JSON.stringify(existingData)
       );
 
@@ -140,7 +140,7 @@ describe("Social Data Integration", () => {
 
       // Verify both articles exist
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedFile!.content);
 
@@ -157,7 +157,7 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       expect(savedFile).toBeDefined();
 
@@ -186,7 +186,7 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedFile!.content);
 
@@ -214,7 +214,7 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedFile!.content);
 
@@ -241,7 +241,7 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedFile!.content);
 
@@ -273,7 +273,7 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
       const parsed = JSON.parse(savedFile!.content);
 
@@ -342,7 +342,7 @@ describe("Social Data Integration", () => {
 
       // Verify file was created
       const savedFile = ctx.filesystem.getFile(
-        `${ctx.projectPath}/.moss/social/matters.json`
+        `${ctx.projectPath}/.moss/data/social/matters.json`
       );
 
       expect(savedFile).toBeDefined();
@@ -373,13 +373,13 @@ describe("Social Data Integration", () => {
       await saveSocialData(socialData);
 
       // Check the file exists at the expected path
-      const expectedPath = `${ctx.projectPath}/.moss/social/matters.json`;
+      const expectedPath = `${ctx.projectPath}/.moss/data/social/matters.json`;
       const file = ctx.filesystem.getFile(expectedPath);
 
       expect(file).toBeDefined();
 
-      // Verify the path structure
-      expect(expectedPath).toContain("/.moss/social/");
+      // Verify the path structure (moved to .moss/data/social/ in issue #793)
+      expect(expectedPath).toContain("/.moss/data/social/");
       expect(expectedPath.endsWith("/matters.json")).toBe(true);
     });
   });

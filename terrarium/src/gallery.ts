@@ -62,7 +62,9 @@ const STYLE = `
     font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     color: #1d2421;
     background: #fbfcfb;
-    padding: 16px 18px 28px;
+    /* Top inset clears the macOS traffic lights / moss titlebar
+       (TITLEBAR_HEIGHT = 48px) so the heading is not overlapped. */
+    padding: 48px 18px 28px;
   }
   @media (prefers-color-scheme: dark) {
     body { color: #e7ece9; background: #14181a; }

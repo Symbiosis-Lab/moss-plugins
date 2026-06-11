@@ -56,6 +56,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
     id: "0",
     progress: vi.fn().mockResolvedValue(undefined),
     awaiting: vi.fn().mockResolvedValue(undefined),
+    advise: vi.fn().mockResolvedValue(undefined),
     succeeded: (...args: unknown[]) => mockTaskSucceeded(...args),
     failed: (...args: unknown[]) => mockTaskFailed(...args),
     cancelled: vi.fn().mockResolvedValue(undefined),
@@ -134,6 +135,7 @@ vi.mock("../social", () => ({
   loadSocialData: vi.fn().mockResolvedValue({}),
   saveSocialData: vi.fn().mockResolvedValue(undefined),
   mergeSocialData: vi.fn().mockReturnValue({}),
+  reconcileLegacySocialData: vi.fn().mockResolvedValue(false),
 }));
 
 import { process as processHook, syndicate } from "../main";

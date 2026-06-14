@@ -5,6 +5,7 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+- README / public-mirror documentation refresh. No behavior change (manifest remains `1.5.0`).
 
 ## [1.5.0] - 2026-04-20
 

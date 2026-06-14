@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_Pending publish with the next moss release._
+- `[matters]` `1.4.0` — local-first comments (`uid` contract, Artalk integration, tombstone reconcile), social data to `.moss/data/social/`, stranded-comment recovery, session-expiry/auth-routing hardening. See [matters/CHANGELOG.md](./matters/CHANGELOG.md).
+- `[github]` README / public-mirror documentation refresh (no behavior change; manifest stays `1.5.0`).
+
 ## 2026-06-11
 
 **matters** bumped to `1.4.0`. See [matters/CHANGELOG.md](./matters/CHANGELOG.md) for full notes.

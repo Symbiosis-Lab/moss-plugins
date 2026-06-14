@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_Pending publish — cumulative since `1.1.2` (last released on main); full detail under [1.4.0] and [1.2.0]._
+- Local-first comments: `uid` contract, env-derived Artalk server URL, tombstone reconcile, morph-proof preview stub.
+- Social data written to `.moss/data/social/`; stranded-comment recovery.
+- Session-expiry handling: JWT decode, tri-state session, dead-token filter, trigger-aware auth routing, honest receipts.
+
 ## [1.4.0] - 2026-06-11
 
 ### Added

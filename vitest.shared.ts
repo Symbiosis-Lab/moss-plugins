@@ -84,6 +84,7 @@ export function createSocialPluginConfig(
     unitEnvironment?: string;
     unitGlobals?: boolean;
     extraProjects?: Array<Record<string, unknown>>;
+    poolOptions?: Record<string, unknown>;
   },
 ) {
   const {
@@ -93,6 +94,7 @@ export function createSocialPluginConfig(
     unitEnvironment = "happy-dom",
     unitGlobals,
     extraProjects = [],
+    poolOptions,
   } = options ?? {};
 
   return defineConfig({
@@ -104,6 +106,7 @@ export function createSocialPluginConfig(
         include: ["src/**/*.ts"],
         exclude: coverageExclude,
       },
+      ...(poolOptions ? { poolOptions } : {}),
       projects: [
         {
           extends: true,

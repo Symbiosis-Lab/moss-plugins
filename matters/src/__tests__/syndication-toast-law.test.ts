@@ -216,6 +216,19 @@ function resetFetchDraftToPublished() {
   } as never);
 }
 
+/**
+ * vi.clearAllMocks() clears call history but NOT mockResolvedValue
+ * implementations, so a "Law 2 login-required" test that sets
+ * getSessionState → 'expired' leaks that into any later describe block that
+ * assumes the default 'valid' session. The "Law 3 — exactly ONE showToast"
+ * assertion is the canary: a leaked 'expired' adds a login-required toast and
+ * the count becomes 2. Reset defensively in every block that relies on the
+ * default valid session, mirroring resetFetchDraftToPublished().
+ */
+function resetGetSessionStateToValid() {
+  vi.mocked(getSessionState).mockResolvedValue("valid" as never);
+}
+
 describe("Law 1 — no chatty per-step toasts during syndication", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -376,6 +389,7 @@ describe("Law 3 — one terminal L3 ack after the loop (not per article)", () =>
     vi.clearAllMocks();
     restartMockTask();
     resetFetchDraftToPublished(); // MUST reset: Law 2 timeout tests set fetchDraft to unpublished
+    resetGetSessionStateToValid(); // MUST reset: Law 2 login tests set getSessionState to 'expired' (would add a 2nd toast)
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response));
   });
 

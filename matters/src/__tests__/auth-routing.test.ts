@@ -24,6 +24,7 @@ const mockGetSessionState = vi.fn();
 const mockShouldNudge = vi.fn();
 const mockFetchAllArticlesSince = vi.fn().mockResolvedValue({ articles: [], userName: "testuser" });
 const mockShowToast = vi.fn().mockResolvedValue(undefined);
+const mockDismissToast = vi.fn().mockResolvedValue(undefined);
 const mockTaskFailed = vi.fn().mockResolvedValue(undefined);
 const mockTaskSucceeded = vi.fn().mockResolvedValue(undefined);
 // vi.hoisted: the ../api factory passes this object through by VALUE
@@ -42,6 +43,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: vi.fn(),
   listFiles: vi.fn().mockResolvedValue([]),
   showToast: (...args: unknown[]) => mockShowToast(...args),
+  dismissToast: (...args: unknown[]) => mockDismissToast(...args),
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
   closeBrowser: (...args: unknown[]) => mockCloseBrowser(...args),
   readPluginFile: vi.fn(),
@@ -182,6 +184,9 @@ describe("process hook auth routing", () => {
     expect(mockShowToast).toHaveBeenCalledTimes(1);
     expect(mockShowToast.mock.calls[0][0].message).toContain("session expired");
     expect(mockShowToast.mock.calls[0][0].message).not.toContain("—");
+    // Law 2: the session-expired toast must persist — it is a blocking auth
+    // state and must not auto-dismiss (commit a084a436e made it persistent).
+    expect(mockShowToast.mock.calls[0][0].persistent).toBe(true);
     expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain(". Matters session expired");
   });
 
@@ -333,6 +338,38 @@ describe("syndicate session gate", () => {
     expect(mockOpenBrowser).toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.message).toContain("Login required");
+  });
+
+  it("login-cancelled path does NOT emit 'Login cancelled' toast (task.failed() is the terminal signal)", async () => {
+    // When promptLogin returns false (window closed immediately), the old code
+    // emitted a 'Login cancelled' toast — that was deleted. Only the
+    // 'Matters login required' persistent toast (Law 2) must fire; task.failed()
+    // is the terminal failure signal. No 'Login cancelled' chatty toast.
+    mockGetSessionState.mockResolvedValue("expired");
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() }); // closes immediately → loginSuccess=false
+    await syndicate(SYNDICATE_CONTEXT);
+    const cancelledToast = mockShowToast.mock.calls.find(
+      ([opts]: [{ message: string }]) => opts.message?.includes("Login cancelled") || opts.message?.includes("cancelled"),
+    );
+    expect(cancelledToast).toBeUndefined();
+    // The login-required toast still fires (Law 2: blocking state must persist)
+    const loginRequiredToast = mockShowToast.mock.calls.find(
+      ([opts]: [{ message: string }]) => opts.message?.includes("login required"),
+    );
+    expect(loginRequiredToast).toBeDefined();
+  });
+
+  it("syndicate() does NOT emit 'Starting Matters syndication...' toast (startTask() is the per-run signal)", async () => {
+    // Law 1: one event one home. The startTask() call at the top of syndicate()
+    // already registers the task in L1 — a simultaneous 'Starting...' toast
+    // is a double-signal that was deleted. Verified absent in any syndicate path.
+    mockGetSessionState.mockResolvedValue("expired");
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() }); // short-circuit to login path
+    await syndicate(SYNDICATE_CONTEXT);
+    const startingToast = mockShowToast.mock.calls.find(
+      ([opts]: [{ message: string }]) => opts.message?.includes("Starting Matters syndication"),
+    );
+    expect(startingToast).toBeUndefined();
   });
 
   it("MattersAuthError outside the loop → session-expired publish copy", async () => {

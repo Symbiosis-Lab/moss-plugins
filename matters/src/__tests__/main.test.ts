@@ -175,6 +175,21 @@ function makePublishedDraftResponse(id = "draft-123") {
 }
 
 // ============================================================================
+// Shared task handle mock for syndicateArticle (Task M-2: threads task into
+// syndicateArticle so per-article awaiting + advisory signals can reach L1)
+// ============================================================================
+
+const mockTask = {
+  id: "0",
+  progress: vi.fn().mockResolvedValue(undefined),
+  awaiting: vi.fn().mockResolvedValue(undefined),
+  advise: vi.fn().mockResolvedValue(undefined),
+  succeeded: vi.fn().mockResolvedValue(undefined),
+  failed: vi.fn().mockResolvedValue(undefined),
+  cancelled: vi.fn().mockResolvedValue(undefined),
+};
+
+// ============================================================================
 // Tests: syndicateArticle cover upload
 // ============================================================================
 
@@ -205,7 +220,7 @@ describe("syndicateArticle - cover upload", () => {
       frontmatter: { cover: "assets/covers/book.jpg" },
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // Cover should be uploaded with the draft's entityId
     expect(uploadCoverByUrl).toHaveBeenCalledWith(
@@ -231,7 +246,7 @@ describe("syndicateArticle - cover upload", () => {
       frontmatter: { cover: "assets/covers/hero.png" },
     });
 
-    await syndicateArticle(article, "https://example.com/", userName, options);
+    await syndicateArticle(article, "https://example.com/", userName, options, mockTask);
 
     expect(uploadCoverByUrl).toHaveBeenCalledWith(
       "https://example.com/assets/covers/hero.png",
@@ -246,7 +261,7 @@ describe("syndicateArticle - cover upload", () => {
       frontmatter: { cover: "/assets/covers/hero.png" },
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadCoverByUrl).toHaveBeenCalledWith(
       "https://example.com/assets/covers/hero.png",
@@ -257,7 +272,7 @@ describe("syndicateArticle - cover upload", () => {
   it("skips cover upload and does not update draft when no cover in frontmatter", async () => {
     const article = makeArticle({ frontmatter: {} });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadCoverByUrl).not.toHaveBeenCalled();
     // Only one createDraft call (no cover update)
@@ -273,7 +288,7 @@ describe("syndicateArticle - cover upload", () => {
     });
 
     // Should not throw
-    await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
+    await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
 
     // createDraft should be called once (no cover update since upload failed)
     expect(createDraft).toHaveBeenCalledTimes(1);
@@ -287,7 +302,7 @@ describe("syndicateArticle - cover upload", () => {
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-xyz"));
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse("draft-xyz"));
 
-    const result = await syndicateArticle(article, siteUrl, userName, options);
+    const result = await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(result.draftId).toBe("draft-xyz");
     expect(result.publishedUrl).toBeDefined();
@@ -737,7 +752,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: false,
       lang: "en",
-    });
+    }, mockTask);
 
     expect(createDraft).toHaveBeenCalledWith(
       expect.objectContaining({ summary: "A short summary of the article" })
@@ -750,7 +765,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: false,
       lang: "en",
-    });
+    }, mockTask);
 
     expect(createDraft).toHaveBeenCalledWith(
       expect.not.objectContaining({ summary: expect.anything() })
@@ -766,7 +781,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: true,
       lang: "zh_hans",
-    });
+    }, mockTask);
 
     // The content passed to createDraft should contain Chinese canonical text
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
@@ -782,7 +797,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: false,
       lang: "en",
-    });
+    }, mockTask);
 
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
     expect(callArgs.content).toContain("<h2>Title</h2>");
@@ -807,7 +822,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: false,
       lang: "en",
-    });
+    }, mockTask);
 
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
     expect(callArgs.content).toContain('<figure class="image">');
@@ -825,7 +840,7 @@ describe("syndicateArticle - summary and lang", () => {
     await syndicateArticle(article, siteUrl, userName, {
       addCanonicalLink: false,
       lang: "en",
-    });
+    }, mockTask);
 
     const callArgs = vi.mocked(createDraft).mock.calls[0][0];
     // Markdown content should not be normalized
@@ -1133,7 +1148,7 @@ describe("syndicateArticle - local image upload", () => {
       url_path: "posts/test/",
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // Embed uploaded against the draft's entityId. Relative srcs resolve
     // against the article's canonical URL, not the site root.
@@ -1172,7 +1187,7 @@ describe("syndicateArticle - local image upload", () => {
       url_path: "writings/foo-bar/",
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadEmbedByUrl).toHaveBeenCalledWith(
       "https://example.com/assets/scale-compare-recording.gif",
@@ -1187,7 +1202,7 @@ describe("syndicateArticle - local image upload", () => {
       frontmatter: {},
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
   });
@@ -1198,7 +1213,7 @@ describe("syndicateArticle - local image upload", () => {
       frontmatter: {},
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadEmbedByUrl).not.toHaveBeenCalled();
   });
@@ -1212,7 +1227,7 @@ describe("syndicateArticle - local image upload", () => {
       frontmatter: {},
     });
 
-    await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
+    await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
 
     // Draft created once, with original src. No second putDraft, since the
     // rewrite produced no changes (`rewritten === content`).
@@ -1239,7 +1254,7 @@ describe("syndicateArticle - local image upload", () => {
       frontmatter: {},
     });
 
-    await expect(syndicateArticle(article, siteUrl, userName, options)).resolves.toBeDefined();
+    await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Image upload step failed"),
@@ -1258,7 +1273,7 @@ describe("syndicateArticle - local image upload", () => {
       url_path: "writings/foo-bar/",
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     const draftContent = vi.mocked(createDraft).mock.calls[0][0].content!;
     expect(draftContent).toContain('href="https://example.com/scale-compare.html"');
@@ -1277,7 +1292,7 @@ describe("syndicateArticle - local image upload", () => {
       url_path: "posts/test/",
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     const draftContent = vi.mocked(createDraft).mock.calls[0][0].content!;
     expect(draftContent).not.toContain('moss-article-title');
@@ -1527,7 +1542,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(createDraft).toHaveBeenCalledWith(
       expect.objectContaining({ id: "existing-draft-99" })
@@ -1539,7 +1554,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(createDraft).toHaveBeenCalledWith(
       expect.not.objectContaining({ id: expect.anything() })
@@ -1562,7 +1577,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    const result = await syndicateArticle(article, siteUrl, userName, options);
+    const result = await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // Should have been called twice: once with id, once without
     expect(createDraft).toHaveBeenCalledTimes(2);
@@ -1582,7 +1597,7 @@ describe("syndicateArticle - draft tracking integration", () => {
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
     await expect(
-      syndicateArticle(article, siteUrl, userName, options)
+      syndicateArticle(article, siteUrl, userName, options, mockTask)
     ).rejects.toThrow("API error");
   });
 
@@ -1602,7 +1617,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    const result = await syndicateArticle(article, siteUrl, userName, options);
+    const result = await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(result.publishedUrl).toBeDefined();
 
@@ -1646,7 +1661,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    const result = await syndicateArticle(article, siteUrl, userName, options);
+    const result = await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(result.publishedUrl).toBeUndefined();
 
@@ -1684,7 +1699,7 @@ describe("syndicateArticle - draft tracking integration", () => {
 
     const article = makeArticle({ source_path: "", frontmatter: {} });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // writePluginFile should NOT have been called with drafts.json
     const draftWriteCalls = vi.mocked(writePluginFile).mock.calls.filter(
@@ -1719,7 +1734,7 @@ describe("syndicateArticle - cover URL encoding", () => {
       frontmatter: { cover: "图片/cover-image.png" },
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // Chinese characters must be percent-encoded for valid URI
     const callArgs = vi.mocked(uploadCoverByUrl).mock.calls[0];
@@ -1738,7 +1753,7 @@ describe("syndicateArticle - cover URL encoding", () => {
       frontmatter: { cover: "assets/covers/book.jpg" },
     });
 
-    await syndicateArticle(article, siteUrl, userName, options);
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     expect(uploadCoverByUrl).toHaveBeenCalledWith(
       "https://example.com/assets/covers/book.jpg",
@@ -1850,7 +1865,7 @@ describe("syndicateArticle - browser close detection", () => {
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
 
-    const result = await syndicateArticle(article, siteUrl, userName, options);
+    const result = await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
     // Should NOT have published (browser was closed)
     expect(result.publishedUrl).toBeUndefined();

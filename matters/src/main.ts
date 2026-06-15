@@ -17,6 +17,7 @@ import {
   sleep,
 } from "./utils";
 import { startTask } from "@symbiosis-lab/moss-api";
+import type { TaskHandle } from "@symbiosis-lab/moss-api";
 import {
   clearTokenCache,
   getAccessToken,
@@ -45,6 +46,7 @@ import {
   readFile,
   writeFile,
   showToast,
+  dismissToast,
   readPluginFile,
   writePluginFile,
   pluginFileExists,
@@ -957,7 +959,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
         const result = await syndicateArticle(article, siteUrl, userName, {
           addCanonicalLink: addCanonicalLink as boolean,
           lang,
-        });
+        }, task);
 
         if (result.publishedUrl) {
           published++;
@@ -1072,7 +1074,8 @@ export async function syndicateArticle(
   article: ArticleInfo,
   siteUrl: string,
   userName: string,
-  options: { addCanonicalLink: boolean; lang: string }
+  options: { addCanonicalLink: boolean; lang: string },
+  task: TaskHandle,
 ): Promise<{ draftId: string; publishedUrl?: string }> {
   console.log(`  → Syndicating: ${article.title}`);
 

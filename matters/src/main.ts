@@ -892,9 +892,6 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     console.log(`🌐 Deployed site: ${siteUrl}`);
     console.log(`📅 Deployed at: ${deployed_at}`);
 
-    // Show starting toast
-    await showToast({ message: "Starting Matters syndication...", variant: "info", duration: 3000 });
-
     // Check the session. Syndication is user-initiated by construction
     // (every trigger site is inside the user-clicked publish flow) and
     // write-scoped: no public fallback exists, so any non-valid session
@@ -902,10 +899,15 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     const sessionState = await getSessionState();
     if (sessionState !== "valid") {
       console.log(`🔐 Session state: ${sessionState}, prompting login...`);
-      await showToast({ message: "Matters login required", variant: "info", duration: 5000 });
+      // Law 2: login-required is a blocking auth state — must persist.
+      // Law 4: dismiss the toast if login succeeds so a resolved warning
+      //         doesn't linger alongside the terminal ack.
+      await showToast({ message: "Matters login required", variant: "warning", persistent: true, id: "matters-login-required" });
       const loginSuccess = await promptLogin();
+      if (loginSuccess) {
+        await dismissToast("matters-login-required");
+      }
       if (!loginSuccess) {
-        await showToast({ message: "Login cancelled", variant: "warning", duration: 3000 });
         // Propose an actionable account advisory: the user must sign in to
         // finish. moss holds the gavel — a NeedsAction stays a quiet dot, an
         // actionable Blocking pops the panel; here we let moss decide.
@@ -1007,6 +1009,22 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     }
     await task.succeeded(undefined, syndicatedCount);
 
+    // One terminal L3 shelf ack — the durable positive result (Law 3).
+    // task.succeeded() already rendered "Syndicated · N posts" in L1;
+    // this showToast({ variant: 'success' }) is the shelf record with the
+    // "View profile" action link.
+    // NOTE: showAck() is a frontend-only function (toast-manager.ts) and is
+    // NOT exported from @symbiosis-lab/moss-api. Use showToast({ variant: 'success' }).
+    if (syndicatedCount > 0) {
+      const profileUrl = `https://matters.town/@${userName}`;
+      await showToast({
+        message: `Syndicated ${syndicatedCount} article${syndicatedCount === 1 ? "" : "s"} to Matters`,
+        variant: "success",
+        persistent: true,
+        actions: [{ label: "View profile", url: profileUrl }],
+      });
+    }
+
     return {
       success: true,
       message: `Syndication: ${summary}`,
@@ -1078,9 +1096,6 @@ export async function syndicateArticle(
   task: TaskHandle,
 ): Promise<{ draftId: string; publishedUrl?: string }> {
   console.log(`  → Syndicating: ${article.title}`);
-
-  // Show creating draft toast
-  await showToast({ message: `Creating draft: ${article.title}`, variant: "info", duration: 5000 });
 
   const canonicalUrl = `${siteUrl.replace(/\/$/, "")}/${article.url_path.replace(/^\//, "")}`;
 
@@ -1185,13 +1200,15 @@ export async function syndicateArticle(
     }
   }
 
-  // Show draft ready toast
-  await showToast({ message: "Draft created! Opening for review...", variant: "success", duration: 3000 });
-
-  // Step 9: Open draft in browser for user review
+  // Step 9: Open draft in browser for user review; then signal L1 "waiting for you"
+  // Law 3: the 10-min waitForPublishOrClose poll is textbook Awaiting semantics.
+  // task.awaiting() fires AFTER openBrowser() so the amber dot appears when
+  // the editor is already visible (semantically accurate: "waiting for you IN
+  // Matters editor" — the editor is open when the wait starts).
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   const browserHandle = await openBrowser(draftPageUrl);
+  await task.awaiting("publish the draft", "Matters editor", "cancel");
 
   // Step 10: Poll for publish state change (10 min timeout)
   const publishedArticle = await waitForPublishOrClose(draft.id, 600000, browserHandle);
@@ -1200,9 +1217,6 @@ export async function syndicateArticle(
     // Step 11: Article was published - update local frontmatter
     const publishedUrl = articleUrl(userName, publishedArticle.slug, publishedArticle.shortHash);
     console.log(`    ✅ Published: ${publishedUrl}`);
-
-    // Show success toast
-    await showToast({ message: "Published to Matters!", variant: "success", duration: 5000 });
 
     // Update the local markdown file's frontmatter
     if (article.source_path) {
@@ -1232,7 +1246,17 @@ export async function syndicateArticle(
     }
   }
   console.log(`    ⏱️ Publish timeout - draft saved for later`);
-  await showToast({ message: "Draft saved - publish when ready", variant: "info", duration: 5000 });
+  // Draft timed out without publish; leave an actionable advisory in the pill
+  // popover (Law 2: actionable state must not auto-fade in 5s).
+  // advise() accumulates on the handle and flushes when task.succeeded() is
+  // called after the loop — this is correct SDK behavior, not a leak.
+  await task.advise({
+    scope: "Remote",
+    severity: "NeedsAction",
+    item: article.title,
+    what: "Draft saved — publish it on Matters when ready",
+    action: { Link: { href: draftUrl(draft.id), label: "Open draft" } },
+  });
   return { draftId: draft.id };
 }
 

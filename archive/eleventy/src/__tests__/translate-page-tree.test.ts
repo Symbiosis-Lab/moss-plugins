@@ -41,7 +41,6 @@ function makeNode(
     children: [],
     nav: false,
     draft: false,
-    unlisted: false,
     flatten: false,
     list_style: "list",
     also_in: [],

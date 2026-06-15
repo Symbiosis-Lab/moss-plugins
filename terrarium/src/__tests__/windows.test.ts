@@ -15,7 +15,7 @@ const SCOPES = ["File", "Config", "Environment", "Remote", "Account"];
 const SEVERITIES = ["ShippedDegraded", "NeedsAction", "Blocking"];
 const TASK_SCOPES = ["action_panel", "preview", "workspace"];
 const TASK_TONES = ["ambient", "inline", "narrated", "awaiting"];
-const GROUPS = ["Deploy", "Domain", "Plugin", "Build"];
+const GROUPS = ["Deploy", "Domain", "Plugin", "Build", "Modal"];
 
 // An Action is "None" | {Command} | {InApp} | {Link}.
 function isWellFormedAction(action: unknown): boolean {
@@ -85,7 +85,7 @@ describe("WINDOWS catalog", () => {
   it("every entry has a group, a known driver, a label and a surface", () => {
     for (const w of WINDOWS) {
       expect(GROUPS, `bad group on '${w.id}'`).toContain(w.group);
-      expect(["plugin", "sim"], `bad driver on '${w.id}'`).toContain(w.driver);
+      expect(["plugin", "sim", "modal"], `bad driver on '${w.id}'`).toContain(w.driver);
       expect(typeof w.label, `bad label on '${w.id}'`).toBe("string");
       expect(w.label.length).toBeGreaterThan(0);
       expect(typeof w.surface, `bad surface on '${w.id}'`).toBe("string");

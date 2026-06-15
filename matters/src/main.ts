@@ -205,7 +205,7 @@ async function notifySessionExpired(): Promise<void> {
     await showToast({
       message: "Matters session expired. Log in to resume drafts and syndication.",
       variant: "warning",
-      duration: 8000,
+      persistent: true,
     });
   }
 }

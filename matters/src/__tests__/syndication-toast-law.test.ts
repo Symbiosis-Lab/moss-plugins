@@ -456,3 +456,39 @@ describe("Law 2 — login-required toast is persistent and dismissed after succe
     expect(mockDismissToast).toHaveBeenCalledWith("matters-login-required");
   });
 });
+
+describe("Law 2 — session-expired toast is persistent (not duration: 8000)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    restartMockTask();
+    resetFetchDraftToPublished();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("session-expired showToast has persistent:true, no duration field", async () => {
+    // Drive the expired path via a MattersAuthError in the per-article loop.
+    // notifySessionExpired() is called from the outer catch when shouldNudge=true.
+    const { shouldNudgeSessionExpired, MattersAuthError, createDraft } = await import("../api");
+    vi.mocked(shouldNudgeSessionExpired).mockResolvedValue(true);
+    vi.mocked(createDraft).mockRejectedValue(
+      new (MattersAuthError as new (code: string, msg: string) => Error)("TOKEN_INVALID", "rejected"),
+    );
+
+    const ctx = makeSyndicateContext([makeUnsyncedArticle()]);
+    await syndicate(ctx);
+
+    const expiredCall = mockShowToast.mock.calls.find(
+      ([opts]: [{ message: string }]) => opts.message?.includes("session expired"),
+    );
+    expect(expiredCall).toBeDefined();
+    const [opts] = expiredCall! as [{ duration?: number; persistent?: boolean }];
+    // Law 2: must NOT have a finite duration
+    expect(opts.duration).toBeUndefined();
+    // Law 2: MUST be persistent
+    expect(opts.persistent).toBe(true);
+  });
+});

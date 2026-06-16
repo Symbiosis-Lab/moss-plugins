@@ -111,7 +111,6 @@ import {
   siteRelativePathFromSrc,
   imageMimeForPath,
   audioMimeForPath,
-  waitForUrl,
   getDraftMap,
   saveDraftMap,
   getDraftId,
@@ -127,9 +126,8 @@ import { readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-la
 // Global setup
 // ============================================================================
 
-// `waitForUrl` (used inside syndicateArticle and uploadAndReplaceLocalImages)
-// polls fetch with HEAD until 2xx. Stub fetch globally so tests don't hit the
-// network or burn the 60s default budget on every run.
+// `isArticleLive` (called from the syndicate flow) probes the deployed URL with
+// fetch. Stub fetch globally so tests don't hit the network.
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
@@ -1100,52 +1098,6 @@ describe("audioMimeForPath", () => {
 });
 
 // ============================================================================
-// Tests: waitForUrl
-// ============================================================================
-
-describe("waitForUrl", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("returns when fetch responds 2xx on first attempt", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      waitForUrl("https://example.com/foo.gif", { totalMs: 1000, intervalMs: 50 }),
-    ).resolves.toBeUndefined();
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/foo.gif", { method: "HEAD" });
-  });
-
-  it("retries while fetch returns 404, then succeeds when it goes 2xx", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
-      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
-      .mockResolvedValueOnce({ ok: true, status: 200 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      waitForUrl("https://example.com/late.gif", { totalMs: 5000, intervalMs: 10 }),
-    ).resolves.toBeUndefined();
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("throws when budget elapses without a 2xx", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      waitForUrl("https://example.com/never.gif", { totalMs: 60, intervalMs: 20 }),
-    ).rejects.toThrow(/did not become reachable/);
-  });
-});
-
-// ============================================================================
 // Tests: uploadAndReplaceLocalImages
 // ============================================================================
 
@@ -1433,6 +1385,76 @@ describe("uploadAndReplaceLocalAudio", () => {
 // ============================================================================
 // Tests: syndicateArticle - local image upload integration
 // ============================================================================
+
+describe("syndicateArticle - audio upload (integration)", () => {
+  const siteUrl = "https://example.com";
+  const userName = "testuser";
+  const options = { addCanonicalLink: false, lang: "en" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-aud"));
+    vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({
+      id: "audio-asset-1",
+      path: "https://assets-develop.matters.news/embedaudio/uploaded.mpga",
+    });
+  });
+
+  it("wraps moss audio into figure.audio, uploads bytes (embedaudio), re-puts draft with CDN url", async () => {
+    const article = makeArticle({
+      html_content:
+        '<p>Intro</p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio>',
+      frontmatter: {},
+      url_path: "posts/test/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
+
+    // Audio bytes read from the deployed site path resolved against the article URL.
+    expect(readSiteFile).toHaveBeenCalledWith("posts/test/song.mp3");
+    // Uploaded as embedaudio against the draft id.
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "song.mp3",
+      "audio/mpeg",
+      "embedaudio",
+      "draft-aud",
+    );
+
+    // Final draft body: figure.audio wrap with the matters CDN url on the <source>,
+    // and NO surviving bare moss <audio> / relative src / fallback text.
+    const lastPut = vi.mocked(createDraft).mock.calls.at(-1)![0];
+    const finalContent = String(lastPut.content);
+    expect(finalContent).toContain('<figure class="audio">');
+    expect(finalContent).toContain(
+      '<source src="https://assets-develop.matters.news/embedaudio/uploaded.mpga"',
+    );
+    expect(finalContent).toContain("<figcaption></figcaption>");
+    expect(finalContent).not.toContain("moss-embed-audio");
+    expect(finalContent).not.toContain("does not support");
+  });
+
+  it("falls back to the streamed deployed URL when audio byte-upload fails", async () => {
+    vi.mocked(uploadAssetMultipart).mockRejectedValue(new Error("upload 500"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const article = makeArticle({
+      html_content:
+        '<audio class="moss-embed moss-embed-audio" controls><source src="song.mp3" type="audio/mpeg">x</audio>',
+      frontmatter: {},
+      url_path: "posts/test/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
+
+    // The figure.audio survives with the absolutized deployed URL (matters streams it).
+    const calls = vi.mocked(createDraft).mock.calls.map((c) => String(c[0]?.content ?? ""));
+    const withAudio = calls.find((c) => c.includes('<figure class="audio">'));
+    expect(withAudio).toContain('<source src="https://example.com/posts/test/song.mp3"');
+    vi.restoreAllMocks();
+  });
+});
 
 describe("syndicateArticle - local image upload", () => {
   const siteUrl = "https://example.com";

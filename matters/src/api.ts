@@ -1519,61 +1519,6 @@ mutation SingleFileUpload($input: SingleFileUploadInput!) {
 }
 `;
 
-/**
- * Upload a cover image to Matters by URL
- *
- * Uses the singleFileUpload mutation with a URL parameter so Matters
- * fetches the image from the published site directly.
- *
- * @param url - Full URL of the cover image on the published site
- * @param entityId - Draft ID to attach the cover to (required by Matters API)
- * @returns The Matters asset ID to pass as `cover` in putDraft
- */
-export async function uploadCoverByUrl(url: string, entityId: string): Promise<string> {
-  interface SingleFileUploadResponse {
-    singleFileUpload: { id: string; path: string };
-  }
-
-  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
-    input: {
-      url,
-      type: "cover",
-      entityType: "draft",
-      entityId,
-    },
-  });
-
-  return data.singleFileUpload.id;
-}
-
-/**
- * Upload an embed image to Matters by URL
- *
- * Uses the singleFileUpload mutation with a URL parameter so Matters
- * fetches the image from the published site directly.
- *
- * @param url - Full URL of the image on the published site
- * @param entityId - Draft ID the embed is being uploaded into. Required by
- *   Matters: without it the mutation rejects with "Entity id needs to be
- *   specified." (same constraint as cover; see uploadCoverByUrl).
- * @returns The Matters CDN URL (path) of the uploaded image
- */
-export async function uploadEmbedByUrl(url: string, entityId: string): Promise<string> {
-  interface SingleFileUploadResponse {
-    singleFileUpload: { id: string; path: string };
-  }
-
-  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
-    input: {
-      url,
-      type: "embed",
-      entityType: "draft",
-      entityId,
-    },
-  });
-
-  return data.singleFileUpload.path;
-}
 
 /**
  * Upload an asset to Matters by sending its BYTES via multipart — the same

@@ -1812,8 +1812,9 @@ export async function uploadAndReplaceLocalImages(
  * `wrapAudioForMatters`), which is the fallback: on success it becomes the
  * durable matters CDN URL; on failure it stays as the streamed site URL.
  *
- * Only matches `<source ... src="...">` (audio); `<picture>` variants use
- * `srcset`, so image sources are not touched here.
+ * Scoped to `<source src>` INSIDE `<figure class="audio">` so a hand-authored
+ * raw-HTML `<video><source src>` block elsewhere is never mistaken for audio.
+ * (`<picture>` variants use `srcset`, not `src`, so they wouldn't match anyway.)
  *
  * @returns HTML with local audio srcs replaced by matters CDN URLs where possible
  */
@@ -1822,11 +1823,15 @@ export async function uploadAndReplaceLocalAudio(
   baseUrl: string,
   entityId: string,
 ): Promise<string> {
+  const figureAudioRegex = /<figure\b[^>]*\bclass="audio"[^>]*>([\s\S]*?)<\/figure>/gi;
   const sourceRegex = /<source\s[^>]*\bsrc="([^"]+)"[^>]*>/gi;
   const srcs = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = sourceRegex.exec(content)) !== null) {
-    if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+  let figure: RegExpExecArray | null;
+  while ((figure = figureAudioRegex.exec(content)) !== null) {
+    let match: RegExpExecArray | null;
+    while ((match = sourceRegex.exec(figure[1])) !== null) {
+      if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+    }
   }
   if (srcs.size === 0) return content;
 
@@ -1859,45 +1864,3 @@ function applySrcReplacements(content: string, replacements: Map<string, string>
   return result;
 }
 
-/**
- * Poll a URL with HEAD until it returns 2xx, or throw after the budget.
- *
- * Used before matters' upload-by-URL to absorb the gap between a deploy
- * succeeding and the CDN actually serving the new file. GitHub Pages can
- * take tens of seconds to propagate after `git push` completes; matters'
- * server fetching too early returns a 404 that we cannot recover from
- * (matters silently caches the failure).
- *
- * Exported for unit testing.
- */
-export async function waitForUrl(
-  url: string,
-  options: { totalMs?: number; intervalMs?: number } = {}
-): Promise<void> {
-  const totalMs = options.totalMs ?? 60_000;
-  const intervalMs = options.intervalMs ?? 3_000;
-  const deadline = Date.now() + totalMs;
-
-  let lastError: unknown = null;
-  let attempt = 0;
-  while (Date.now() < deadline) {
-    attempt++;
-    try {
-      const response = await fetch(url, { method: "HEAD" });
-      if (response.ok) {
-        if (attempt > 1) {
-          console.log(`    🌐 URL reachable after ${attempt} attempt(s): ${url}`);
-        }
-        return;
-      }
-      lastError = new Error(`HTTP ${response.status}`);
-      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, HTTP ${response.status}): ${url}`);
-    } catch (error) {
-      lastError = error;
-      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, ${error}): ${url}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-
-  throw new Error(`URL did not become reachable within ${totalMs}ms: ${url} (${lastError})`);
-}

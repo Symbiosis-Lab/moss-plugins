@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 _Pending publish — cumulative since `1.1.2` (last released on main); full detail under [1.4.0] and [1.2.0]._
+- Fixed: audio embeds now syndicate to Matters. moss's `<audio class="moss-embed">` is rewritten into Matters' required `<figure class="audio">` shape with an absolutized `<source>` URL, so Matters' player streams from the live site — previously the entire `<audio>` was stripped by Matters' sanitizer, leaving only stray fallback text. Verified empirically against `server.matters.icu`.
 - Local-first comments: `uid` contract, env-derived Artalk server URL, tombstone reconcile, morph-proof preview stub.
 - Social data written to `.moss/data/social/`; stranded-comment recovery.
 - Session-expiry handling: JWT decode, tri-state session, dead-token filter, trigger-aware auth routing, honest receipts.

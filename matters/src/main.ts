@@ -1127,6 +1127,12 @@ export async function syndicateArticle(
   // requires `entityId` for embeds, just as it does for cover.
   if (isHtml) {
     content = absolutizeRelativeHrefs(content, canonicalUrl);
+    // Restructure moss audio embeds into matters' `<figure class="audio">` shape
+    // and absolutize their `<source>` src against the article URL. matters keeps
+    // the external src and streams from the live site — no upload needed (its
+    // `embedaudio` asset type rejects url-upload). Without this, matters strips
+    // moss's bare `<audio>` entirely. See wrapAudioForMatters.
+    content = wrapAudioForMatters(content, canonicalUrl);
   }
 
   // Step 5: Check for existing tracked draft
@@ -1433,17 +1439,29 @@ export function stripArticleTitleH1(html: string, articleTitle: string): string 
  *
  * Exported for unit testing.
  */
+/**
+ * Resolve a single URL against `baseUrl`, returning it UNCHANGED when it is
+ * already absolute (has a scheme), scheme-relative (`//host`), a fragment
+ * (`#x`), or cannot be parsed. Shared by `absolutizeRelativeHrefs` (links) and
+ * `wrapAudioForMatters` (audio `<source>` srcs) so both resolve article-relative
+ * references against the article's canonical URL the same way.
+ */
+function absolutizeUrl(url: string, baseUrl: string): string {
+  if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(url)) {
+    return url;
+  }
+  try {
+    return new URL(url, baseUrl).href;
+  } catch (error) {
+    console.warn(`    ⚠️ Could not resolve URL ${url} against ${baseUrl}: ${error}`);
+    return url;
+  }
+}
+
 export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
   return html.replace(/<a\b([^>]*?)\shref="([^"]+)"([^>]*)>/gi, (full, before: string, href: string, after: string) => {
-    // Leave absolute URLs, scheme-relative URLs, and fragment links untouched.
-    if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) {
-      return full;
-    }
-    let absolute: string;
-    try {
-      absolute = new URL(href, baseUrl).href;
-    } catch (error) {
-      console.warn(`    ⚠️ Could not resolve href ${href} against ${baseUrl}: ${error}`);
+    const absolute = absolutizeUrl(href, baseUrl);
+    if (absolute === href) {
       return full;
     }
     return `<a${before} href="${absolute}"${after}>`;
@@ -1549,6 +1567,68 @@ export function wrapImagesForMatters(html: string): string {
     return `<figure class="image">${imgTag}<figcaption></figcaption></figure>`;
   });
 
+  return result;
+}
+
+/**
+ * Convert moss's audio embed into matters' required `<figure class="audio">`
+ * shape and absolutize the `<source>` URL against the article URL.
+ *
+ * moss emits a bare:
+ *   <audio class="moss-embed moss-embed-audio" controls preload="metadata">
+ *     <source src="REL" type="MIME">Your browser does not support…</audio>
+ *
+ * matters' server-side sanitizer STRIPS that entirely (the `<audio>` vanishes
+ * and the fallback text leaks out as a stray `<p>`). The only audio shape it
+ * keeps — verified 2026-06-16 against `server.matters.icu` — is:
+ *   <figure class="audio"><audio controls><source src="URL" type="MIME"></audio>
+ *     <figcaption></figcaption></figure>
+ * with three hard requirements found empirically:
+ *   1. the URL MUST be on a `<source>` child — a `src` on `<audio>` is dropped;
+ *   2. a `<figcaption>` child is REQUIRED (its absence is a server error,
+ *      "Cannot read properties of undefined (reading 'firstChild')"); empty OK;
+ *   3. matters keeps an EXTERNAL `<source src>` verbatim and its player streams
+ *      from it, so audio is NOT uploaded to matters (its `embedaudio` asset type
+ *      rejects url-upload anyway) — we only absolutize the relative src so it
+ *      points at the live deployed site.
+ *
+ * moss does not yet emit audio captions, so the `<figcaption>` is always empty.
+ *
+ * Exported for unit testing.
+ */
+export function wrapAudioForMatters(html: string, baseUrl: string): string {
+  // moss audio is identified by the `moss-embed-audio` class. Capture the inner
+  // markup (the `<source>` + fallback text) so we can extract the source.
+  const audioPattern =
+    '<audio\\b[^>]*\\bclass="[^"]*\\bmoss-embed-audio\\b[^"]*"[^>]*>([\\s\\S]*?)</audio>';
+
+  const buildFigure = (inner: string): string => {
+    const srcMatch = inner.match(/<source\b[^>]*\bsrc="([^"]*)"[^>]*>/i);
+    const src = srcMatch ? srcMatch[1] : "";
+    const typeMatch = inner.match(/<source\b[^>]*\btype="([^"]*)"[^>]*>/i);
+    const type = typeMatch ? typeMatch[1] : undefined;
+
+    const absSrc = absolutizeUrl(src, baseUrl);
+    const sourceTag = type
+      ? `<source src="${absSrc}" type="${type}">`
+      : `<source src="${absSrc}">`;
+    // Empty figcaption is mandatory (see requirement 2 above). The `<audio>`
+    // fallback text node is intentionally dropped.
+    return `<figure class="audio"><audio controls>${sourceTag}</audio><figcaption></figcaption></figure>`;
+  };
+
+  let result = html;
+  // Pass 1: hoist `<p>…audio…</p>` out of the paragraph — a `<figure>` inside a
+  // `<p>` is invalid HTML and matters splits the `<p>`, leaving stray empties.
+  result = result.replace(
+    new RegExp(`<p>\\s*(?:${audioPattern})\\s*</p>`, "gi"),
+    (_full, inner: string) => buildFigure(inner),
+  );
+  // Pass 2: any remaining standalone moss audio.
+  result = result.replace(
+    new RegExp(audioPattern, "gi"),
+    (_full, inner: string) => buildFigure(inner),
+  );
   return result;
 }
 

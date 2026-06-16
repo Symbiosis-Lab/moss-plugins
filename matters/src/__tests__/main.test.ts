@@ -98,6 +98,7 @@ import {
   syndicateArticle,
   normalizeHtmlForMatters,
   wrapImagesForMatters,
+  wrapAudioForMatters,
   stripArticleTitleH1,
   absolutizeRelativeHrefs,
   addCanonicalLinkToContent,
@@ -656,6 +657,99 @@ describe("wrapImagesForMatters", () => {
     expect(result).toBe(
       '<p>Before</p><figure class="image"><img src="photo.jpg"><figcaption></figcaption></figure><p>After</p>',
     );
+  });
+});
+
+// ============================================================================
+// Tests: wrapAudioForMatters
+// ============================================================================
+//
+// moss emits audio as a bare `<audio class="moss-embed moss-embed-audio"
+// controls preload="metadata"><source src="..." type="..."></audio>`. matters'
+// server-side sanitizer STRIPS that shape entirely (the whole <audio> vanishes;
+// only the fallback text leaks out as a stray <p>). Empirically verified
+// 2026-06-16 against `server.matters.icu`: the only audio shape matters keeps is
+//   <figure class="audio"><audio controls><source src="URL" type="MIME"></audio>
+//   <figcaption>…</figcaption></figure>
+// where (a) the URL MUST live on a <source> child (a `src` on <audio> itself is
+// dropped), (b) a <figcaption> child is REQUIRED — its absence triggers a server
+// error ("Cannot read properties of undefined (reading 'firstChild')"), empty is
+// fine, and (c) matters keeps an EXTERNAL <source src> verbatim, so the audio can
+// stream straight from the deployed site — no upload to matters is needed (and
+// matters' `embedaudio` asset type rejects url-upload anyway).
+//
+// So this transform restructures moss's audio into matters' figure shape and
+// absolutizes the <source src> against the article URL (same rule as
+// absolutizeRelativeHrefs), so matters' player streams from the live site.
+
+describe("wrapAudioForMatters", () => {
+  const base = "https://example.com/posts/test/";
+
+  it("wraps moss audio into figure.audio and absolutizes a relative src", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("resolves deep-relative srcs against the article URL", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="../assets/song.mp3" type="audio/mpeg">fallback</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/assets/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("leaves an already-absolute src unchanged", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="https://cdn.example.com/a.mp3" type="audio/mpeg">x</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://cdn.example.com/a.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("hoists audio out of a wrapping <p> (figure-in-p is invalid HTML)", () => {
+    const html =
+      '<p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">x</audio></p>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("drops the <audio> fallback text (no leak into figcaption or siblings)", () => {
+    const html =
+      '<p>Before</p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio><p>After</p>';
+    const result = wrapAudioForMatters(html, base);
+    expect(result).not.toContain("does not support");
+    expect(result).toBe(
+      '<p>Before</p><figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure><p>After</p>',
+    );
+  });
+
+  it("omits the type attr when moss emitted none", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3">x</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("wraps multiple audio embeds independently", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="a.mp3" type="audio/mpeg">x</audio>' +
+      "<p>mid</p>" +
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="b.wav" type="audio/wav">y</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/a.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>' +
+        "<p>mid</p>" +
+        '<figure class="audio"><audio controls><source src="https://example.com/posts/test/b.wav" type="audio/wav"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("leaves content without audio untouched", () => {
+    const html = "<h2>Title</h2><p>No audio here</p>";
+    expect(wrapAudioForMatters(html, base)).toBe(html);
   });
 });
 

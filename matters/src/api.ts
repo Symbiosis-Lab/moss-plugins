@@ -39,7 +39,7 @@ import type {
   UserCollectionsQuery,
   UserProfileQuery,
 } from "./__generated__/types";
-import { getPluginCookie, httpPost, readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, httpPost, httpPostMultipart, readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Configuration
@@ -1573,6 +1573,73 @@ export async function uploadEmbedByUrl(url: string, entityId: string): Promise<s
   });
 
   return data.singleFileUpload.path;
+}
+
+/**
+ * Upload an asset to Matters by sending its BYTES via multipart — the same
+ * mechanism Matters' own editor uses — instead of asking Matters to fetch it
+ * by URL.
+ *
+ * Why bytes, not URL: Matters' server cannot reliably fetch assets from
+ * arbitrary deployed sites (e.g. Caddy/moss-seta-hosted sites return
+ * `UNABLE_TO_UPLOAD_FROM_URL`), and the `embedaudio` asset type rejects
+ * url-upload entirely. So callers read the asset bytes from the local build
+ * output (`readSiteFile`, already base64) and POST them here.
+ *
+ * Uses the GraphQL multipart request spec (operations/map/file) via
+ * `httpPostMultipart`. Requires the `apollo-require-preflight` header — without
+ * it Matters' Apollo server rejects the multipart POST as potential CSRF.
+ *
+ * @param base64 - File bytes, base64-encoded (e.g. straight from readSiteFile)
+ * @param filename - Display filename for the upload
+ * @param contentType - MIME type (e.g. "image/jpeg", "audio/mpeg")
+ * @param assetType - Matters AssetType: "embed" (image), "embedaudio" (audio), or "cover"
+ * @param entityId - Draft ID the asset attaches to (required by singleFileUpload)
+ * @returns The uploaded asset's `{ id, path }` (path = the Matters CDN URL)
+ */
+export async function uploadAssetMultipart(
+  base64: string,
+  filename: string,
+  contentType: string,
+  assetType: "embed" | "embedaudio" | "cover",
+  entityId: string,
+): Promise<{ id: string; path: string }> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No access token available. Please login first.");
+  }
+
+  const operations = JSON.stringify({
+    query: SINGLE_FILE_UPLOAD_MUTATION,
+    variables: { input: { type: assetType, entityType: "draft", entityId, file: null } },
+  });
+  const map = JSON.stringify({ "0": ["variables.input.file"] });
+
+  const response = await httpPostMultipart(
+    apiConfig.endpoint,
+    {
+      textFields: [
+        { name: "operations", value: operations },
+        { name: "map", value: map },
+      ],
+      files: [{ field: "0", filename, contentType, contentBase64: base64 }],
+    },
+    {
+      headers: {
+        "x-access-token": token,
+        // Required: Matters' Apollo server treats a bare multipart POST as a
+        // potential CSRF attack and rejects it without this preflight opt-in.
+        "apollo-require-preflight": "true",
+      },
+      timeoutMs: 60000,
+    },
+  );
+
+  const data = await handleGraphqlResponse<{ singleFileUpload: { id: string; path: string } }>(
+    response,
+    true,
+  );
+  return data.singleFileUpload;
 }
 
 /**

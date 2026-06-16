@@ -51,6 +51,7 @@ import {
   writePluginFile,
   pluginFileExists,
   getPluginEnvVar,
+  emitEvent,
 } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
@@ -1236,7 +1237,19 @@ export async function syndicateArticle(
     return { draftId: draft.id, publishedUrl };
   }
 
-  // Step 12: Timeout - save draft ID for reuse next time
+  // Step 12: Closed/timeout without publishing — signal the ship conductor.
+  // Emit 'matters-room-skipped' so the conductor in the main shell can advance
+  // the ring segment for matters as 'skipped' (not 'failed'). The tauri_bridge
+  // special-cases this event to broadcast to all windows (not just the browser
+  // panel), matching how 'email-room-skipped' reaches the conductor. Best-effort:
+  // failure to emit must not abort the cleanup below.
+  try {
+    await emitEvent("matters-room-skipped");
+  } catch (err) {
+    console.warn(`    ⚠️ Failed to emit matters-room-skipped: ${err}`);
+  }
+
+  // Save draft ID for reuse next time
   if (article.source_path) {
     try {
       await saveDraftId(article.source_path, draft.id);
@@ -1245,9 +1258,9 @@ export async function syndicateArticle(
       console.warn(`    ⚠️ Failed to save draft tracking: ${err}`);
     }
   }
-  console.log(`    ⏱️ Publish timeout - draft saved for later`);
-  // Draft timed out without publish; leave an actionable advisory in the pill
-  // popover (Law 2: actionable state must not auto-fade in 5s).
+  console.log(`    ⏱️ Publish timeout/close — draft saved for later`);
+  // Draft timed out or user closed without publish; leave an actionable advisory
+  // in the pill popover (Law 2: actionable state must not auto-fade in 5s).
   // advise() accumulates on the handle and flushes when task.succeeded() is
   // called after the loop — this is correct SDK behavior, not a leak.
   await task.advise({

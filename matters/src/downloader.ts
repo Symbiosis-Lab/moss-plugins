@@ -10,11 +10,10 @@
  */
 
 import {
-  reportProgress,
   reportError,
   sleep,
 } from "./utils";
-import { overallProgress } from "./progress";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
 import { isInternalMattersLink as isDomainInternalLink, extractShortHash } from "./domain";
@@ -298,7 +297,9 @@ interface FileState {
  * 3. After all complete, update references in each file
  * 4. Write modified files to disk
  */
-export async function downloadMediaAndUpdate(): Promise<{
+export async function downloadMediaAndUpdate(
+  onProgress?: ProgressReporter,
+): Promise<{
   filesProcessed: number;
   imagesDownloaded: number;
   imagesSkipped: number;
@@ -449,15 +450,22 @@ export async function downloadMediaAndUpdate(): Promise<{
 
   // Fire all downloads in parallel - Rust Semaphore limits to 5 concurrent
   // Promise.allSettled ensures we get results for all, even if some fail
-  const downloadPromises = mediaToDownload.map(async (media, index) => {
+  let completedCount = 0;
+  const downloadPromises = mediaToDownload.map(async (media) => {
     const downloadResult = await downloadAssetWithRetry(media.url);
 
-    // Report progress as each download completes
-    reportProgress(
+    // Report progress as each download COMPLETES. Count completions (single-
+    // threaded `++` in the continuation is atomic), NOT the creation index —
+    // downloads finish out of order, so an index-based fraction would jump the
+    // hairline forward then back. media download is the heaviest phase
+    // (weight 35/100); feeding the unified task here keeps the hairline
+    // advancing monotonically instead of stalling through it.
+    completedCount++;
+    onProgress?.(
       "downloading_media",
-      overallProgress("downloading_media", index + 1, mediaToDownload.length),
+      overallProgress("downloading_media", completedCount, mediaToDownload.length),
       100,
-      `Downloading ${index + 1}/${mediaToDownload.length}...`
+      `Downloading ${completedCount}/${mediaToDownload.length}...`
     );
 
     return { media, downloadResult };
@@ -584,8 +592,10 @@ export async function downloadMediaAndUpdate(): Promise<{
     }
   }
 
-  // Final report
-  reportProgress(
+  // Final report. Snap the band to 100% using `totalUrls` (ALL unique media,
+  // including already-cached ones) — NOT `mediaToDownload.length`, which is 0
+  // when everything was cached and would jump progress BACK to the band start.
+  onProgress?.(
     "downloading_media",
     overallProgress("downloading_media", totalUrls, totalUrls),
     100,

@@ -59,7 +59,7 @@ Some text here.
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("no downloads should occur", () => {
@@ -120,7 +120,7 @@ title: "Test Article"
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("all images should be downloaded", () => {
@@ -179,7 +179,7 @@ title: "Test Article"
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("only missing assets should be downloaded", () => {
@@ -246,7 +246,7 @@ cover: "https://imagedelivery.net/kDRCweMmqLnTPNlbum-pYA/prod/embed/${uuid1}/ima
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("only one download should occur", () => {
@@ -300,8 +300,8 @@ cover: "${uuid1}.jpg"
 
     When("I run downloadMediaAndUpdate twice", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      await downloadMediaAndUpdate(projectPath);
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      await downloadMediaAndUpdate();
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("no downloads should occur", () => {
@@ -382,7 +382,7 @@ title: "File 3"
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("all three files should have updated references", () => {
@@ -458,7 +458,7 @@ title: "File 3"
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("the first file should have updated references and be written", () => {
@@ -555,7 +555,7 @@ title: "Multi Image"
 
     When("I run downloadMediaAndUpdate", async () => {
       const { downloadMediaAndUpdate } = await import("../../src/downloader");
-      downloadResult = await downloadMediaAndUpdate(projectPath);
+      downloadResult = await downloadMediaAndUpdate();
     });
 
     Then("the file should be written exactly once with all three references updated", () => {

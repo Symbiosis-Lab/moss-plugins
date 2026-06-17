@@ -40,7 +40,6 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // setMessageContext is called at module load by utils.ts — stub it.
   setMessageContext: vi.fn(),
   sendMessage: vi.fn().mockResolvedValue(undefined),
-  reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
   startTask: vi.fn().mockResolvedValue({

@@ -40,7 +40,7 @@ import { resolveAuthRoute, isUserPresent } from "./auth-route";
 import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
-import { overallProgress } from "./progress";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { loadSocialData, saveSocialData, mergeSocialData, reconcileLegacySocialData } from "./social";
 import {
   readFile,
@@ -613,6 +613,16 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     }
 
     // Phase 6: Sync to local files
+    // Route sub-phase progress (per-item sync, per-image media download) to the
+    // unified import task so the hairline advances THROUGH the long phases
+    // instead of stalling. Takes the (phase, absolute-0-100, total=100) shape
+    // the sub-phases emit and converts to the task's 0-1 fraction; fire-and-
+    // forget so a slow IPC never blocks the import worker. Replaces the legacy
+    // `reportProgress` SDK path, which the progress panel drops for `process`.
+    const reportToTask: ProgressReporter = (_phase, current, total, message) => {
+      void task.progress(total > 0 ? current / total : 0, message).catch(() => {});
+    };
+
     const syncTotal = articles.length + drafts.length + allCollections.length + 1;
     await task.progress(overallProgress("syncing", 0, syncTotal) / 100, "Starting sync...");
     const { result: syncResult, articlePathMap } = await syncToLocalFiles(
@@ -624,6 +634,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       profile,
       context.project_info.homepage_file,
       context.project_info.folder_name,
+      reportToTask,
     );
 
     // Build the NOUN-LED article summary ("12 articles already up to date"),
@@ -640,7 +651,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
     // Both operations read/write the same markdown files, so they must not run in parallel.
     // Order: Media download first (updates image references), then link rewriting
-    const mediaResult = await downloadMediaAndUpdate();
+    const mediaResult = await downloadMediaAndUpdate(reportToTask);
     await task.progress(overallProgress("rewriting_links", 0, 1) / 100, "Rewriting internal links...");
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
     await task.progress(overallProgress("rewriting_links", 1, 1) / 100, `Rewrote ${linkResult.linksRewritten} internal links`);

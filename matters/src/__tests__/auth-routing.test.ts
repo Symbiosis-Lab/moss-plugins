@@ -113,7 +113,6 @@ vi.mock("../domain", () => ({
 }));
 
 vi.mock("../utils", () => ({
-  reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
   sleep: vi.fn().mockResolvedValue(undefined),

@@ -8,7 +8,6 @@
 import {
   setMessageContext,
   sendMessage as sdkSendMessage,
-  reportProgress as sdkReportProgress,
   reportError as sdkReportError,
   fetchUrl,
   downloadAsset as sdkDownloadAsset,
@@ -52,20 +51,6 @@ export { originalSetCurrentHookName };
  */
 export async function sendMessage(message: PluginMessage): Promise<void> {
   await sdkSendMessage(message);
-}
-
-/**
- * Report progress to moss during long-running operations
- * Non-blocking: fires progress update without waiting for response
- */
-export function reportProgress(
-  phase: string,
-  current: number,
-  total: number,
-  message?: string
-): void {
-  // Fire-and-forget: don't await to avoid blocking worker pool
-  sdkReportProgress(phase, current, total, message).catch(() => {});
 }
 
 /**

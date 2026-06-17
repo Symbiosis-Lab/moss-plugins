@@ -42,8 +42,8 @@ import type {
   SyncResultWithMap,
 } from "./types";
 import type { MattersPluginConfig } from "./config";
-import { slugify, reportProgress, reportError } from "./utils";
-import { overallProgress } from "./progress";
+import { slugify, reportError } from "./utils";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { generateFrontmatter, parseFrontmatter } from "./converter";
 import { htmlToMarkdown, readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
 import { isMattersUrl, articleUrl, extractShortHash } from "./domain";
@@ -377,6 +377,10 @@ export async function syncToLocalFiles(
   // `home: true` marker to match moss's folder-home convention. Falls back to
   // `index.md` when absent (older hosts that don't supply it).
   folderName?: string | null,
+  // Reports per-item sync progress to the unified import task so the hairline
+  // advances within the "syncing" band instead of jumping start→end. Optional:
+  // direct callers (tests) omit it and the per-item reports no-op.
+  onProgress?: ProgressReporter,
 ): Promise<SyncResultWithMap> {
   const result: SyncResult = {
     created: 0,
@@ -460,7 +464,7 @@ export async function syncToLocalFiles(
   // considers index stems, self-named folder notes, and alphabetical fallback. When a
   // home file exists, the Matters plugin should not create a competing index.md.
   processedItems++;
-  await reportProgress("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
+  onProgress?.("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
 
   if (homepageFile) {
     console.log(`   ⏭️  Skipping homepage (moss detected home file: ${homepageFile})`);
@@ -546,7 +550,7 @@ export async function syncToLocalFiles(
   // Process collections
   for (const collection of collections) {
     processedItems++;
-    await reportProgress(
+    onProgress?.(
       "syncing_collections",
       overallProgress("syncing_collections", processedItems, totalItems),
       100,
@@ -633,7 +637,7 @@ export async function syncToLocalFiles(
   // Process published articles
   for (const article of articles) {
     processedItems++;
-    await reportProgress(
+    onProgress?.(
       "syncing_articles",
       overallProgress("syncing_articles", processedItems, totalItems),
       100,
@@ -754,7 +758,7 @@ export async function syncToLocalFiles(
     for (const draft of drafts) {
       processedItems++;
       const draftTitle = draft.title || "Untitled";
-      await reportProgress(
+      onProgress?.(
         "syncing_drafts",
         overallProgress("syncing_drafts", processedItems, totalItems),
         100,

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { isRemoteNewer } from "../sync";
 
 describe("isRemoteNewer", () => {
@@ -132,6 +132,33 @@ describe("syncToLocalFiles - homepage grid from pinned works", () => {
     // `:::` occurrences (open marker prefix + closer), no `:::` between cells.
     expect((homepage!.match(/^:::$/gm) || []).length).toBe(1);
     expect(homepage).toContain(":::");
+  });
+
+  it("forwards sync progress to the onProgress reporter (unified task, not the dropped legacy path)", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    const onProgress = vi.fn();
+    await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [], // no collections
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] },
+      null, // homepageFile
+      null, // folderName
+      onProgress,
+    );
+    // The per-item sync now drives the unified import task (was the legacy
+    // reportProgress path, which the panel dropped for the `process` hook).
+    expect(onProgress).toHaveBeenCalledWith(
+      "syncing_homepage",
+      expect.any(Number),
+      100,
+      expect.any(String),
+    );
+    // …carrying a real (non-zero) overall fraction, not a constant 0.
+    const homepageCall = onProgress.mock.calls.find((c) => c[0] === "syncing_homepage");
+    expect(homepageCall?.[1]).toBeGreaterThan(0);
   });
 
   it("should generate :::grid 3 homepage with pinned articles", async () => {

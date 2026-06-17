@@ -333,13 +333,28 @@ Some text
       actualPath: "",
     });
 
-    // Run the download and update function
+    // Run the download and update function, capturing progress reports
     const { downloadMediaAndUpdate } = await import("../downloader");
-    const result = await downloadMediaAndUpdate();
+    const onProgress = vi.fn();
+    const result = await downloadMediaAndUpdate(onProgress);
 
     // Verify: 1 image downloaded, 1 error
     expect(result.imagesDownloaded).toBe(1);
     expect(result.errors.length).toBeGreaterThan(0);
+
+    // Media-download progress is forwarded to the unified task via onProgress
+    // (replacing the legacy reportProgress path the panel dropped) so the
+    // import hairline advances through the heaviest phase.
+    expect(onProgress).toHaveBeenCalledWith(
+      "downloading_media",
+      expect.any(Number),
+      100,
+      expect.any(String),
+    );
+    // …and the reported overall value is a real (non-zero) fraction of the band,
+    // not a constant 0 — the reporter is actually carrying progress.
+    const mediaCall = onProgress.mock.calls.find((c) => c[0] === "downloading_media");
+    expect(mediaCall?.[1]).toBeGreaterThan(0);
 
     // The failed image's SOURCE URL is surfaced for a per-image advisory (so
     // the user sees which image broke, not an opaque "1 failed" count).

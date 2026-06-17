@@ -1479,8 +1479,31 @@ export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
   });
 }
 
+/**
+ * Strip moss's heading-anchor permalinks from headings.
+ *
+ * moss appends `<a class="moss-heading-anchor" href="#…"><span
+ * aria-hidden="true">#</span></a>` to every heading for web navigation. On the
+ * site the `#` is hover-only chrome (CSS), but matters' sanitizer keeps the
+ * anchor's text, so headings syndicate as e.g. "1.#" (a stray, linked `#`).
+ * The `#` is not content, so we remove the whole anchor before syndication.
+ * Verified 2026-06-16 against `server.matters.icu`.
+ *
+ * Exported for unit testing.
+ */
+export function stripHeadingAnchors(html: string): string {
+  return html.replace(
+    /<a\b[^>]*\bclass="[^"]*\bmoss-heading-anchor\b[^"]*"[^>]*>[\s\S]*?<\/a>/gi,
+    "",
+  );
+}
+
 export function normalizeHtmlForMatters(html: string): string {
   let result = html;
+
+  // Step 0: Remove moss heading-anchor permalinks (web-only chrome whose `#`
+  // would otherwise leak into matters' heading text). See stripHeadingAnchors.
+  result = stripHeadingAnchors(result);
 
   // Step 1: Collapse h4, h5, h6 → h3 (process these BEFORE h1 to avoid double-shifting)
   result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (_match, slash, attrs) => {

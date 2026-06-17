@@ -118,6 +118,7 @@ import {
   normalizeHtmlForMatters,
   wrapImagesForMatters,
   wrapAudioForMatters,
+  stripHeadingAnchors,
   stripArticleTitleH1,
   absolutizeRelativeHrefs,
   addCanonicalLinkToContent,
@@ -697,6 +698,61 @@ describe("wrapImagesForMatters", () => {
     expect(result).toBe(
       '<p>Before</p><figure class="image"><img src="photo.jpg"><figcaption></figcaption></figure><p>After</p>',
     );
+  });
+});
+
+// ============================================================================
+// Tests: stripHeadingAnchors
+// ============================================================================
+//
+// moss appends a permalink anchor to every heading:
+//   <h2 id="1.">1.<a class="moss-heading-anchor" href="#1." aria-label="…">
+//     <span aria-hidden="true">#</span></a></h2>
+// On the web the `#` is hover-only chrome, but matters' sanitizer keeps the
+// anchor's text — so headings render as "1.#" (a stray `#`, linked). This is
+// web-only chrome, not content, so we strip the whole anchor on syndication.
+// Verified 2026-06-16 against server.matters.icu (the `#` survives without this).
+
+describe("stripHeadingAnchors", () => {
+  it("removes the moss-heading-anchor permalink from a heading", () => {
+    const html =
+      '<h1 id="1." data-source-line="8">1.<a class="moss-heading-anchor" href="#1." aria-label="Permalink to this section"><span aria-hidden="true">#</span></a></h1>';
+    expect(stripHeadingAnchors(html)).toBe('<h1 id="1." data-source-line="8">1.</h1>');
+  });
+
+  it("strips anchors from multiple headings, leaving heading text intact", () => {
+    const html =
+      '<h2>Intro<a class="moss-heading-anchor" href="#intro"><span aria-hidden="true">#</span></a></h2>' +
+      "<p>body</p>" +
+      '<h3>详情<a class="moss-heading-anchor" href="#详情"><span aria-hidden="true">#</span></a></h3>';
+    expect(stripHeadingAnchors(html)).toBe("<h2>Intro</h2><p>body</p><h3>详情</h3>");
+  });
+
+  it("tolerates attribute order and extra classes on the anchor", () => {
+    const html = '<h2>T<a href="#t" class="foo moss-heading-anchor bar"><span>#</span></a></h2>';
+    expect(stripHeadingAnchors(html)).toBe("<h2>T</h2>");
+  });
+
+  it("leaves ordinary anchors (non-heading-anchor) untouched", () => {
+    const html = '<h2>See <a href="/other">link</a></h2>';
+    expect(stripHeadingAnchors(html)).toBe(html);
+  });
+
+  it("leaves content without heading anchors unchanged", () => {
+    const html = "<h2>Title</h2><p>text</p>";
+    expect(stripHeadingAnchors(html)).toBe(html);
+  });
+});
+
+// Also exercised via the full normalizeHtmlForMatters pipeline.
+describe("normalizeHtmlForMatters - strips heading anchors", () => {
+  it("removes the permalink # and downgrades h1→h2 in one pass", () => {
+    const html =
+      '<h1 id="1.">1.<a class="moss-heading-anchor" href="#1."><span aria-hidden="true">#</span></a></h1>';
+    const result = normalizeHtmlForMatters(html);
+    expect(result).toBe('<h2 id="1.">1.</h2>');
+    expect(result).not.toContain("#");
+    expect(result).not.toContain("moss-heading-anchor");
   });
 });
 

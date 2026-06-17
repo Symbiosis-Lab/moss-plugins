@@ -2,8 +2,8 @@
  * Task 2.3 — auto-detect tests for waitForPublishOrClose.
  *
  * These tests verify that a `browser-url-changed` event to a published-looking
- * URL triggers an immediate fetchDraft verify, and that the function resolves
- * as published BEFORE the 5s poll would have fired.
+ * URL triggers an immediate fetchDraft verify. The URL-triggered path resolves
+ * the wait (poll is the fallback) — with `sleep` mocked, both paths are instant.
  *
  * Also verifies the negative case: a URL that doesn't look like a published
  * article (or an article URL the API does NOT confirm) must NOT resolve.
@@ -203,8 +203,8 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
       article: { id: "a1", shortHash: "a1b2c3", slug: "post" },
     } as never);
 
-    // Start waiting with a long timeout (poll would fire after 5s, but the
-    // URL event should resolve it immediately before any poll interval fires)
+    // Start waiting with a long timeout. URL-triggered path resolves the wait;
+    // poll is the fallback (both instant here because sleep is mocked).
     const browserHandle = { closed: new Promise<void>(() => {}) };
     const p = waitForPublishOrClose("d1", 600000, browserHandle);
 
@@ -215,7 +215,7 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
     // Trigger the URL change event with a valid published-article URL
     await emitBrowserUrlChanged("https://matters.town/@guo/post-a1b2c3");
 
-    // Should resolve before the 5s poll (which is mocked to a no-op sleep)
+    // URL-triggered path resolves the wait (poll is the fallback)
     await expect(p).resolves.toEqual({ shortHash: "a1b2c3", slug: "post" });
   });
 
@@ -289,5 +289,46 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
 
     // The unlisten function returned by onEvent must have been called
     expect(mockUnlistenUrl).toHaveBeenCalled();
+  });
+
+  it("leaked-listener race: URL event fired after close-before-unlisten does NOT call fetchDraft again", async () => {
+    // Arrange: API confirms unpublished (so only the close branch can settle null)
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "unpublished",
+      article: null,
+    } as never);
+
+    // browserHandle.closed is already-resolved → settle(null) fires synchronously
+    // in the next microtask, before the onEvent .then() storing unlistenUrl runs.
+    const browserHandle = { closed: Promise.resolve() };
+    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+
+    // Drain microtasks so settle(null) fires (browser close branch)
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Wait should already be resolved as null
+    await expect(p).resolves.toBeNull();
+
+    // Record how many times fetchDraft was called up to this point
+    const callsBefore = vi.mocked(fetchDraft).mock.calls.length;
+
+    // Now simulate the leaked listener firing (as if unlisten hadn't run yet)
+    // capturedUrlListener may or may not be set depending on microtask ordering;
+    // if it is set, the callback must short-circuit on `settled` and not call fetchDraft.
+    if (capturedUrlListener) {
+      capturedUrlListener({ url: "https://matters.town/@guo/post-a1b2c3" });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    // fetchDraft must NOT have been called an additional time
+    expect(vi.mocked(fetchDraft).mock.calls.length).toBe(callsBefore);
   });
 });

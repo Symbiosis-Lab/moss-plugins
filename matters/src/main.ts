@@ -1400,6 +1400,8 @@ export async function waitForPublishOrClose(
 
     // Branch (c): URL-triggered immediate verify (latency optimisation; API is truth)
     onEvent<{ url: string }>("browser-url-changed", async (payload) => {
+      // guard the leaked-listener race: if we've already settled (e.g. unlisten not yet stored), do nothing
+      if (settled) return;
       const url = payload.url;
       console.log("[matters] browser-url-changed", url);
       if (!looksLikePublishedArticleUrl(url)) return;

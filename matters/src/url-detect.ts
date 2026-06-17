@@ -34,6 +34,10 @@ export function isDraftUrl(url: string): boolean {
  * profile sub-pages like `/@user/followers`, `/@user/settings`,
  * `/@user/bookmarks`, and bare `/@user`.
  *
+ * Accepted false-trigger: Matters sub-pages whose final path segment ends in
+ * `-<6+ alnum>` (e.g. `/@u/tags-abcdef`) will pass this check. This is
+ * harmless — the API `draft.article` verify rejects them as unrelated content.
+ *
  * This is a HINT only — always verify publication via the API before acting on it.
  */
 export function looksLikePublishedArticleUrl(url: string): boolean {

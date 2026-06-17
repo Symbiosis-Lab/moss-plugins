@@ -172,6 +172,7 @@ async function emitBrowserUrlChanged(url: string): Promise<void> {
 
 import { waitForPublishOrClose } from "../main";
 import { fetchDraft } from "../api";
+import { emitEvent, closeBrowser } from "@symbiosis-lab/moss-api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -330,5 +331,73 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
 
     // fetchDraft must NOT have been called an additional time
     expect(vi.mocked(fetchDraft).mock.calls.length).toBe(callsBefore);
+  });
+});
+
+// ── R19 — Held confirmation beat ──────────────────────────────────────────────
+
+describe("R19 — matters-room-published emitted before closeBrowser on confirmed publish", () => {
+  it("emits matters-room-published before calling closeBrowser on the confirmed-publish path", async () => {
+    // API confirms the article was published
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "published",
+      article: { id: "a1", shortHash: "a1b2c3", slug: "post" },
+    } as never);
+
+    // Track call order via an explicit ordering array
+    const callOrder: string[] = [];
+    vi.mocked(emitEvent).mockImplementation(async (name: string) => {
+      callOrder.push(`emit:${name}`);
+    });
+    vi.mocked(closeBrowser).mockImplementation(async () => {
+      callOrder.push("closeBrowser");
+    });
+
+    const browserHandle = { closed: new Promise<void>(() => {}) };
+    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Trigger the URL change — the settle(published) path fires
+    await emitBrowserUrlChanged("https://matters.town/@guo/post-a1b2c3");
+
+    // Wait for resolution (sleep is mocked to no-op so the 800ms is instant)
+    await p;
+
+    // matters-room-published MUST appear before closeBrowser in the call order
+    expect(callOrder).toContain("emit:matters-room-published");
+    expect(callOrder).toContain("closeBrowser");
+    const publishedIdx = callOrder.indexOf("emit:matters-room-published");
+    const closeIdx = callOrder.indexOf("closeBrowser");
+    expect(publishedIdx).toBeLessThan(closeIdx);
+  });
+
+  it("does NOT emit matters-room-published on the close/timeout (null) path", async () => {
+    // API never confirms → browser closes → settle(null)
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "unpublished",
+      article: null,
+    } as never);
+
+    const browserHandle = { closed: Promise.resolve() };
+    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await p;
+
+    // matters-room-published must NOT be emitted on the skip/close path
+    const emittedNames = vi.mocked(emitEvent).mock.calls.map((c) => c[0]);
+    expect(emittedNames).not.toContain("matters-room-published");
   });
 });

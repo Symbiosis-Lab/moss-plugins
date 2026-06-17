@@ -1367,11 +1367,23 @@ export async function waitForPublishOrClose(
 
       if (value) {
         console.log(`    🎉 Publish detected!`);
-        // Close the browser best-effort; don't block resolution on it.
-        closeBrowser().catch(() => { /* already closed */ });
+        // R19 — Held confirmation beat: signal the shell bar first, hold
+        // ~800ms so the "Published to Matters" bar is visible, THEN close
+        // the browser. Prevents the "moss stole my tab" feeling. The 800ms
+        // uses the same `sleep` helper as the poll loop so tests can mock it.
+        (async () => {
+          try {
+            await emitEvent("matters-room-published");
+          } catch (err) {
+            console.warn(`    ⚠️ Failed to emit matters-room-published: ${err}`);
+          }
+          await sleep(800);
+          closeBrowser().catch(() => { /* already closed */ });
+          resolve(value);
+        })();
+      } else {
+        resolve(value);
       }
-
-      resolve(value);
     }
 
     // Branch (a): poll loop — uses sleep() so tests can mock it to a no-op.

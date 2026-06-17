@@ -404,15 +404,24 @@ describe("Law 2 — draft-timeout becomes a NeedsAction advisory with a link (no
     expect(mockShowToast).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringMatching(/Syndicated \d+ article/) }),
     );
-    // task.succeeded must NOT be called with a non-zero count.
-    expect(mockTaskSucceeded).not.toHaveBeenCalledWith(undefined, expect.any(Number));
+    // task.succeeded is still called (the run itself succeeded), but MUST
+    // receive 0 — not the draftsCreated count. Calling with (undefined, 0)
+    // means "completed with zero syndicated", which is correct.
+    expect(mockTaskSucceeded).toHaveBeenCalledWith(undefined, 0);
     // The NeedsAction advisory IS still filed (existing Law 2 assertions above cover this).
   });
 
   it("Law 2c — #808 mixed-batch: 1 published + 1 timed-out → toast 'Syndicated 1 article', task.succeeded receives 1", async () => {
-    // Two articles: article-1 is published (fetchDraft returns article non-null on first call),
-    // article-2 times out (browser closes before publish, fetchDraft returns article null on second call).
+    // Two articles: article-1 is published (fetchDraft poll returns article non-null),
+    // article-2 times out (browser closes before the poll can confirm, article null).
     // Expected: syndicatedCount = 1, toast matches /Syndicated 1 article/ (NOT "Syndicated 2").
+    //
+    // NOTE on waitForPublishOrClose mechanics: when `closed` is already resolved,
+    // the browser-close branch fires AFTER the first `sleep()` (via microtask), so
+    // `fetchDraft` is never called inside the poll loop — the function returns null.
+    // For article-1 to register as published, `closed` must NOT resolve before
+    // `fetchDraft` is polled → use a never-resolving promise so the poll runs once.
+    // For article-2 (timeout path) `closed` resolves immediately → loop exits null.
     const { fetchDraft } = await import("../api");
     vi.mocked(fetchDraft)
       .mockResolvedValueOnce({
@@ -432,11 +441,10 @@ describe("Law 2 — draft-timeout becomes a NeedsAction advisory with a link (no
         article: null,
       } as never);
 
-    // Make the browser close immediately for both articles so the
-    // browser-close branch exits waitForPublishOrClose quickly.
-    // For article-1 fetchDraft returns article (published); for article-2 it returns null.
+    // Article-1: never-resolving closed → poll fires → fetchDraft[0] returns published.
+    // Article-2: immediately-resolving closed → browser-close branch exits → null.
     mockOpenBrowser
-      .mockResolvedValueOnce({ closed: Promise.resolve() })
+      .mockResolvedValueOnce({ closed: new Promise<void>(() => {}) })
       .mockResolvedValueOnce({ closed: Promise.resolve() });
 
     const ctx = makeSyndicateContext([

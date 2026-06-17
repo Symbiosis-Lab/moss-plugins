@@ -117,6 +117,11 @@ vi.mock("../utils", () => ({
   reportError: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
   sleep: vi.fn().mockResolvedValue(undefined),
+  // Pure receipt formatter — stubbed (these tests assert routing + the unauth
+  // note, not the summary text; the real impl is covered by utils.test.ts).
+  // A fixed factory is used here on purpose: importing the real ../utils runs
+  // its top-level setMessageContext() side effect, which has no host in tests.
+  formatArticleSyncSummary: vi.fn(() => "articles synced"),
 }));
 
 vi.mock("../progress", () => ({

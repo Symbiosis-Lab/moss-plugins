@@ -341,6 +341,16 @@ Some text
     expect(result.imagesDownloaded).toBe(1);
     expect(result.errors.length).toBeGreaterThan(0);
 
+    // The failed image's SOURCE URL is surfaced for a per-image advisory (so
+    // the user sees which image broke, not an opaque "1 failed" count).
+    expect(result.failedImageUrls).toContain(
+      `https://assets.matters.news/embed/${uuid2}.jpg`,
+    );
+    // The successful image is NOT listed as failed.
+    expect(result.failedImageUrls).not.toContain(
+      `https://assets.matters.news/embed/${uuid1}.jpg`,
+    );
+
     // Verify: File was modified to update successful reference
     const updatedContent = ctx.filesystem.getFile(`${ctx.projectPath}/article.md`)?.content;
     expect(updatedContent).toBeDefined();

@@ -303,12 +303,21 @@ export async function downloadMediaAndUpdate(): Promise<{
   imagesDownloaded: number;
   imagesSkipped: number;
   errors: string[];
+  /**
+   * Source URLs of images that failed to download (the dead CDN references
+   * still sitting in the article bodies). The caller turns each into a
+   * per-image advisory so the user sees WHICH image broke — not an opaque
+   * "N failed" count. A subset of `errors` carrying just the image-download
+   * failures (not list/write failures).
+   */
+  failedImageUrls: string[];
 }> {
   const result = {
     filesProcessed: 0,
     imagesDownloaded: 0,
     imagesSkipped: 0,
     errors: [] as string[],
+    failedImageUrls: [] as string[],
   };
 
   console.log("📸 Downloading media assets and updating references...");
@@ -480,10 +489,14 @@ export async function downloadMediaAndUpdate(): Promise<{
         // sync continues, partial success is allowed.
         const msg = `Image download failed (${downloadResult.error}): ${media.url}`;
         result.errors.push(`${media.url}: ${downloadResult.error}`);
+        result.failedImageUrls.push(media.url);
         await reportError(msg, "downloading_media", false);
       }
     } else {
-      // Promise rejected (shouldn't happen with our try/catch in downloadAssetWithRetry)
+      // Promise rejected (shouldn't happen with our try/catch in
+      // downloadAssetWithRetry). No `media.url` is available here, so this stays
+      // in `errors` only — it is intentionally NOT pushed to `failedImageUrls`,
+      // whose entries must be real image URLs for the per-image advisory.
       const msg = `Image download failed: ${settled.reason}`;
       result.errors.push(`Download failed: ${settled.reason}`);
       await reportError(msg, "downloading_media", false);

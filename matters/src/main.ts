@@ -15,6 +15,7 @@ import {
   reportError,
   setCurrentHookName,
   sleep,
+  formatArticleSyncSummary,
 } from "./utils";
 import { startTask } from "@symbiosis-lab/moss-api";
 import type { TaskHandle } from "@symbiosis-lab/moss-api";
@@ -625,14 +626,14 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       context.project_info.folder_name,
     );
 
-    // Build summary message
-    const parts: string[] = [];
-    if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
-    if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
-    if (syncResult.skipped > 0) parts.push(`${syncResult.skipped} unchanged`);
-    if (syncResult.errors.length > 0) parts.push(`${syncResult.errors.length} errors`);
-
-    const summary = parts.length > 0 ? parts.join(", ") : "no changes";
+    // Build the NOUN-LED article summary ("12 articles already up to date"),
+    // not a bare "12 unchanged". One headline fact for the progress surface.
+    const summary = formatArticleSyncSummary({
+      created: syncResult.created,
+      updated: syncResult.updated,
+      skipped: syncResult.skipped,
+      failed: syncResult.errors.length,
+    });
     await task.progress(overallProgress("syncing", syncTotal, syncTotal) / 100, `Sync complete: ${summary}`);
     console.log(`✅ Sync complete: ${summary}`);
 
@@ -644,21 +645,24 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
     await task.progress(overallProgress("rewriting_links", 1, 1) / 100, `Rewrote ${linkResult.linksRewritten} internal links`);
 
-    // Build media summary with correct labels:
-    // - imagesDownloaded: successfully downloaded
-    // - imagesSkipped: already existed locally (not failures!)
-    // - errors.length: actual failures
-    const mediaParts: string[] = [];
-    if (mediaResult.imagesDownloaded > 0) {
-      mediaParts.push(`${mediaResult.imagesDownloaded} downloaded`);
+    // Media outcomes do NOT clutter the success receipt: downloads/skips stay
+    // silent ("success makes no sound"), and each FAILED image is proposed as
+    // its own advisory carrying the image's source URL (the dead CDN reference
+    // still in the body) so the user sees WHICH image broke — not an opaque
+    // "1 failed" count. moss groups same-reason advisories into one notice that
+    // lists the URLs (capped + "+N more"). ShippedDegraded: the sync still
+    // succeeded, so this is a quiet hairline dot, never a blocker (gavel: R13).
+    // `?? []`: media is a non-critical path — a result missing this field (e.g.
+    // a partial test mock) must never abort the whole sync over an advisory.
+    for (const url of mediaResult.failedImageUrls ?? []) {
+      await task.advise({
+        scope: "Remote",
+        severity: "ShippedDegraded",
+        item: url,
+        what: "Image could not be downloaded from Matters",
+        action: "None",
+      });
     }
-    if (mediaResult.imagesSkipped > 0) {
-      mediaParts.push(`${mediaResult.imagesSkipped} skipped`);
-    }
-    if (mediaResult.errors.length > 0) {
-      mediaParts.push(`${mediaResult.errors.length} failed`);
-    }
-    const mediaSummary = mediaParts.length > 0 ? `, images: ${mediaParts.join(", ")}` : "";
 
     const linkSummary =
       linkResult.linksRewritten > 0
@@ -762,7 +766,12 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         }
       }
 
-      socialSummary = `, ${totalComments} new comments`;
+      // Only announce comments when there ARE new ones — "0 new comments" is
+      // noise that bloated the receipt and pushed the real outcome past the
+      // truncation edge.
+      if (totalComments > 0) {
+        socialSummary = `, ${totalComments} new comment${totalComments === 1 ? "" : "s"}`;
+      }
       console.log(`✅ Social data: ${fetched} fetched, ${skipped} skipped (no change), ${totalComments} new comments`);
     }
 
@@ -783,7 +792,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     // Only core sync errors are critical; media/link errors are non-critical (nice-to-have)
     // This allows partial success (e.g., all articles synced but some images failed to download)
     const criticalErrors = syncResult.errors;
-    const finalMessage = `Synced from Matters: ${summary}${mediaSummary}${linkSummary}${socialSummary}`;
+    const finalMessage = `Synced from Matters: ${summary}${linkSummary}${socialSummary}`;
 
     // Honest receipt for EVERY unauthenticated-mode run (spec §3.3),
     // state-aware: expired session vs never-logged-in route differently.
@@ -796,7 +805,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       : "";
 
     if (criticalErrors.length === 0) {
-      await task.succeeded(`${summary}${mediaSummary}${linkSummary}${socialSummary}${unauthNote}`);
+      await task.succeeded(`${summary}${linkSummary}${socialSummary}${unauthNote}`);
     } else {
       await task.failed(`${criticalErrors.length} sync error(s)`, true);
     }

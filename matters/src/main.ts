@@ -999,9 +999,11 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     // Terminal: report the COUNT, not a pre-formatted string. moss owns the
     // receipt — it pairs the manifest's normalized verb ("Syndicated") with
     // this count + the declared noun ("posts") to render "Syndicated · N posts"
-    // from its OWN value objects (Step 3 Phase 5, §8 + R13). `posts` = articles
-    // actually pushed to Matters (published + drafts created).
-    const syndicatedCount = published + draftsCreated;
+    // from its OWN value objects (Step 3 Phase 5, §8 + R13).
+    // #808: a created-but-unpublished draft is NOT a syndication. Only an
+    // API-confirmed publish (draft.article non-null) counts toward the success
+    // receipt/toast. A draft saved for later is surfaced as a NeedsAction advisory.
+    const syndicatedCount = published;
 
     if (errors.length > 0) {
       console.warn(`⚠️  Syndication complete: ${summary}`);

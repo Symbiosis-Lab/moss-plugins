@@ -382,6 +382,81 @@ describe("Law 2 — draft-timeout becomes a NeedsAction advisory with a link (no
     expect(adv.action.Link.href).toContain("matters.town/drafts");
     expect(adv.action.Link.label).toBe("Open draft");
   });
+
+  it("Law 2b — #808: timed-out/closed draft (published=0, draftsCreated=1) fires NO success toast and task.succeeded receives 0", async () => {
+    // Regression guard for #808: a draft that was created but never published
+    // (user closed the browser / timed out) must NOT count as a syndication
+    // success. syndicatedCount MUST be 0, not 1.
+    const { fetchDraft } = await import("../api");
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "unpublished",
+      article: null,
+    } as never);
+
+    const ctx = makeSyndicateContext([makeUnsyncedArticle({ source_path: "posts/alpha.md" })]);
+    await syndicate(ctx);
+
+    // No success toast should fire when nothing was actually published.
+    expect(mockShowToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/Syndicated \d+ article/) }),
+    );
+    // task.succeeded must NOT be called with a non-zero count.
+    expect(mockTaskSucceeded).not.toHaveBeenCalledWith(undefined, expect.any(Number));
+    // The NeedsAction advisory IS still filed (existing Law 2 assertions above cover this).
+  });
+
+  it("Law 2c — #808 mixed-batch: 1 published + 1 timed-out → toast 'Syndicated 1 article', task.succeeded receives 1", async () => {
+    // Two articles: article-1 is published (fetchDraft returns article non-null on first call),
+    // article-2 times out (browser closes before publish, fetchDraft returns article null on second call).
+    // Expected: syndicatedCount = 1, toast matches /Syndicated 1 article/ (NOT "Syndicated 2").
+    const { fetchDraft } = await import("../api");
+    vi.mocked(fetchDraft)
+      .mockResolvedValueOnce({
+        id: "d1",
+        title: "Post One",
+        content: "",
+        createdAt: "2026-01-01T00:00:00Z",
+        publishState: "published",
+        article: { id: "a1", shortHash: "abc", slug: "post-one" },
+      } as never)
+      .mockResolvedValueOnce({
+        id: "d2",
+        title: "Post Two",
+        content: "",
+        createdAt: "2026-01-01T00:00:00Z",
+        publishState: "unpublished",
+        article: null,
+      } as never);
+
+    // Make the browser close immediately for both articles so the
+    // browser-close branch exits waitForPublishOrClose quickly.
+    // For article-1 fetchDraft returns article (published); for article-2 it returns null.
+    mockOpenBrowser
+      .mockResolvedValueOnce({ closed: Promise.resolve() })
+      .mockResolvedValueOnce({ closed: Promise.resolve() });
+
+    const ctx = makeSyndicateContext([
+      makeUnsyncedArticle({ title: "Post One", source_path: "posts/post-one.md", url_path: "posts/post-one/" }),
+      makeUnsyncedArticle({ title: "Post Two", source_path: "posts/post-two.md", url_path: "posts/post-two/" }),
+    ]);
+    await syndicate(ctx);
+
+    // Must fire exactly one success toast matching "Syndicated 1 article" (not "2 articles").
+    const successToastCalls = mockShowToast.mock.calls.filter(
+      ([opts]: [{ variant?: string }]) => opts.variant === "success",
+    );
+    expect(successToastCalls).toHaveLength(1);
+    const [[opts]] = successToastCalls as [[{ message: string; variant: string }]];
+    expect(opts.message).toMatch(/Syndicated 1 article/);
+    expect(opts.message).not.toMatch(/Syndicated 2/);
+
+    // task.succeeded must receive exactly 1.
+    expect(mockTaskSucceeded).toHaveBeenCalledWith(undefined, 1);
+  });
 });
 
 describe("Law 3 — one terminal L3 ack after the loop (not per article)", () => {

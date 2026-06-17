@@ -62,5 +62,18 @@ describe("matters url-detect", () => {
       // A slug like "pure-text-only" has no trailing hash segment
       expect(looksLikePublishedArticleUrl("https://matters.town/@guo/pure-text-only")).toBe(false);
     });
+
+    it("known false-trigger: /@user/tags-abcdef returns true (accepted, caught by API verify)", () => {
+      // /@guo/tags-abcdef passes the regex because its final path segment ends
+      // in "-<6+ alnum>". This is an intentionally accepted false-positive: the
+      // regex cannot cheaply distinguish article slugs from profile sub-pages
+      // whose names happen to end in a hash-like suffix. The caller (the matters
+      // plugin sync check) always verifies the candidate URL against the Matters
+      // API (draft.article); the API rejects non-article paths, so this false-
+      // trigger is harmless in practice. Do NOT change the regex to reject this
+      // case — the cure would be worse than the disease (over-fitting to a URL
+      // shape that Matters can change at any time).
+      expect(looksLikePublishedArticleUrl("https://matters.town/@guo/tags-abcdef")).toBe(true);
+    });
   });
 });

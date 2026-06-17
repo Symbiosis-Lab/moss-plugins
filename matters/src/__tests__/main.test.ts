@@ -83,6 +83,21 @@ vi.mock("../domain", () => ({
   draftUrl: vi.fn().mockImplementation((id: string) => `https://matters.town/drafts/${id}`),
   articleUrl: vi.fn().mockImplementation((_user: string, slug: string, hash: string) => `https://matters.town/@testuser/${slug}-${hash}`),
   isMattersUrl: vi.fn().mockImplementation((url: string) => url.includes("matters.town")),
+  // scanLocalArticles (in ../sync) resolves extractShortHash from ../domain; this
+  // mock must provide it or any future main.ts test reaching scanLocalArticles would
+  // call undefined(). Mirror the real /a/ + canonical parsing.
+  extractShortHash: vi.fn().mockImplementation((url: string) => {
+    try {
+      const segments = new URL(url, "https://matters.town").pathname.split("/").filter(Boolean);
+      if (segments.length === 0) return null;
+      if (segments[0] === "a" && segments.length >= 2) return segments[1] || null;
+      const last = segments[segments.length - 1];
+      const hyphen = last.lastIndexOf("-");
+      return hyphen === -1 ? null : last.substring(hyphen + 1) || null;
+    } catch {
+      return null;
+    }
+  }),
 }));
 
 vi.mock("../utils", () => ({

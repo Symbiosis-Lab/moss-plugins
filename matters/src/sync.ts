@@ -46,7 +46,12 @@ import { slugify, reportProgress, reportError } from "./utils";
 import { overallProgress } from "./progress";
 import { generateFrontmatter, parseFrontmatter } from "./converter";
 import { htmlToMarkdown, readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
-import { isMattersUrl, articleUrl } from "./domain";
+import { isMattersUrl, articleUrl, extractShortHash } from "./domain";
+
+// Canonical home for extractShortHash is ./domain (it owns Matters URL knowledge).
+// Re-exported here so existing `import { extractShortHash } from "../sync"` callers
+// and tests keep resolving it.
+export { extractShortHash } from "./domain";
 
 // ============================================================================
 // Exported Functions for Folder Detection
@@ -243,25 +248,6 @@ export function isRemoteNewer(
   return remoteDate > localDate;
 }
 
-/**
- * Extract shortHash from a Matters URL
- * URL format: https://matters.town/@userName/slug-shortHash
- */
-export function extractShortHash(mattersUrl: string): string | null {
-  try {
-    const url = new URL(mattersUrl);
-    const path = url.pathname;
-    // Path format: /@userName/slug-shortHash
-    const lastSegment = path.split("/").pop();
-    if (!lastSegment) return null;
-    // shortHash is the last part after the final hyphen
-    const parts = lastSegment.split("-");
-    if (parts.length < 2) return null;
-    return parts[parts.length - 1];
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Scan local markdown files to find all synced Matters articles
@@ -318,6 +304,14 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
                 title: (parsed.frontmatter.title as string) || file,
                 uid,
               });
+            } else {
+              // Visible signal rather than a silent drop: an article with a
+              // valid Matters syndicated URL whose shortHash can't be parsed
+              // will get no comments/social data, and the user would otherwise
+              // have no way to know why.
+              console.warn(
+                `[matters] could not extract shortHash from syndicated URL "${mattersUrl}" (${file}) — skipping social fetch`
+              );
             }
           }
         }

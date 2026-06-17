@@ -135,6 +135,39 @@ export function isMattersUrl(url: string): boolean {
 }
 
 /**
+ * Extract the Matters shortHash from an article URL.
+ *
+ * Supports both URL forms Matters produces:
+ *   - Canonical:   https://matters.town/@user/<slug>-<shortHash>  → <shortHash>
+ *   - Short link:  https://matters.town/a/<shortHash>             → <shortHash>
+ *
+ * Accepts absolute or root-relative URLs. Returns null when no shortHash can be
+ * determined. Pure function: the fixed base host only lets `new URL` parse
+ * root-relative inputs and never affects the parsed pathname.
+ */
+export function extractShortHash(url: string): string | null {
+  let path: string;
+  try {
+    path = new URL(url, "https://matters.town").pathname;
+  } catch {
+    return null;
+  }
+
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+
+  // Short-link form: /a/<shortHash> — the whole segment is the hash.
+  if (segments[0] === "a" && segments.length >= 2) {
+    return segments[1] || null;
+  }
+
+  // Canonical form: /@user/<slug>-<shortHash> — hash is after the final hyphen.
+  const last = segments[segments.length - 1];
+  const hyphen = last.lastIndexOf("-");
+  return hyphen === -1 ? null : last.substring(hyphen + 1) || null;
+}
+
+/**
  * Check if a URL points to the current user's content on the configured domain
  */
 export function isInternalMattersLink(

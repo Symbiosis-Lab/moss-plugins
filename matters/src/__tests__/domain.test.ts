@@ -11,6 +11,7 @@ import {
   articleUrl,
   isMattersUrl,
   isInternalMattersLink,
+  extractShortHash,
   resetDomain,
 } from "../domain";
 
@@ -288,5 +289,53 @@ describe("Domain Module", () => {
       resetDomain();
       expect(getDomain()).toBe("matters.town");
     });
+  });
+});
+
+// ============================================================================
+// extractShortHash — pure URL parsing (no Tauri context needed)
+// ============================================================================
+
+describe("extractShortHash", () => {
+  it("extracts shortHash from standard Matters URL", () => {
+    const url = "https://matters.town/@testuser/test-article-abc123def";
+    expect(extractShortHash(url)).toBe("abc123def");
+  });
+
+  it("extracts shortHash from URL with multiple hyphens in slug", () => {
+    const url = "https://matters.town/@testuser/my-long-article-title-xyz789";
+    expect(extractShortHash(url)).toBe("xyz789");
+  });
+
+  it("extracts shortHash from Chinese article URL", () => {
+    const url = "https://matters.town/@testuser/测试文章-shortHash123";
+    expect(extractShortHash(url)).toBe("shortHash123");
+  });
+
+  it("returns null for invalid URL", () => {
+    expect(extractShortHash("not a url")).toBe(null);
+  });
+
+  it("returns null for URL without path segments", () => {
+    expect(extractShortHash("https://matters.town/")).toBe(null);
+  });
+
+  it("returns null for URL with only slug (no hyphen)", () => {
+    expect(extractShortHash("https://matters.town/@testuser/article")).toBe(null);
+  });
+
+  it("extracts shortHash from /a/ short-link URL", () => {
+    expect(extractShortHash("https://matters.town/a/aj5szksg7ppa")).toBe("aj5szksg7ppa");
+  });
+
+  it("extracts shortHash from /a/ short-link with query and fragment", () => {
+    expect(extractShortHash("https://matters.town/a/aj5szksg7ppa?utm=x#comment")).toBe(
+      "aj5szksg7ppa"
+    );
+  });
+
+  it("returns null for bare /a path with no shortHash", () => {
+    expect(extractShortHash("https://matters.town/a")).toBe(null);
+    expect(extractShortHash("https://matters.town/a/")).toBe(null);
   });
 });

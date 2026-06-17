@@ -17,7 +17,7 @@ import {
 import { overallProgress } from "./progress";
 import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
-import { isInternalMattersLink as isDomainInternalLink } from "./domain";
+import { isInternalMattersLink as isDomainInternalLink, extractShortHash } from "./domain";
 import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
@@ -596,22 +596,6 @@ function isInternalMattersLink(url: string, userName: string): boolean {
 }
 
 /**
- * Extract shortHash from Matters article URL
- * URL format: https://matters.town/@user/slug-shortHash
- */
-function extractShortHash(url: string): string | null {
-  const match = url.match(/\/([^/]+)$/);
-  if (!match) return null;
-
-  const slugWithHash = match[1];
-  // shortHash is the last part after final hyphen
-  const lastHyphen = slugWithHash.lastIndexOf("-");
-  if (lastHyphen === -1) return null;
-
-  return slugWithHash.substring(lastHyphen + 1);
-}
-
-/**
  * Rewrite internal Matters links to local paths in a single file's content
  */
 function rewriteLinksInContent(
@@ -625,6 +609,9 @@ function rewriteLinksInContent(
   let linksRewritten = 0;
 
   for (const { url, fullMatch } of links) {
+    // Only own-user canonical `/@userName/...` links are rewritten. `/a/<shortHash>`
+    // short-links never pass this guard, so the shared extractShortHash's short-link
+    // support is intentionally unreachable here — body cross-links are canonical form.
     if (!isInternalMattersLink(url, userName)) continue;
 
     // Try exact URL match first

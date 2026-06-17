@@ -67,6 +67,12 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
+  emitEvent: vi.fn().mockResolvedValue(undefined),
+  // R7: waitForPublishOrClose calls onEvent('browser-url-changed').
+  // Without this mock the rewritten function throws on import.
+  // Returns a no-op unlisten function; the URL path is never exercised in
+  // these law tests (browser-close / poll are the drivers here).
+  onEvent: vi.fn().mockResolvedValue(vi.fn()),
 }));
 
 vi.mock("../config", () => ({

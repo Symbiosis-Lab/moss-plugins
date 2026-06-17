@@ -52,6 +52,7 @@ import {
   pluginFileExists,
   getPluginEnvVar,
   emitEvent,
+  onEvent,
 } from "@symbiosis-lab/moss-api";
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
@@ -61,6 +62,7 @@ import {
   articleUrl,
   isMattersUrl,
 } from "./domain";
+import { looksLikePublishedArticleUrl } from "./url-detect";
 
 // ============================================================================
 // Social-fetch predicates (exported for unit tests — used in Phase 8 below)
@@ -1251,6 +1253,44 @@ export async function syndicateArticle(
     console.warn(`    ⚠️ Failed to emit matters-room-skipped: ${err}`);
   }
 
+  // R9: Post-settle reconciliation — close/skip won the race but the article
+  // may have been published in the same window (e.g. user published → closed
+  // fast enough for close to win). Avoid leaving a misleading "Draft saved"
+  // advisory when the article is actually live. Best-effort: a network failure
+  // here must not abort the cleanup.
+  let latePublish: { shortHash: string; slug: string } | null = null;
+  try {
+    const reconcileDraft = await fetchDraft(draft.id);
+    if (reconcileDraft?.article) {
+      latePublish = {
+        shortHash: reconcileDraft.article.shortHash,
+        slug: reconcileDraft.article.slug,
+      };
+      console.log(`    🔄 R9 reconciliation: article was published despite close/timeout`);
+    }
+  } catch (err) {
+    console.warn(`    ⚠️ R9 reconciliation check failed: ${err}`);
+  }
+
+  if (latePublish) {
+    // Article is actually live — update frontmatter and return as published.
+    const publishedUrl = articleUrl(userName, latePublish.slug, latePublish.shortHash);
+    if (article.source_path) {
+      await updateFrontmatterSyndicated(article.source_path, publishedUrl).catch((err) => {
+        console.warn(`    ⚠️ R9: Failed to update frontmatter: ${err}`);
+      });
+      await removeDraftId(article.source_path).catch(() => {});
+    }
+    await task.advise({
+      scope: "Remote",
+      severity: "Info",
+      item: article.title,
+      what: "Article published on Matters — frontmatter will sync",
+      action: { Link: { href: publishedUrl, label: "View article" } },
+    });
+    return { draftId: draft.id, publishedUrl };
+  }
+
   // Save draft ID for reuse next time
   if (article.source_path) {
     try {
@@ -1276,71 +1316,116 @@ export async function syndicateArticle(
 }
 
 /**
- * Wait for draft to be published, browser to close, or timeout
+ * Wait for draft to be published, browser to close, or timeout.
  *
- * Polls the draft every 5 seconds to check if it has been published.
- * Also listens for browser close events to exit immediately when
- * the user closes the action panel.
+ * Rewritten (R6) from a `while`-loop into a single `new Promise` executor
+ * with a shared `settle()` guard so exactly ONE resolution wins. Four racing
+ * branches all call `settle`:
  *
- * Returns the published article info if published, null on close/timeout.
+ *   (a) Poll loop — sleep(5s) then fetchDraft; if draft.article → settle published.
+ *       Uses the `sleep` utility so tests can mock it to a no-op.
+ *   (b) browserHandle.closed → settle(null) [keeps existing test-mock behaviour].
+ *   (c) onEvent('browser-url-changed') — if URL looks like a published article,
+ *       immediately call fetchDraft; if draft.article → settle published.
+ *       The URL is a TRIGGER; the API is the source of truth.
+ *   (d) setTimeout at timeoutMs → settle(null).
+ *
+ * Cleanup (url-listener + timeout handle) is guaranteed on EVERY resolution
+ * path. The poll loop exits naturally once `settled` is true. A leaked
+ * `onEvent` listener double-fires on the next article — unlisten is mandatory.
+ *
+ * Returns { shortHash, slug } on confirmed publish; null on close/timeout.
+ *
+ * NOTE: Matters is currently the last channel. When multi-channel ordering
+ * changes, "done detection finishes the ship" must be revisited.
+ *
+ * @internal exported for unit tests only
  */
-async function waitForPublishOrClose(
+export async function waitForPublishOrClose(
   draftId: string,
   timeoutMs: number,
   browserHandle?: BrowserHandle
 ): Promise<{ shortHash: string; slug: string } | null> {
-  const startTime = Date.now();
-  const pollInterval = 5000; // 5 seconds
-  let browserClosed = false;
-
-  // Listen for browser close
-  if (browserHandle) {
-    browserHandle.closed.then(() => {
-      browserClosed = true;
-    });
-  }
-
   console.log(`    ⏳ Waiting for publish (timeout: ${timeoutMs / 1000}s)...`);
 
-  while (Date.now() - startTime < timeoutMs) {
-    await sleep(pollInterval);
+  const pollIntervalMs = 5000; // 5 seconds
 
-    // Exit immediately if browser was closed
-    if (browserClosed) {
-      console.log(`    🚪 Browser closed by user`);
-      return null;
-    }
+  return new Promise<{ shortHash: string; slug: string } | null>((resolve) => {
+    let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let unlistenUrl: (() => void) | undefined;
 
-    try {
-      const draft = await fetchDraft(draftId);
+    function settle(value: { shortHash: string; slug: string } | null): void {
+      if (settled) return;
+      settled = true;
 
-      if (draft?.article) {
-        // Draft was published
+      // Cleanup: clear the global timeout and the URL listener so neither
+      // fires again on a subsequent article. The poll loop exits via the
+      // `settled` guard in its own loop.
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      if (unlistenUrl) unlistenUrl();
+
+      if (value) {
         console.log(`    🎉 Publish detected!`);
-        try {
-          await closeBrowser();
-        } catch {
-          // Browser might already be closed
-        }
-        return {
-          shortHash: draft.article.shortHash,
-          slug: draft.article.slug,
-        };
+        // Close the browser best-effort; don't block resolution on it.
+        closeBrowser().catch(() => { /* already closed */ });
       }
-    } catch (error) {
-      console.warn(`    ⚠️ Error checking draft status: ${error}`);
+
+      resolve(value);
     }
-  }
 
-  // Timeout - close browser
-  console.log(`    ⏱️ Timeout reached, closing browser...`);
-  try {
-    await closeBrowser();
-  } catch {
-    // Browser might already be closed
-  }
+    // Branch (a): poll loop — uses sleep() so tests can mock it to a no-op.
+    (async () => {
+      while (!settled) {
+        await sleep(pollIntervalMs);
+        if (settled) break;
+        try {
+          const draft = await fetchDraft(draftId);
+          if (draft?.article) {
+            settle({ shortHash: draft.article.shortHash, slug: draft.article.slug });
+          }
+        } catch (err) {
+          console.warn(`    ⚠️ Error checking draft status: ${err}`);
+        }
+      }
+    })();
 
-  return null;
+    // Branch (b): browser close
+    if (browserHandle) {
+      browserHandle.closed.then(() => {
+        console.log(`    🚪 Browser closed by user`);
+        settle(null);
+      });
+    }
+
+    // Branch (c): URL-triggered immediate verify (latency optimisation; API is truth)
+    onEvent<{ url: string }>("browser-url-changed", async (payload) => {
+      const url = payload.url;
+      console.log("[matters] browser-url-changed", url);
+      if (!looksLikePublishedArticleUrl(url)) return;
+      try {
+        const draft = await fetchDraft(draftId);
+        if (draft?.article) {
+          settle({ shortHash: draft.article.shortHash, slug: draft.article.slug });
+        }
+      } catch (err) {
+        console.warn(`    ⚠️ URL-triggered verify failed: ${err}`);
+      }
+    }).then((fn) => {
+      unlistenUrl = fn;
+    }).catch((err) => {
+      // If onEvent fails (e.g. no Tauri runtime in test env), log and continue.
+      // The API poll provides the correctness backstop regardless.
+      console.warn(`    ⚠️ Could not register browser-url-changed listener: ${err}`);
+    });
+
+    // Branch (d): global timeout
+    timeoutHandle = setTimeout(() => {
+      console.log(`    ⏱️ Timeout reached, closing browser...`);
+      closeBrowser().catch(() => { /* already closed */ });
+      settle(null);
+    }, timeoutMs);
+  });
 }
 
 /**

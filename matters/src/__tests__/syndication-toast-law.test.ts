@@ -114,6 +114,7 @@ vi.mock("../api", () => ({
 
 vi.mock("../domain", () => ({
   initializeDomain: vi.fn().mockResolvedValue(undefined),
+  getDomain: vi.fn().mockReturnValue("matters.town"),
   loginUrl: vi.fn().mockReturnValue("https://matters.town/login"),
   draftUrl: vi.fn().mockImplementation((id: string) => `https://matters.town/drafts/${id}`),
   articleUrl: vi.fn().mockImplementation((_u: string, slug: string, hash: string) => `https://matters.town/@guo/${slug}-${hash}`),

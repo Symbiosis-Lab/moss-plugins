@@ -1245,17 +1245,21 @@ export async function syndicateArticle(
   }
 
   // Step 9: Open draft in browser for user review; then signal L1 "waiting for you"
-  // Law 3: the 10-min waitForPublishOrClose poll is textbook Awaiting semantics.
+  // Law 3: waitForPublishOrClose is textbook Awaiting semantics.
   // task.awaiting() fires AFTER openBrowser() so the amber dot appears when
   // the editor is already visible (semantically accurate: "waiting for you IN
   // Matters editor" — the editor is open when the wait starts).
+  // task.awaiting() also suspends the Rust 60s inactivity watchdog, so a slow
+  // user is never killed by inactivity while the browser is open.
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
   const browserHandle = await openBrowser(draftPageUrl);
   await task.awaiting("publish the draft", "Matters editor", "cancel");
 
-  // Step 10: Poll for publish state change (10 min timeout)
-  const publishedArticle = await waitForPublishOrClose(draft.id, 600000, browserHandle);
+  // Step 10: Poll for publish state change — resolves only on publish or browser close.
+  // No wall-clock ceiling: the 60s Rust inactivity watchdog is suspended by the
+  // task.awaiting() signal above, so the hook waits as long as the user needs.
+  const publishedArticle = await waitForPublishOrClose(draft.id, browserHandle);
 
   if (publishedArticle) {
     // Step 11: Article was published - update local frontmatter
@@ -1355,25 +1359,31 @@ export async function syndicateArticle(
 }
 
 /**
- * Wait for draft to be published, browser to close, or timeout.
+ * Wait for draft to be published or the browser to be closed.
  *
  * Rewritten (R6) from a `while`-loop into a single `new Promise` executor
- * with a shared `settle()` guard so exactly ONE resolution wins. Four racing
+ * with a shared `settle()` guard so exactly ONE resolution wins. Three racing
  * branches all call `settle`:
  *
  *   (a) Poll loop — sleep(5s) then fetchDraft; if draft.article → settle published.
  *       Uses the `sleep` utility so tests can mock it to a no-op.
- *   (b) browserHandle.closed → settle(null) [keeps existing test-mock behaviour].
+ *   (b) browserHandle.closed → settle(null) [user closed the editor].
  *   (c) onEvent('browser-url-changed') — if URL looks like a published article,
  *       immediately call fetchDraft; if draft.article → settle published.
  *       The URL is a TRIGGER; the API is the source of truth.
- *   (d) setTimeout at timeoutMs → settle(null).
  *
- * Cleanup (url-listener + timeout handle) is guaranteed on EVERY resolution
- * path. The poll loop exits naturally once `settled` is true. A leaked
+ * There is NO wall-clock ceiling. The wait terminates only when:
+ *   - the article is confirmed published (a or c), or
+ *   - the user closes the browser (b).
+ * Crash recovery is handled by the 60s Rust inactivity watchdog, which is
+ * suspended while the hook signals Awaiting (via task.awaiting() in the
+ * caller) — so a slow user is never killed by inactivity.
+ *
+ * Cleanup (url-listener) is guaranteed on EVERY resolution path.
+ * The poll loop exits naturally once `settled` is true. A leaked
  * `onEvent` listener double-fires on the next article — unlisten is mandatory.
  *
- * Returns { shortHash, slug } on confirmed publish; null on close/timeout.
+ * Returns { shortHash, slug } on confirmed publish; null on browser close.
  *
  * NOTE: Matters is currently the last channel. When multi-channel ordering
  * changes, "done detection finishes the ship" must be revisited.
@@ -1382,26 +1392,22 @@ export async function syndicateArticle(
  */
 export async function waitForPublishOrClose(
   draftId: string,
-  timeoutMs: number,
   browserHandle?: BrowserHandle
 ): Promise<{ shortHash: string; slug: string } | null> {
-  console.log(`    ⏳ Waiting for publish (timeout: ${timeoutMs / 1000}s)...`);
+  console.log(`    ⏳ Waiting for publish (no wall-clock ceiling — resolves on publish or browser close)...`);
 
   const pollIntervalMs = 5000; // 5 seconds
 
   return new Promise<{ shortHash: string; slug: string } | null>((resolve) => {
     let settled = false;
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let unlistenUrl: (() => void) | undefined;
 
     function settle(value: { shortHash: string; slug: string } | null): void {
       if (settled) return;
       settled = true;
 
-      // Cleanup: clear the global timeout and the URL listener so neither
-      // fires again on a subsequent article. The poll loop exits via the
-      // `settled` guard in its own loop.
-      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      // Cleanup: clear the URL listener so it does not fire again on a
+      // subsequent article. The poll loop exits via the `settled` guard.
       if (unlistenUrl) unlistenUrl();
 
       if (value) {
@@ -1441,7 +1447,7 @@ export async function waitForPublishOrClose(
       }
     })();
 
-    // Branch (b): browser close
+    // Branch (b): browser close — user explicitly dismissed the editor.
     if (browserHandle) {
       browserHandle.closed.then(() => {
         console.log(`    🚪 Browser closed by user`);
@@ -1472,12 +1478,9 @@ export async function waitForPublishOrClose(
       console.warn(`    ⚠️ Could not register browser-url-changed listener: ${err}`);
     });
 
-    // Branch (d): global timeout
-    timeoutHandle = setTimeout(() => {
-      console.log(`    ⏱️ Timeout reached, closing browser...`);
-      closeBrowser().catch(() => { /* already closed */ });
-      settle(null);
-    }, timeoutMs);
+    // NOTE: There is intentionally no branch (d) wall-clock timeout.
+    // The Rust inactivity watchdog (60s, awaiting-aware) is the sole crash guard.
+    // A slow user writing their Matters draft is never killed by a deadline.
   });
 }
 

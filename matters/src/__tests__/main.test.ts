@@ -35,8 +35,14 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writeFile: vi.fn(),
   readSiteFile: vi.fn(),
   showToast: vi.fn().mockResolvedValue(undefined),
+  dismissToast: vi.fn().mockResolvedValue(undefined),
   openBrowser: vi.fn().mockResolvedValue({ closed: new Promise(() => {}) }),
   closeBrowser: vi.fn().mockResolvedValue(undefined),
+  // emitEvent / onEvent used by waitForPublishOrClose (matters-room-published,
+  // browser-url-changed). Both must be in the mock or vitest rejects the call.
+  emitEvent: vi.fn().mockResolvedValue(undefined),
+  onEvent: vi.fn().mockResolvedValue(() => { /* unlisten no-op */ }),
+  getPluginEnvVar: vi.fn().mockResolvedValue(null),
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),
@@ -114,6 +120,7 @@ vi.mock("../converter", () => ({
 // Now import the modules under test
 import {
   syndicateArticle,
+  waitForPublishOrClose,
   normalizeHtmlForMatters,
   wrapImagesForMatters,
   wrapAudioForMatters,
@@ -231,8 +238,16 @@ describe("syndicateArticle - cover upload", () => {
   const userName = "testuser";
   const options = { addCanonicalLink: false, lang: "en" };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Restore browser/event mocks after clearAllMocks() (they return undefined otherwise,
+    // causing closeBrowser().catch() / onEvent().then() to throw).
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
 
     // Default: createDraft succeeds
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
@@ -935,8 +950,13 @@ describe("syndicateArticle - summary and lang", () => {
   const siteUrl = "https://example.com";
   const userName = "testuser";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
     vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
@@ -1461,8 +1481,13 @@ describe("syndicateArticle - audio upload (integration)", () => {
   const userName = "testuser";
   const options = { addCanonicalLink: false, lang: "en" };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-aud"));
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
     vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
@@ -1531,8 +1556,13 @@ describe("syndicateArticle - local image upload", () => {
   const userName = "testuser";
   const options = { addCanonicalLink: false, lang: "en" };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
     vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
@@ -1928,6 +1958,8 @@ describe("syndicateArticle - draft tracking integration", () => {
     vi.mocked(sdk.showToast).mockResolvedValue(undefined);
     vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
     vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
 
     // Re-establish domain mocks
     const domain = await import("../domain");
@@ -2046,33 +2078,36 @@ describe("syndicateArticle - draft tracking integration", () => {
     expect(lastWritten["posts/other.md"]).toBeDefined();
   });
 
-  it("saves draft ID on timeout (no publish)", async () => {
+  it("saves draft ID when browser is closed without publishing", async () => {
     vi.mocked(pluginFileExists).mockResolvedValue(false);
 
     // Draft created but NOT published
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-timeout"));
 
-    // To simulate timeout without OOM: make fetchDraft return published=false
-    // on first call, then return published=true on second call BUT also
-    // override the result to null. Actually the simplest approach: make
-    // fetchDraft return null (the draft was deleted). waitForPublishOrClose
-    // checks draft?.article — null?.article is undefined, so loop continues.
-    //
-    // To break the loop: mock sleep to advance a fake clock.
-    // Each call to sleep() advances fakeTime, and Date.now() reads fakeTime.
-    let fakeTime = 1000;
-    const { sleep } = await import("../utils");
-    vi.mocked(sleep).mockImplementation(async () => {
-      fakeTime += 700000; // Jump past 600s timeout on first sleep
-    });
-    vi.spyOn(Date, "now").mockImplementation(() => fakeTime);
-
+    // fetchDraft always returns unpublished — poll loop would run forever
+    // without the browser-close termination path.
     vi.mocked(fetchDraft).mockResolvedValue({
       id: "draft-timeout",
       title: "Test",
       content: "<p>Test</p>",
       createdAt: "2024-01-01T00:00:00Z",
       publishState: "unpublished" as const,
+    });
+
+    // Simulate browser closing after the first poll sleep: resolve the
+    // `closed` promise on the first sleep() call so the race terminates.
+    const sdk = await import("@symbiosis-lab/moss-api");
+    let resolveClose!: (reason: any) => void;
+    const closedPromise = new Promise<any>((resolve) => { resolveClose = resolve; });
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: closedPromise });
+
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockImplementation(async () => {
+      // On first sleep (5s poll) resolve the browser close so branch (b) fires.
+      resolveClose({ type: "user" });
+      // Yield for the closed promise to settle.
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     const article = makeArticle({ source_path: "posts/test.md", frontmatter: {} });
@@ -2089,21 +2124,24 @@ describe("syndicateArticle - draft tracking integration", () => {
     expect(draftWriteCall).toBeDefined();
     const written = JSON.parse(draftWriteCall![1]);
     expect(written["posts/test.md"].draftId).toBe("draft-timeout");
-
-    vi.spyOn(Date, "now").mockRestore();
   });
 
-  it("does not track draft when article has no source_path", async () => {
+  it("does not track draft when article has no source_path (browser closed)", async () => {
     vi.mocked(pluginFileExists).mockResolvedValue(false);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-no-path"));
 
-    // Same approach: mock sleep to advance fake clock past timeout
-    let fakeTime = 1000;
+    // Terminate via browser close instead of a wall-clock timeout.
+    const sdk = await import("@symbiosis-lab/moss-api");
+    let resolveClose!: (reason: any) => void;
+    const closedPromise = new Promise<any>((resolve) => { resolveClose = resolve; });
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: closedPromise });
+
     const { sleep } = await import("../utils");
     vi.mocked(sleep).mockImplementation(async () => {
-      fakeTime += 700000;
+      resolveClose({ type: "user" });
+      await Promise.resolve();
+      await Promise.resolve();
     });
-    vi.spyOn(Date, "now").mockImplementation(() => fakeTime);
 
     vi.mocked(fetchDraft).mockResolvedValue({
       id: "draft-no-path",
@@ -2122,8 +2160,6 @@ describe("syndicateArticle - draft tracking integration", () => {
       call => call[0] === "drafts.json"
     );
     expect(draftWriteCalls).toHaveLength(0);
-
-    vi.spyOn(Date, "now").mockRestore();
   });
 });
 
@@ -2136,8 +2172,13 @@ describe("syndicateArticle - cover path decoding", () => {
   const userName = "testuser";
   const options = { addCanonicalLink: false, lang: "en" };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.openBrowser).mockResolvedValue({ closed: new Promise(() => {}) } as any);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
     vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
@@ -2234,6 +2275,8 @@ describe("syndicateArticle - browser close detection", () => {
     const sdk = await import("@symbiosis-lab/moss-api");
     vi.mocked(sdk.showToast).mockResolvedValue(undefined);
     vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
 
     const domain = await import("../domain");
     vi.mocked(domain.draftUrl).mockImplementation((id: string) => `https://matters.town/drafts/${id}`);
@@ -2304,5 +2347,79 @@ describe("syndicateArticle - browser close detection", () => {
     expect(draftWriteCalls.length).toBeGreaterThan(0);
     const written = JSON.parse(draftWriteCalls[draftWriteCalls.length - 1][1]);
     expect(written["posts/test.md"].draftId).toBe("draft-close-test");
+  });
+});
+
+// ============================================================================
+// Tests: waitForPublishOrClose — no wall-clock ceiling
+// ============================================================================
+
+describe("waitForPublishOrClose - no wall-clock ceiling (resolves on publish or close only)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { sleep } = await import("../utils");
+    vi.mocked(sleep).mockResolvedValue(undefined);
+    // onEvent / emitEvent are called inside waitForPublishOrClose — must be re-mocked
+    // after clearAllMocks() or the .then()/.catch() chains will throw on undefined.
+    const sdk = await import("@symbiosis-lab/moss-api");
+    vi.mocked(sdk.onEvent).mockResolvedValue(() => {});
+    vi.mocked(sdk.emitEvent).mockResolvedValue(undefined);
+    vi.mocked(sdk.closeBrowser).mockResolvedValue(undefined);
+  });
+
+  it("resolves with publish result when fetchDraft returns article", async () => {
+    vi.mocked(fetchDraft).mockResolvedValueOnce({
+      id: "d1",
+      title: "T",
+      content: "<p>T</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+      publishState: "published" as const,
+      article: { shortHash: "abc123", slug: "my-article" },
+    });
+
+    const result = await waitForPublishOrClose("d1");
+    expect(result).toEqual({ shortHash: "abc123", slug: "my-article" });
+  });
+
+  it("resolves with null when browser handle closes (no publish)", async () => {
+    // fetchDraft always returns unpublished — without browser close this would
+    // loop forever. The test verifies the wall-clock-free path terminates on close.
+    vi.mocked(fetchDraft).mockResolvedValue({
+      id: "d2",
+      title: "T",
+      content: "<p>T</p>",
+      createdAt: "2024-01-01T00:00:00Z",
+      publishState: "unpublished" as const,
+    });
+
+    let resolveClose!: (r: unknown) => void;
+    const closedPromise = new Promise<unknown>((res) => { resolveClose = res; });
+
+    const { sleep } = await import("../utils");
+    let sleepCalls = 0;
+    vi.mocked(sleep).mockImplementation(async () => {
+      sleepCalls++;
+      // Trigger browser close on first poll so the race terminates.
+      if (sleepCalls === 1) {
+        resolveClose({ type: "user" });
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      // Safety: if close path is broken the poll would run forever; cap at 3.
+      if (sleepCalls > 3) throw new Error("waitForPublishOrClose did not terminate on browser close");
+    });
+
+    const result = await waitForPublishOrClose("d2", { closed: closedPromise } as any);
+    expect(result).toBeNull();
+    // Closed after first poll — should not have looped many times.
+    expect(sleepCalls).toBeLessThanOrEqual(2);
+  });
+
+  it("does NOT have a wall-clock timeout path — no setTimeout deadline", async () => {
+    // Verify that the function signature no longer accepts a timeoutMs argument.
+    // If someone accidentally re-adds it and uses it, this structural assertion
+    // (function.length = parameter count) catches the regression.
+    // waitForPublishOrClose(draftId, browserHandle?) → 2 formal params max.
+    expect(waitForPublishOrClose.length).toBeLessThanOrEqual(2);
   });
 });

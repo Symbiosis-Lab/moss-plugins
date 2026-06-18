@@ -35,6 +35,9 @@ const mockApiConfig = vi.hoisted(() => ({
   testUserName: "Matty",
   endpoint: "https://server.matters.town/graphql",
 }));
+// Hoisted so it's accessible inside vi.mock AND in test assertions.
+// Task 2 watchdog fix: verify task.awaiting() is called BEFORE promptLogin().
+const mockTaskAwaiting = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
   getPluginCookie: vi.fn(),
@@ -54,10 +57,11 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
   // startTask mock — returns a TaskHandle whose terminal transitions are
   // captured so tests can assert on the receipt copy.
+  // mockTaskAwaiting is hoisted so tests can assert call-order vs openBrowser.
   startTask: vi.fn().mockResolvedValue({
     id: "0",
     progress: vi.fn().mockResolvedValue(undefined),
-    awaiting: vi.fn().mockResolvedValue(undefined),
+    awaiting: (...args: unknown[]) => mockTaskAwaiting(...args),
     advise: vi.fn().mockResolvedValue(undefined),
     succeeded: (...args: unknown[]) => mockTaskSucceeded(...args),
     failed: (...args: unknown[]) => mockTaskFailed(...args),
@@ -168,6 +172,8 @@ beforeEach(() => {
   mockGetConfig.mockResolvedValue({ ...BOUND_CONFIG, userName: "guo" });
   mockShouldNudge.mockResolvedValue(true);
   mockFetchUserProfile.mockResolvedValue({ userName: "guo", displayName: "Guo", language: "en" });
+  // Restore awaiting behavior after clearAllMocks (Task 2 watchdog fix).
+  mockTaskAwaiting.mockResolvedValue(undefined);
 });
 
 // ============================================================================
@@ -381,5 +387,55 @@ describe("syndicate session gate", () => {
     const result = await syndicate(SYNDICATE_CONTEXT);
     expect(result.success).toBe(false);
     expect(result.message).toContain("session expired, log in again to publish.");
+  });
+
+  // Task 2 watchdog fix: task.awaiting() must be called BEFORE promptLogin()
+  // (which calls openBrowser) so the Rust inactivity watchdog knows the hook
+  // is legitimately waiting for the user, not stalled.
+  it("login-awaiting: task.awaiting() is called BEFORE openBrowser (promptLogin) during syndicate login", async () => {
+    mockGetSessionState.mockResolvedValue("expired");
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() }); // closes immediately
+    await syndicate(SYNDICATE_CONTEXT);
+
+    expect(mockTaskAwaiting).toHaveBeenCalledWith("log in to Matters", "Matters", "cancel");
+    expect(mockOpenBrowser).toHaveBeenCalled();
+
+    // Order invariant: awaiting must precede openBrowser so the watchdog
+    // marks the hook as Awaiting before the browser window opens.
+    const awaitingOrder = mockTaskAwaiting.mock.invocationCallOrder[0];
+    const openBrowserOrder = mockOpenBrowser.mock.invocationCallOrder[0];
+    expect(awaitingOrder).toBeLessThan(openBrowserOrder);
+  });
+});
+
+describe("process hook login-awaiting (Task 2 watchdog fix)", () => {
+  const UNBOUND_CONTEXT = {
+    trigger: "onboarding_flow",
+    config: { sync_on_build: true },
+    project_info: { folder_name: "test", homepage_file: null, lang: "en" },
+  } as never;
+
+  beforeEach(() => {
+    // Simulate an unbound project requiring login (fresh project path).
+    mockGetConfig.mockResolvedValue({}); // no boundUserName
+    mockDetectBoundUser.mockResolvedValue(null); // no existing articles
+    // Browser closes immediately — login fails; tests only care about
+    // the call order, not the success outcome.
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
+    mockGetAccessToken.mockResolvedValue(null);
+    mockTaskAwaiting.mockResolvedValue(undefined);
+  });
+
+  // task.awaiting() must precede openBrowser (promptLogin) in the process
+  // hook's fresh-bind path so the watchdog is aware the hook is Awaiting.
+  it("login-awaiting: task.awaiting() is called BEFORE openBrowser (promptLogin) in fresh-bind login", async () => {
+    await processHook(UNBOUND_CONTEXT);
+
+    expect(mockTaskAwaiting).toHaveBeenCalledWith("log in to Matters", "Matters", "cancel");
+    expect(mockOpenBrowser).toHaveBeenCalled();
+
+    const awaitingOrder = mockTaskAwaiting.mock.invocationCallOrder[0];
+    const openBrowserOrder = mockOpenBrowser.mock.invocationCallOrder[0];
+    expect(awaitingOrder).toBeLessThan(openBrowserOrder);
   });
 });

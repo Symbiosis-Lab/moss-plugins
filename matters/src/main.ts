@@ -457,6 +457,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
               message: "No Matters account bound. Skipping sync.",
             };
           }
+          await task.awaiting("log in to Matters", "Matters", "cancel");
           const loginSuccess = await promptLogin();
           if (!loginSuccess) {
             // Terminate the task before returning, or it stays Running in the
@@ -906,6 +907,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       // Law 4: dismiss the toast if login succeeds so a resolved warning
       //         doesn't linger alongside the terminal ack.
       await showToast({ message: "Matters login required", variant: "warning", persistent: true, id: "matters-login-required" });
+      await task.awaiting("log in to Matters", "Matters", "cancel");
       const loginSuccess = await promptLogin();
       if (loginSuccess) {
         await dismissToast("matters-login-required");
@@ -1021,7 +1023,7 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
     // NOTE: showAck() is a frontend-only function (toast-manager.ts) and is
     // NOT exported from @symbiosis-lab/moss-api. Use showToast({ variant: 'success' }).
     if (syndicatedCount > 0) {
-      const profileUrl = `https://matters.town/@${userName}`;
+      const profileUrl = `https://${getDomain()}/@${userName}`;
       await showToast({
         message: `Syndicated ${syndicatedCount} article${syndicatedCount === 1 ? "" : "s"} to Matters`,
         variant: "success",

@@ -64,7 +64,6 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // Without this mock the worker crashes on import before any test runs.
   setMessageContext: vi.fn(),
   sendMessage: vi.fn().mockResolvedValue(undefined),
-  reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   reportComplete: vi.fn().mockResolvedValue(undefined),
   emitEvent: vi.fn().mockResolvedValue(undefined),

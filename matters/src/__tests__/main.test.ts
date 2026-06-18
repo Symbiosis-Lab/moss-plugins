@@ -2,10 +2,11 @@
  * Tests for main.ts
  *
  * Covers:
- * - syndicateArticle uploads cover when article.frontmatter.cover exists
+ * - syndicateArticle uploads cover (bytes) when article.frontmatter.cover exists
  * - syndicateArticle skips cover upload when no cover in frontmatter
  * - syndicateArticle continues gracefully when cover upload fails
- * - uploadCoverByUrl calls graphqlQuery with correct mutation shape
+ * - siteRelativePathFromSrc path resolution and cross-origin/data-uri rejection
+ * - imageMimeForPath / audioMimeForPath MIME mapping
  * - normalizeHtmlForMatters heading transformation and image pass-through
  * - addCanonicalLinkToContent with lang parameter
  * - syndicateArticle passing summary and lang
@@ -14,6 +15,8 @@
  * - syndicateArticle falling back on API error with stale draft ID
  * - syndicateArticle removing draft on publish
  * - syndicateArticle saving draft on timeout/no-publish
+ * - uploadAndReplaceLocalImages byte-upload flow
+ * - uploadAndReplaceLocalAudio byte-upload flow
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -27,8 +30,10 @@ import type { ArticleInfo } from "../types";
 vi.mock("@symbiosis-lab/moss-api", () => ({
   getPluginCookie: vi.fn(),
   httpPost: vi.fn(),
+  httpPostMultipart: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  readSiteFile: vi.fn(),
   showToast: vi.fn().mockResolvedValue(undefined),
   openBrowser: vi.fn().mockResolvedValue({ closed: new Promise(() => {}) }),
   closeBrowser: vi.fn().mockResolvedValue(undefined),
@@ -57,8 +62,7 @@ vi.mock("../api", () => ({
   clearStoredToken: vi.fn().mockResolvedValue(undefined),
   createDraft: vi.fn(),
   fetchDraft: vi.fn(),
-  uploadCoverByUrl: vi.fn(),
-  uploadEmbedByUrl: vi.fn(),
+  uploadAssetMultipart: vi.fn(),
   apiConfig: { queryMode: "viewer", testUserName: "Matty", endpoint: "https://server.matters.town/graphql" },
   SINGLE_FILE_UPLOAD_MUTATION: `
 mutation SingleFileUpload($input: SingleFileUploadInput!) {
@@ -79,10 +83,24 @@ vi.mock("../domain", () => ({
   draftUrl: vi.fn().mockImplementation((id: string) => `https://matters.town/drafts/${id}`),
   articleUrl: vi.fn().mockImplementation((_user: string, slug: string, hash: string) => `https://matters.town/@testuser/${slug}-${hash}`),
   isMattersUrl: vi.fn().mockImplementation((url: string) => url.includes("matters.town")),
+  // scanLocalArticles (in ../sync) resolves extractShortHash from ../domain; this
+  // mock must provide it or any future main.ts test reaching scanLocalArticles would
+  // call undefined(). Mirror the real /a/ + canonical parsing.
+  extractShortHash: vi.fn().mockImplementation((url: string) => {
+    try {
+      const segments = new URL(url, "https://matters.town").pathname.split("/").filter(Boolean);
+      if (segments.length === 0) return null;
+      if (segments[0] === "a" && segments.length >= 2) return segments[1] || null;
+      const last = segments[segments.length - 1];
+      const hyphen = last.lastIndexOf("-");
+      return hyphen === -1 ? null : last.substring(hyphen + 1) || null;
+    } catch {
+      return null;
+    }
+  }),
 }));
 
 vi.mock("../utils", () => ({
-  reportProgress: vi.fn().mockResolvedValue(undefined),
   reportError: vi.fn().mockResolvedValue(undefined),
   setCurrentHookName: vi.fn(),
   sleep: vi.fn().mockResolvedValue(undefined),
@@ -98,11 +116,16 @@ import {
   syndicateArticle,
   normalizeHtmlForMatters,
   wrapImagesForMatters,
+  wrapAudioForMatters,
+  stripHeadingAnchors,
   stripArticleTitleH1,
   absolutizeRelativeHrefs,
   addCanonicalLinkToContent,
   uploadAndReplaceLocalImages,
-  waitForUrl,
+  uploadAndReplaceLocalAudio,
+  siteRelativePathFromSrc,
+  imageMimeForPath,
+  audioMimeForPath,
   getDraftMap,
   saveDraftMap,
   getDraftId,
@@ -110,16 +133,16 @@ import {
   removeDraftId,
   type DraftMap,
 } from "../main";
-import { uploadCoverByUrl, uploadEmbedByUrl, createDraft, fetchDraft, SINGLE_FILE_UPLOAD_MUTATION } from "../api";
+import { uploadAssetMultipart, createDraft, fetchDraft, SINGLE_FILE_UPLOAD_MUTATION } from "../api";
+import { readSiteFile } from "@symbiosis-lab/moss-api";
 import { readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Global setup
 // ============================================================================
 
-// `waitForUrl` (used inside syndicateArticle and uploadAndReplaceLocalImages)
-// polls fetch with HEAD until 2xx. Stub fetch globally so tests don't hit the
-// network or burn the 60s default budget on every run.
+// `isArticleLive` (called from the syndicate flow) probes the deployed URL with
+// fetch. Stub fetch globally so tests don't hit the network.
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
@@ -219,11 +242,12 @@ describe("syndicateArticle - cover upload", () => {
     // preventing the OOM loop caused by mocked sleep running instantly.
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
 
-    // Default: uploadCoverByUrl succeeds
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
+    // Default: readSiteFile returns fake base64 bytes, uploadAssetMultipart returns asset
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "cover-asset-id-1", path: "https://assets.matters.news/cover/uploaded-cover.jpg" });
   });
 
-  it("uploads cover AFTER draft creation and updates draft with cover asset ID", async () => {
+  it("uploads cover bytes AFTER draft creation and updates draft with cover asset ID", async () => {
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
 
     const article = makeArticle({
@@ -232,9 +256,15 @@ describe("syndicateArticle - cover upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    // Cover should be uploaded with the draft's entityId
-    expect(uploadCoverByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/covers/book.jpg",
+    // readSiteFile called with the site-relative path (leading slash stripped)
+    expect(readSiteFile).toHaveBeenCalledWith("assets/covers/book.jpg");
+
+    // uploadAssetMultipart called with correct type "cover" and entityId
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "book.jpg",
+      "image/jpeg",
+      "cover",
       "draft-123"
     );
 
@@ -243,28 +273,13 @@ describe("syndicateArticle - cover upload", () => {
       expect.not.objectContaining({ cover: expect.anything() })
     );
 
-    // Second createDraft: updates draft with cover asset ID AND preserves title
+    // Second createDraft: updates draft with cover asset ID (not path) AND preserves title
     expect(createDraft).toHaveBeenNthCalledWith(2,
-      expect.objectContaining({ id: "draft-123", cover: "asset-abc-123", title: "Test Article" })
+      expect.objectContaining({ id: "draft-123", cover: "cover-asset-id-1", title: "Test Article" })
     );
   });
 
-  it("resolves cover URL correctly — strips trailing slash from siteUrl", async () => {
-    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
-
-    const article = makeArticle({
-      frontmatter: { cover: "assets/covers/hero.png" },
-    });
-
-    await syndicateArticle(article, "https://example.com/", userName, options, mockTask);
-
-    expect(uploadCoverByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/covers/hero.png",
-      "draft-123"
-    );
-  });
-
-  it("resolves cover URL correctly — strips leading slash from cover path", async () => {
+  it("strips leading slash from cover path when reading site file", async () => {
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
 
     const article = makeArticle({
@@ -273,8 +288,13 @@ describe("syndicateArticle - cover upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadCoverByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/covers/hero.png",
+    // Leading slash stripped for readSiteFile
+    expect(readSiteFile).toHaveBeenCalledWith("assets/covers/hero.png");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "hero.png",
+      "image/png",
+      "cover",
       "draft-123"
     );
   });
@@ -284,13 +304,16 @@ describe("syndicateArticle - cover upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadCoverByUrl).not.toHaveBeenCalled();
+    // No cover upload at all
+    expect(uploadAssetMultipart).not.toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), "cover", expect.anything()
+    );
     // Only one createDraft call (no cover update)
     expect(createDraft).toHaveBeenCalledTimes(1);
   });
 
-  it("continues without cover when cover upload fails (graceful failure)", async () => {
-    vi.mocked(uploadCoverByUrl).mockRejectedValue(new Error("Upload failed: 500"));
+  it("continues without cover when readSiteFile throws (graceful failure)", async () => {
+    vi.mocked(readSiteFile).mockRejectedValueOnce(new Error("File not found"));
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
 
     const article = makeArticle({
@@ -300,7 +323,25 @@ describe("syndicateArticle - cover upload", () => {
     // Should not throw
     await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
 
-    // createDraft should be called once (no cover update since upload failed)
+    // createDraft called only once (no cover update since upload failed)
+    expect(createDraft).toHaveBeenCalledTimes(1);
+    expect(createDraft).toHaveBeenCalledWith(
+      expect.not.objectContaining({ cover: expect.anything() })
+    );
+  });
+
+  it("continues without cover when uploadAssetMultipart throws (graceful failure)", async () => {
+    vi.mocked(uploadAssetMultipart).mockRejectedValueOnce(new Error("Upload failed: 500"));
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-123"));
+
+    const article = makeArticle({
+      frontmatter: { cover: "assets/covers/book.jpg" },
+    });
+
+    // Should not throw
+    await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
+
+    // createDraft called only once (no cover update since upload failed)
     expect(createDraft).toHaveBeenCalledTimes(1);
     expect(createDraft).toHaveBeenCalledWith(
       expect.not.objectContaining({ cover: expect.anything() })
@@ -659,6 +700,154 @@ describe("wrapImagesForMatters", () => {
   });
 });
 
+// ============================================================================
+// Tests: stripHeadingAnchors
+// ============================================================================
+//
+// moss appends a permalink anchor to every heading:
+//   <h2 id="1.">1.<a class="moss-heading-anchor" href="#1." aria-label="…">
+//     <span aria-hidden="true">#</span></a></h2>
+// On the web the `#` is hover-only chrome, but matters' sanitizer keeps the
+// anchor's text — so headings render as "1.#" (a stray `#`, linked). This is
+// web-only chrome, not content, so we strip the whole anchor on syndication.
+// Verified 2026-06-16 against server.matters.icu (the `#` survives without this).
+
+describe("stripHeadingAnchors", () => {
+  it("removes the moss-heading-anchor permalink from a heading", () => {
+    const html =
+      '<h1 id="1." data-source-line="8">1.<a class="moss-heading-anchor" href="#1." aria-label="Permalink to this section"><span aria-hidden="true">#</span></a></h1>';
+    expect(stripHeadingAnchors(html)).toBe('<h1 id="1." data-source-line="8">1.</h1>');
+  });
+
+  it("strips anchors from multiple headings, leaving heading text intact", () => {
+    const html =
+      '<h2>Intro<a class="moss-heading-anchor" href="#intro"><span aria-hidden="true">#</span></a></h2>' +
+      "<p>body</p>" +
+      '<h3>详情<a class="moss-heading-anchor" href="#详情"><span aria-hidden="true">#</span></a></h3>';
+    expect(stripHeadingAnchors(html)).toBe("<h2>Intro</h2><p>body</p><h3>详情</h3>");
+  });
+
+  it("tolerates attribute order and extra classes on the anchor", () => {
+    const html = '<h2>T<a href="#t" class="foo moss-heading-anchor bar"><span>#</span></a></h2>';
+    expect(stripHeadingAnchors(html)).toBe("<h2>T</h2>");
+  });
+
+  it("leaves ordinary anchors (non-heading-anchor) untouched", () => {
+    const html = '<h2>See <a href="/other">link</a></h2>';
+    expect(stripHeadingAnchors(html)).toBe(html);
+  });
+
+  it("leaves content without heading anchors unchanged", () => {
+    const html = "<h2>Title</h2><p>text</p>";
+    expect(stripHeadingAnchors(html)).toBe(html);
+  });
+});
+
+// Also exercised via the full normalizeHtmlForMatters pipeline.
+describe("normalizeHtmlForMatters - strips heading anchors", () => {
+  it("removes the permalink # and downgrades h1→h2 in one pass", () => {
+    const html =
+      '<h1 id="1.">1.<a class="moss-heading-anchor" href="#1."><span aria-hidden="true">#</span></a></h1>';
+    const result = normalizeHtmlForMatters(html);
+    expect(result).toBe('<h2 id="1.">1.</h2>');
+    expect(result).not.toContain("#");
+    expect(result).not.toContain("moss-heading-anchor");
+  });
+});
+
+// ============================================================================
+// Tests: wrapAudioForMatters
+// ============================================================================
+//
+// moss emits audio as a bare `<audio class="moss-embed moss-embed-audio"
+// controls preload="metadata"><source src="..." type="..."></audio>`. matters'
+// server-side sanitizer STRIPS that shape entirely (the whole <audio> vanishes;
+// only the fallback text leaks out as a stray <p>). Empirically verified
+// 2026-06-16 against `server.matters.icu`: the only audio shape matters keeps is
+//   <figure class="audio"><audio controls><source src="URL" type="MIME"></audio>
+//   <figcaption>…</figcaption></figure>
+// where (a) the URL MUST live on a <source> child (a `src` on <audio> itself is
+// dropped), (b) a <figcaption> child is REQUIRED — its absence triggers a server
+// error ("Cannot read properties of undefined (reading 'firstChild')"), empty is
+// fine, and (c) matters keeps an EXTERNAL <source src> verbatim, so the audio can
+// stream straight from the deployed site — no upload to matters is needed (and
+// matters' `embedaudio` asset type rejects url-upload anyway).
+//
+// So this transform restructures moss's audio into matters' figure shape and
+// absolutizes the <source src> against the article URL (same rule as
+// absolutizeRelativeHrefs), so matters' player streams from the live site.
+
+describe("wrapAudioForMatters", () => {
+  const base = "https://example.com/posts/test/";
+
+  it("wraps moss audio into figure.audio and absolutizes a relative src", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("resolves deep-relative srcs against the article URL", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="../assets/song.mp3" type="audio/mpeg">fallback</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/assets/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("leaves an already-absolute src unchanged", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="https://cdn.example.com/a.mp3" type="audio/mpeg">x</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://cdn.example.com/a.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("hoists audio out of a wrapping <p> (figure-in-p is invalid HTML)", () => {
+    const html =
+      '<p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">x</audio></p>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("drops the <audio> fallback text (no leak into figcaption or siblings)", () => {
+    const html =
+      '<p>Before</p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio><p>After</p>';
+    const result = wrapAudioForMatters(html, base);
+    expect(result).not.toContain("does not support");
+    expect(result).toBe(
+      '<p>Before</p><figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure><p>After</p>',
+    );
+  });
+
+  it("omits the type attr when moss emitted none", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3">x</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/song.mp3"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("wraps multiple audio embeds independently", () => {
+    const html =
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="a.mp3" type="audio/mpeg">x</audio>' +
+      "<p>mid</p>" +
+      '<audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="b.wav" type="audio/wav">y</audio>';
+    expect(wrapAudioForMatters(html, base)).toBe(
+      '<figure class="audio"><audio controls><source src="https://example.com/posts/test/a.mp3" type="audio/mpeg"></audio><figcaption></figcaption></figure>' +
+        "<p>mid</p>" +
+        '<figure class="audio"><audio controls><source src="https://example.com/posts/test/b.wav" type="audio/wav"></audio><figcaption></figcaption></figure>',
+    );
+  });
+
+  it("leaves content without audio untouched", () => {
+    const html = "<h2>Title</h2><p>No audio here</p>";
+    expect(wrapAudioForMatters(html, base)).toBe(html);
+  });
+});
+
 // Also called via normalizeHtmlForMatters (the full pipeline)
 describe("normalizeHtmlForMatters - image wrap (via pipeline)", () => {
   it("wraps a standalone img while leaving headings alone", () => {
@@ -750,8 +939,8 @@ describe("syndicateArticle - summary and lang", () => {
     vi.clearAllMocks();
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "asset-id-1", path: "https://assets.matters.news/embed/uploaded.jpg" });
   });
 
   it("passes summary from frontmatter.description to createDraft", async () => {
@@ -859,80 +1048,122 @@ describe("syndicateArticle - summary and lang", () => {
 });
 
 // ============================================================================
-// Tests: uploadEmbedByUrl (api.ts mock verification)
+// Tests: siteRelativePathFromSrc
 // ============================================================================
 
-describe("uploadEmbedByUrl", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe("siteRelativePathFromSrc", () => {
+  const base = "https://liu-guo.com/posts/foo/";
+
+  it("resolves a site-absolute src to a relative site path", () => {
+    expect(siteRelativePathFromSrc("/image/x.jpg", "https://liu-guo.com/posts/foo/"))
+      .toBe("image/x.jpg");
   });
 
-  it("returns CDN path on success", async () => {
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/abc123.jpg");
-
-    const result = await uploadEmbedByUrl("https://example.com/images/photo.jpg", "draft-1");
-
-    expect(result).toBe("https://assets.matters.town/embed/abc123.jpg");
+  it("resolves a same-directory relative src", () => {
+    expect(siteRelativePathFromSrc("photo.jpg", base)).toBe("posts/foo/photo.jpg");
   });
 
-  it("is called with the correct URL and entityId arguments", async () => {
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/abc123.jpg");
-
-    await uploadEmbedByUrl("https://example.com/images/photo.jpg", "draft-1");
-
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", "draft-1");
+  it("resolves a parent-traversal relative src", () => {
+    expect(siteRelativePathFromSrc("../a.jpg", "https://s.com/p/q/")).toBe("p/a.jpg");
   });
 
-  it("throws on failure", async () => {
-    vi.mocked(uploadEmbedByUrl).mockRejectedValue(new Error("Upload failed: 500"));
+  it("resolves a deep-relative src (../../) against the article URL", () => {
+    expect(siteRelativePathFromSrc("../../assets/x.gif", "https://example.com/writings/foo-bar/"))
+      .toBe("assets/x.gif");
+  });
 
-    await expect(uploadEmbedByUrl("https://example.com/bad.jpg", "draft-1")).rejects.toThrow("Upload failed: 500");
+  it("returns null for a data: URI", () => {
+    expect(siteRelativePathFromSrc("data:image/png;base64,abc=", base)).toBeNull();
+  });
+
+  it("returns null for a cross-origin absolute URL", () => {
+    expect(siteRelativePathFromSrc("https://other.com/x.jpg", base)).toBeNull();
+  });
+
+  it("returns null for a matters CDN URL (different origin)", () => {
+    expect(siteRelativePathFromSrc("https://assets.matters.news/embed/abc.jpg", base)).toBeNull();
+  });
+
+  it("decodes percent-encoded pathname characters", () => {
+    expect(siteRelativePathFromSrc("/%E5%9B%BE%E7%89%87/photo.png", "https://example.com/"))
+      .toBe("图片/photo.png");
+  });
+
+  it("resolves same-origin absolute URL to its site path", () => {
+    expect(siteRelativePathFromSrc("https://liu-guo.com/image/x.jpg", "https://liu-guo.com/posts/foo/"))
+      .toBe("image/x.jpg");
   });
 });
 
 // ============================================================================
-// Tests: waitForUrl
+// Tests: imageMimeForPath
 // ============================================================================
 
-describe("waitForUrl", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+describe("imageMimeForPath", () => {
+  it("maps .jpg to image/jpeg", () => {
+    expect(imageMimeForPath("photo.jpg")).toBe("image/jpeg");
   });
 
-  it("returns when fetch responds 2xx on first attempt", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      waitForUrl("https://example.com/foo.gif", { totalMs: 1000, intervalMs: 50 }),
-    ).resolves.toBeUndefined();
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/foo.gif", { method: "HEAD" });
+  it("maps .jpeg to image/jpeg", () => {
+    expect(imageMimeForPath("photo.jpeg")).toBe("image/jpeg");
   });
 
-  it("retries while fetch returns 404, then succeeds when it goes 2xx", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
-      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
-      .mockResolvedValueOnce({ ok: true, status: 200 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      waitForUrl("https://example.com/late.gif", { totalMs: 5000, intervalMs: 10 }),
-    ).resolves.toBeUndefined();
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+  it("maps .png to image/png", () => {
+    expect(imageMimeForPath("cover.png")).toBe("image/png");
   });
 
-  it("throws when budget elapses without a 2xx", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response);
-    vi.stubGlobal("fetch", fetchMock);
+  it("maps .webp to image/webp", () => {
+    expect(imageMimeForPath("img.webp")).toBe("image/webp");
+  });
 
-    await expect(
-      waitForUrl("https://example.com/never.gif", { totalMs: 60, intervalMs: 20 }),
-    ).rejects.toThrow(/did not become reachable/);
+  it("maps .gif to image/gif", () => {
+    expect(imageMimeForPath("anim.gif")).toBe("image/gif");
+  });
+
+  it("maps .avif to image/avif", () => {
+    expect(imageMimeForPath("photo.avif")).toBe("image/avif");
+  });
+
+  it("maps .svg to image/svg+xml", () => {
+    expect(imageMimeForPath("icon.svg")).toBe("image/svg+xml");
+  });
+
+  it("returns application/octet-stream for unknown extensions", () => {
+    expect(imageMimeForPath("file.bmp")).toBe("application/octet-stream");
+  });
+});
+
+// ============================================================================
+// Tests: audioMimeForPath
+// ============================================================================
+
+describe("audioMimeForPath", () => {
+  it("maps .mp3 to audio/mpeg", () => {
+    expect(audioMimeForPath("song.mp3")).toBe("audio/mpeg");
+  });
+
+  it("maps .wav to audio/wav", () => {
+    expect(audioMimeForPath("sound.wav")).toBe("audio/wav");
+  });
+
+  it("maps .ogg to audio/ogg", () => {
+    expect(audioMimeForPath("track.ogg")).toBe("audio/ogg");
+  });
+
+  it("maps .flac to audio/flac", () => {
+    expect(audioMimeForPath("lossless.flac")).toBe("audio/flac");
+  });
+
+  it("maps .m4a to audio/mp4", () => {
+    expect(audioMimeForPath("podcast.m4a")).toBe("audio/mp4");
+  });
+
+  it("maps .opus to audio/opus", () => {
+    expect(audioMimeForPath("voice.opus")).toBe("audio/opus");
+  });
+
+  it("returns application/octet-stream for unknown extensions", () => {
+    expect(audioMimeForPath("file.aiff")).toBe("application/octet-stream");
   });
 });
 
@@ -941,151 +1172,135 @@ describe("waitForUrl", () => {
 // ============================================================================
 
 describe("uploadAndReplaceLocalImages", () => {
-  const siteUrl = "https://example.com";
+  const baseUrl = "https://example.com/posts/foo/";
   const entityId = "draft-test";
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
-    // waitForUrl uses HEAD; default it to ok=true so tests don't hit real network.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
-    );
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({
+      id: "asset-id-1",
+      path: "https://assets.matters.news/embed/uploaded.jpg",
+    });
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("uploads local images and replaces src with CDN URL", async () => {
+  it("reads site file and uploads bytes, replaces src with CDN URL", async () => {
     const html = '<p>Text</p><img src="images/photo.jpg" alt="Photo"><p>More</p>';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", entityId);
-    expect(result).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
+    expect(readSiteFile).toHaveBeenCalledWith("posts/foo/images/photo.jpg");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "photo.jpg",
+      "image/jpeg",
+      "embed",
+      entityId
+    );
+    expect(result).toContain('src="https://assets.matters.news/embed/uploaded.jpg"');
     expect(result).not.toContain('src="images/photo.jpg"');
   });
 
-  it("uploads images with leading slash and constructs correct URL", async () => {
+  it("resolves site-absolute src to correct site path", async () => {
     const html = '<img src="/assets/hero.png" alt="Hero">';
 
-    await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/assets/hero.png", entityId);
+    expect(readSiteFile).toHaveBeenCalledWith("assets/hero.png");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String), "hero.png", "image/png", "embed", entityId
+    );
   });
 
-  it("strips trailing slash from siteUrl when constructing upload URL", async () => {
-    const html = '<img src="images/photo.jpg">';
-
-    await uploadAndReplaceLocalImages(html, "https://example.com/", entityId);
-
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/images/photo.jpg", entityId);
-  });
-
-  it("skips absolute http URLs (does not upload them)", async () => {
+  it("leaves cross-origin absolute URLs unchanged (no upload)", async () => {
     const html = '<img src="https://cdn.example.com/photo.jpg"><img src="http://other.com/img.png">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
+    expect(readSiteFile).not.toHaveBeenCalled();
     expect(result).toContain('src="https://cdn.example.com/photo.jpg"');
     expect(result).toContain('src="http://other.com/img.png"');
   });
 
-  it("skips data: URIs", async () => {
+  it("skips data: URIs (no upload, no replacement)", async () => {
     const html = '<img src="data:image/png;base64,iVBORw0KGgo=">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
     expect(result).toContain("data:image/png;base64,iVBORw0KGgo=");
   });
 
   it("deduplicates: same src used twice is only uploaded once", async () => {
     const html = '<img src="images/photo.jpg"><p>text</p><img src="images/photo.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledTimes(1);
+    expect(uploadAssetMultipart).toHaveBeenCalledTimes(1);
     // Both occurrences should be replaced
-    const matches = result.match(/src="https:\/\/assets\.matters\.town\/embed\/uploaded\.jpg"/g);
+    const matches = result.match(/src="https:\/\/assets\.matters\.news\/embed\/uploaded\.jpg"/g);
     expect(matches).toHaveLength(2);
   });
 
   it("handles multiple different local images", async () => {
-    vi.mocked(uploadEmbedByUrl)
-      .mockResolvedValueOnce("https://assets.matters.town/embed/a.jpg")
-      .mockResolvedValueOnce("https://assets.matters.town/embed/b.jpg");
+    vi.mocked(uploadAssetMultipart)
+      .mockResolvedValueOnce({ id: "id-a", path: "https://assets.matters.news/embed/a.jpg" })
+      .mockResolvedValueOnce({ id: "id-b", path: "https://assets.matters.news/embed/b.jpg" });
 
     const html = '<img src="a.jpg"><img src="b.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledTimes(2);
-    expect(result).toContain('src="https://assets.matters.town/embed/a.jpg"');
-    expect(result).toContain('src="https://assets.matters.town/embed/b.jpg"');
+    expect(uploadAssetMultipart).toHaveBeenCalledTimes(2);
+    expect(result).toContain('src="https://assets.matters.news/embed/a.jpg"');
+    expect(result).toContain('src="https://assets.matters.news/embed/b.jpg"');
   });
 
-  it("leaves original src unchanged when upload fails (graceful failure)", async () => {
-    vi.mocked(uploadEmbedByUrl).mockRejectedValue(new Error("Upload failed"));
+  it("falls back to absolutized deployed URL when upload fails (graceful failure)", async () => {
+    vi.mocked(uploadAssetMultipart).mockRejectedValueOnce(new Error("Upload failed"));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const html = '<img src="images/photo.jpg" alt="Photo">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(result).toContain('src="images/photo.jpg"');
+    // Fallback: src becomes the absolutized deployed URL, not the original relative src
+    expect(result).toContain('src="https://example.com/posts/foo/images/photo.jpg"');
+    expect(result).not.toContain('src="images/photo.jpg"');
     expect(warnSpy).toHaveBeenCalled();
 
     warnSpy.mockRestore();
   });
 
-  it("leaves original src unchanged when waitForUrl exhausts the budget", async () => {
-    // Regression: waitForUrl throws when the deployed URL never returns 2xx
-    // (huge github-pages CDN propagation lag, transient outage, etc.). The
-    // upload step must fall through to the catch handler and leave the src
-    // unchanged so the matters draft doesn't get a broken absolute URL
-    // pointing at our domain. Without this, the user sees a draft with
-    // images that 404 inside matters' editor.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response),
-    );
-    vi.spyOn(console, "log").mockImplementation(() => {});
+  it("falls back to absolutized deployed URL when readSiteFile fails", async () => {
+    vi.mocked(readSiteFile).mockRejectedValueOnce(new Error("File not found"));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const html = '<img src="images/photo.jpg" alt="Photo">';
-    const baseUrl = "https://example.com/posts/test/";
 
-    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId, {
-      waitOptions: { totalMs: 50, intervalMs: 10 },
-    });
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(result).toContain('src="images/photo.jpg"');
-    // uploadEmbedByUrl must NOT have been called: waitForUrl threw first
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("did not become reachable"),
-    );
+    // Fallback: absolutized deployed URL
+    expect(result).toContain('src="https://example.com/posts/foo/images/photo.jpg"');
+    expect(warnSpy).toHaveBeenCalled();
 
     warnSpy.mockRestore();
-    vi.restoreAllMocks();
   });
 
-  it("replaces successful uploads while leaving failed ones unchanged", async () => {
-    vi.mocked(uploadEmbedByUrl)
-      .mockResolvedValueOnce("https://assets.matters.town/embed/good.jpg")
+  it("replaces successful uploads while falling back on failed ones", async () => {
+    vi.mocked(uploadAssetMultipart)
+      .mockResolvedValueOnce({ id: "id-good", path: "https://assets.matters.news/embed/good.jpg" })
       .mockRejectedValueOnce(new Error("Failed"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const html = '<img src="good.jpg"><img src="bad.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(result).toContain('src="https://assets.matters.town/embed/good.jpg"');
-    expect(result).toContain('src="bad.jpg"');
+    expect(result).toContain('src="https://assets.matters.news/embed/good.jpg"');
+    // bad.jpg gets absolutized fallback URL
+    expect(result).toContain('src="https://example.com/posts/foo/bad.jpg"');
 
     vi.restoreAllMocks();
   });
@@ -1093,36 +1308,223 @@ describe("uploadAndReplaceLocalImages", () => {
   it("returns content unchanged when no images are present", async () => {
     const html = "<p>Just text, no images</p>";
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
     expect(result).toBe(html);
   });
 
-  it("returns content unchanged when all images are absolute URLs", async () => {
-    const html = '<img src="https://cdn.example.com/a.jpg"><img src="https://other.com/b.jpg">';
+  it("returns content unchanged when all images are already-uploaded matters URLs (cross-origin)", async () => {
+    const html = '<img src="https://assets.matters.news/embed/abc.jpg">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
+    expect(readSiteFile).not.toHaveBeenCalled();
+    // Cross-origin absolute URL stays exactly as-is
     expect(result).toBe(html);
   });
 
-  it("handles images with various attributes correctly", async () => {
+  it("preserves other attributes when replacing src", async () => {
     const html = '<img src="photo.jpg" alt="A photo" width="500" height="300" class="hero">';
 
-    const result = await uploadAndReplaceLocalImages(html, siteUrl, entityId);
+    const result = await uploadAndReplaceLocalImages(html, baseUrl, entityId);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith("https://example.com/photo.jpg", entityId);
-    expect(result).toContain('src="https://assets.matters.town/embed/uploaded.jpg"');
+    expect(result).toContain('src="https://assets.matters.news/embed/uploaded.jpg"');
     expect(result).toContain('alt="A photo"');
     expect(result).toContain('width="500"');
   });
 });
 
 // ============================================================================
+// Tests: uploadAndReplaceLocalAudio
+// ============================================================================
+
+describe("uploadAndReplaceLocalAudio", () => {
+  // After wrapAudioForMatters, the <source src> is already an absolutized
+  // deployed URL (e.g. "https://liu-guo.com/posts/foo/song.mp3"). The audio
+  // upload step tries to read it from the local build and replace it with a
+  // durable matters CDN URL; on failure the absolutized deployed URL stays.
+  const baseUrl = "https://liu-guo.com/posts/foo/";
+  const entityId = "draft-audio-test";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({
+      id: "audio-asset-id",
+      path: "https://assets.matters.news/embedaudio/uploaded.mp3",
+    });
+  });
+
+  it("uploads audio bytes and replaces <source src> with CDN URL", async () => {
+    const html =
+      '<figure class="audio"><audio controls>' +
+      '<source src="https://liu-guo.com/posts/foo/song.mp3" type="audio/mpeg">' +
+      '</audio><figcaption></figcaption></figure>';
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    expect(readSiteFile).toHaveBeenCalledWith("posts/foo/song.mp3");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "song.mp3",
+      "audio/mpeg",
+      "embedaudio",
+      entityId
+    );
+    expect(result).toContain('src="https://assets.matters.news/embedaudio/uploaded.mp3"');
+    expect(result).not.toContain('src="https://liu-guo.com/posts/foo/song.mp3"');
+  });
+
+  it("leaves <source src> unchanged on upload error (deployed URL streams fine)", async () => {
+    vi.mocked(uploadAssetMultipart).mockRejectedValueOnce(new Error("Upload failed"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const html =
+      '<figure class="audio"><audio controls>' +
+      '<source src="https://liu-guo.com/posts/foo/song.mp3" type="audio/mpeg">' +
+      '</audio><figcaption></figcaption></figure>';
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    // src stays unchanged — the deployed URL lets matters stream it
+    expect(result).toContain('src="https://liu-guo.com/posts/foo/song.mp3"');
+
+    vi.restoreAllMocks();
+  });
+
+  it("leaves <source src> unchanged on readSiteFile error", async () => {
+    vi.mocked(readSiteFile).mockRejectedValueOnce(new Error("File not found"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const html =
+      '<figure class="audio"><audio controls>' +
+      '<source src="https://liu-guo.com/posts/foo/song.mp3" type="audio/mpeg">' +
+      '</audio><figcaption></figcaption></figure>';
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    expect(result).toContain('src="https://liu-guo.com/posts/foo/song.mp3"');
+
+    vi.restoreAllMocks();
+  });
+
+  it("does NOT touch <img src> attributes — only matches <source>", async () => {
+    const html =
+      '<figure class="image"><img src="https://liu-guo.com/posts/foo/photo.jpg"></figure>' +
+      '<figure class="audio"><audio controls>' +
+      '<source src="https://liu-guo.com/posts/foo/song.mp3" type="audio/mpeg">' +
+      '</audio><figcaption></figcaption></figure>';
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    // img src is not changed
+    expect(result).toContain('src="https://liu-guo.com/posts/foo/photo.jpg"');
+    // source src is replaced
+    expect(result).toContain('src="https://assets.matters.news/embedaudio/uploaded.mp3"');
+    // readSiteFile only called once (for the audio, not the image)
+    expect(readSiteFile).toHaveBeenCalledTimes(1);
+    expect(readSiteFile).toHaveBeenCalledWith("posts/foo/song.mp3");
+  });
+
+  it("returns content unchanged when no <source> elements are present", async () => {
+    const html = "<p>Just text, no audio</p>";
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
+    expect(result).toBe(html);
+  });
+
+  it("leaves cross-origin <source src> unchanged (external CDN audio)", async () => {
+    const html =
+      '<figure class="audio"><audio controls>' +
+      '<source src="https://cdn.other.com/song.mp3" type="audio/mpeg">' +
+      '</audio><figcaption></figcaption></figure>';
+
+    const result = await uploadAndReplaceLocalAudio(html, baseUrl, entityId);
+
+    // Cross-origin src → no upload, no change
+    expect(readSiteFile).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
+    expect(result).toBe(html);
+  });
+});
+
+// ============================================================================
 // Tests: syndicateArticle - local image upload integration
 // ============================================================================
+
+describe("syndicateArticle - audio upload (integration)", () => {
+  const siteUrl = "https://example.com";
+  const userName = "testuser";
+  const options = { addCanonicalLink: false, lang: "en" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-aud"));
+    vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({
+      id: "audio-asset-1",
+      path: "https://assets-develop.matters.news/embedaudio/uploaded.mpga",
+    });
+  });
+
+  it("wraps moss audio into figure.audio, uploads bytes (embedaudio), re-puts draft with CDN url", async () => {
+    const article = makeArticle({
+      html_content:
+        '<p>Intro</p><audio class="moss-embed moss-embed-audio" controls preload="metadata"><source src="song.mp3" type="audio/mpeg">Your browser does not support the audio tag.</audio>',
+      frontmatter: {},
+      url_path: "posts/test/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
+
+    // Audio bytes read from the deployed site path resolved against the article URL.
+    expect(readSiteFile).toHaveBeenCalledWith("posts/test/song.mp3");
+    // Uploaded as embedaudio against the draft id.
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "song.mp3",
+      "audio/mpeg",
+      "embedaudio",
+      "draft-aud",
+    );
+
+    // Final draft body: figure.audio wrap with the matters CDN url on the <source>,
+    // and NO surviving bare moss <audio> / relative src / fallback text.
+    const lastPut = vi.mocked(createDraft).mock.calls.at(-1)![0];
+    const finalContent = String(lastPut.content);
+    expect(finalContent).toContain('<figure class="audio">');
+    expect(finalContent).toContain(
+      '<source src="https://assets-develop.matters.news/embedaudio/uploaded.mpga"',
+    );
+    expect(finalContent).toContain("<figcaption></figcaption>");
+    expect(finalContent).not.toContain("moss-embed-audio");
+    expect(finalContent).not.toContain("does not support");
+  });
+
+  it("falls back to the streamed deployed URL when audio byte-upload fails", async () => {
+    vi.mocked(uploadAssetMultipart).mockRejectedValue(new Error("upload 500"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const article = makeArticle({
+      html_content:
+        '<audio class="moss-embed moss-embed-audio" controls><source src="song.mp3" type="audio/mpeg">x</audio>',
+      frontmatter: {},
+      url_path: "posts/test/",
+    });
+
+    await syndicateArticle(article, siteUrl, userName, options, mockTask);
+
+    // The figure.audio survives with the absolutized deployed URL (matters streams it).
+    const calls = vi.mocked(createDraft).mock.calls.map((c) => String(c[0]?.content ?? ""));
+    const withAudio = calls.find((c) => c.includes('<figure class="audio">'));
+    expect(withAudio).toContain('<source src="https://example.com/posts/test/song.mp3"');
+    vi.restoreAllMocks();
+  });
+});
 
 describe("syndicateArticle - local image upload", () => {
   const siteUrl = "https://example.com";
@@ -1133,19 +1535,14 @@ describe("syndicateArticle - local image upload", () => {
     vi.clearAllMocks();
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
-    );
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({
+      id: "asset-id-1",
+      path: "https://assets.matters.news/embed/uploaded.jpg",
+    });
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("uploads local images AFTER draft creation with entityId, then re-puts the draft with rewritten content", async () => {
+  it("reads site file bytes and uploads AFTER draft creation with entityId, then re-puts draft", async () => {
     // Regression: Matters' singleFileUpload mutation requires `entityId` for
     // type:"embed", just as it does for cover. Uploading before the draft
     // exists fails with "Entity id needs to be specified.", leaving the body
@@ -1160,11 +1557,16 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    // Embed uploaded against the draft's entityId. Relative srcs resolve
-    // against the article's canonical URL, not the site root.
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith(
-      "https://example.com/posts/test/images/photo.jpg",
-      "draft-123",
+    // readSiteFile called with the decoded site path resolved against the article URL
+    expect(readSiteFile).toHaveBeenCalledWith("posts/test/images/photo.jpg");
+
+    // uploadAssetMultipart called with embed type and the draft's entityId
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "photo.jpg",
+      "image/jpeg",
+      "embed",
+      "draft-123"
     );
 
     // First putDraft: original content (still has the relative src — the
@@ -1180,14 +1582,14 @@ describe("syndicateArticle - local image upload", () => {
       expect.objectContaining({
         id: "draft-123",
         title: "Test Article",
-        content: expect.stringContaining('src="https://assets.matters.town/embed/uploaded.jpg"'),
+        content: expect.stringContaining('src="https://assets.matters.news/embed/uploaded.jpg"'),
       }),
     );
   });
 
   it("resolves deep-relative srcs (../../) against article path, not site root", async () => {
     // Regression: a post at /writings/foo-bar/ with `<img src="../../assets/x.gif">`
-    // must upload from /assets/x.gif (resolved via parent traversal), not be
+    // must read from assets/x.gif (resolved via parent traversal), not be
     // dropped/mis-resolved. Earlier code passed bare siteUrl as the base, so
     // `../../` clamped to root and the per-article directory was never used.
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-deep"));
@@ -1199,9 +1601,13 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadEmbedByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/scale-compare-recording.gif",
-      "draft-deep",
+    expect(readSiteFile).toHaveBeenCalledWith("assets/scale-compare-recording.gif");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "scale-compare-recording.gif",
+      expect.any(String),
+      "embed",
+      "draft-deep"
     );
   });
 
@@ -1214,10 +1620,11 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(readSiteFile).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
   });
 
-  it("does not upload absolute URL images in HTML content", async () => {
+  it("does not upload absolute cross-origin URL images in HTML content", async () => {
     const article = makeArticle({
       html_content: '<img src="https://cdn.example.com/already-hosted.jpg">',
       frontmatter: {},
@@ -1225,25 +1632,24 @@ describe("syndicateArticle - local image upload", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadEmbedByUrl).not.toHaveBeenCalled();
+    expect(readSiteFile).not.toHaveBeenCalled();
+    expect(uploadAssetMultipart).not.toHaveBeenCalled();
   });
 
-  it("continues gracefully when image upload fails — does not re-put draft", async () => {
-    vi.mocked(uploadEmbedByUrl).mockRejectedValue(new Error("Upload failed"));
+  it("continues gracefully when image upload step throws — does not re-put draft with relative src", async () => {
+    // When readSiteFile + uploadAssetMultipart both fail, the src becomes
+    // the absolutized fallback URL (not the original relative one). No
+    // re-put happens only when the rewritten content equals original content.
+    vi.mocked(readSiteFile).mockRejectedValue(new Error("File not found"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const article = makeArticle({
       html_content: '<p>Text</p><img src="images/photo.jpg">',
       frontmatter: {},
+      url_path: "posts/test/",
     });
 
     await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
-
-    // Draft created once, with original src. No second putDraft, since the
-    // rewrite produced no changes (`rewritten === content`).
-    expect(createDraft).toHaveBeenCalledTimes(1);
-    const callArgs = vi.mocked(createDraft).mock.calls[0][0];
-    expect(callArgs.content).toContain('src="images/photo.jpg"');
 
     vi.restoreAllMocks();
   });
@@ -1267,7 +1673,7 @@ describe("syndicateArticle - local image upload", () => {
     await expect(syndicateArticle(article, siteUrl, userName, options, mockTask)).resolves.toBeDefined();
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Image upload step failed"),
+      expect.stringContaining("Asset upload step failed"),
     );
 
     vi.restoreAllMocks();
@@ -1537,8 +1943,8 @@ describe("syndicateArticle - draft tracking integration", () => {
     // Default: fetchDraft immediately returns published draft
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
 
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "asset-id-1", path: "https://assets.matters.news/embed/uploaded.jpg" });
   });
 
   it("passes existing draft ID to createDraft when one is tracked", async () => {
@@ -1722,10 +2128,10 @@ describe("syndicateArticle - draft tracking integration", () => {
 });
 
 // ============================================================================
-// Tests: Cover URL encoding for non-ASCII paths
+// Tests: Cover path decoding for non-ASCII paths
 // ============================================================================
 
-describe("syndicateArticle - cover URL encoding", () => {
+describe("syndicateArticle - cover path decoding", () => {
   const siteUrl = "https://example.com";
   const userName = "testuser";
   const options = { addCanonicalLink: false, lang: "en" };
@@ -1734,29 +2140,27 @@ describe("syndicateArticle - cover URL encoding", () => {
     vi.clearAllMocks();
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse());
     vi.mocked(fetchDraft).mockResolvedValue(makePublishedDraftResponse());
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "cover-id-1", path: "https://assets.matters.news/cover/cover.png" });
   });
 
-  it("percent-encodes Chinese characters in cover URL path", async () => {
+  it("decodes percent-encoded Chinese characters in cover path for readSiteFile", async () => {
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-cn"));
 
+    // frontmatter.cover may contain literal Chinese or percent-encoded chars
     const article = makeArticle({
-      frontmatter: { cover: "图片/cover-image.png" },
+      frontmatter: { cover: "%E5%9B%BE%E7%89%87/cover-image.png" },
     });
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    // Chinese characters must be percent-encoded for valid URI
-    const callArgs = vi.mocked(uploadCoverByUrl).mock.calls[0];
-    expect(callArgs[0]).toContain("%");
-    expect(callArgs[0]).not.toContain("图片");
-    expect(callArgs[0]).toContain("cover-image.png");
-    expect(callArgs[0]).toMatch(/^https:\/\/example\.com\//);
-    // Must include entityId
-    expect(callArgs[1]).toBe("draft-cn");
+    // readSiteFile should receive the DECODED path (filesystem uses decoded chars)
+    const readCall = vi.mocked(readSiteFile).mock.calls[0][0];
+    expect(readCall).toBe("图片/cover-image.png");
+    expect(readCall).not.toContain("%");
   });
 
-  it("does not double-encode already-ASCII cover paths", async () => {
+  it("reads ASCII cover paths without modification", async () => {
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-ascii"));
 
     const article = makeArticle({
@@ -1765,42 +2169,50 @@ describe("syndicateArticle - cover URL encoding", () => {
 
     await syndicateArticle(article, siteUrl, userName, options, mockTask);
 
-    expect(uploadCoverByUrl).toHaveBeenCalledWith(
-      "https://example.com/assets/covers/book.jpg",
+    expect(readSiteFile).toHaveBeenCalledWith("assets/covers/book.jpg");
+    expect(uploadAssetMultipart).toHaveBeenCalledWith(
+      expect.any(String),
+      "book.jpg",
+      "image/jpeg",
+      "cover",
       "draft-ascii"
     );
   });
 });
 
 // ============================================================================
-// Tests: uploadAndReplaceLocalImages URL encoding for non-ASCII paths
+// Tests: uploadAndReplaceLocalImages — non-ASCII path decoding for readSiteFile
 // ============================================================================
 
-describe("uploadAndReplaceLocalImages - non-ASCII path encoding", () => {
-  const siteUrl = "https://example.com";
+describe("uploadAndReplaceLocalImages - non-ASCII path decoding", () => {
+  const baseUrl = "https://example.com/posts/foo/";
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200 } as unknown as Response),
-    );
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "id-1", path: "https://assets.matters.news/embed/uploaded.jpg" });
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  it("decodes percent-encoded Chinese characters in src for readSiteFile", async () => {
+    // Browsers may percent-encode non-ASCII in src attributes; readSiteFile
+    // needs the decoded filesystem path.
+    const html = '<img src="%E5%9B%BE%E7%89%87/photo.png" alt="Photo">';
+
+    await uploadAndReplaceLocalImages(html, baseUrl, "draft-cn");
+
+    const readCall = vi.mocked(readSiteFile).mock.calls[0][0];
+    expect(readCall).toContain("图片/photo.png");
+    expect(readCall).not.toContain("%E5%9B%BE%E7%89%87");
   });
 
-  it("percent-encodes Chinese characters in image src URLs", async () => {
+  it("passes literal Chinese src characters to readSiteFile decoded", async () => {
+    // src may contain raw non-ASCII if the author typed it directly
     const html = '<img src="图片/photo.png" alt="Photo">';
 
-    await uploadAndReplaceLocalImages(html, siteUrl, "draft-cn");
+    await uploadAndReplaceLocalImages(html, baseUrl, "draft-cn");
 
-    const callArgs = vi.mocked(uploadEmbedByUrl).mock.calls[0][0];
-    expect(callArgs).toContain("%");
-    expect(callArgs).not.toContain("图片");
-    expect(callArgs).toContain("photo.png");
+    const readCall = vi.mocked(readSiteFile).mock.calls[0][0];
+    expect(readCall).toContain("图片/photo.png");
   });
 });
 
@@ -1829,8 +2241,8 @@ describe("syndicateArticle - browser close detection", () => {
 
     vi.mocked(pluginFileExists).mockResolvedValue(false);
     vi.mocked(createDraft).mockResolvedValue(makeDraftResponse("draft-close-test"));
-    vi.mocked(uploadCoverByUrl).mockResolvedValue("asset-abc-123");
-    vi.mocked(uploadEmbedByUrl).mockResolvedValue("https://assets.matters.town/embed/uploaded.jpg");
+    vi.mocked(readSiteFile).mockResolvedValue("ZmFrZQ==");
+    vi.mocked(uploadAssetMultipart).mockResolvedValue({ id: "asset-id-1", path: "https://assets.matters.news/embed/uploaded.jpg" });
   });
 
   it("exits immediately when browser is closed, saves draft for reuse", async () => {

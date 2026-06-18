@@ -39,6 +39,23 @@ const SUB_PHASE_MAP: Record<string, string> = {
 };
 
 /**
+ * Sink for import sub-phase progress. Shaped to match the old `reportProgress`
+ * call sites — `current`/`total` are an absolute 0-100 overall value (as
+ * returned by {@link overallProgress}) over `total = 100`. The wired reporter
+ * (in `main.ts`) converts that to the unified task's 0-1 fraction and forwards
+ * it to `task.progress()`. Threaded into the long sub-phases (media download,
+ * per-item sync) so the import hairline advances THROUGH them instead of
+ * stalling — replacing the legacy SDK `reportProgress` path, which the progress
+ * panel drops for the `process` hook.
+ */
+export type ProgressReporter = (
+  phase: string,
+  current: number,
+  total: number,
+  message?: string,
+) => void;
+
+/**
  * Compute overall progress (0-100) given current phase and progress within it.
  *
  * @param phase - Current phase name (must match a PHASE_WEIGHTS entry or SUB_PHASE_MAP key)

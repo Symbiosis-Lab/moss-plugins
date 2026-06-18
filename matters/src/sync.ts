@@ -42,11 +42,16 @@ import type {
   SyncResultWithMap,
 } from "./types";
 import type { MattersPluginConfig } from "./config";
-import { slugify, reportProgress, reportError } from "./utils";
-import { overallProgress } from "./progress";
+import { slugify, reportError } from "./utils";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { generateFrontmatter, parseFrontmatter } from "./converter";
 import { htmlToMarkdown, readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
-import { isMattersUrl, articleUrl } from "./domain";
+import { isMattersUrl, articleUrl, extractShortHash } from "./domain";
+
+// Canonical home for extractShortHash is ./domain (it owns Matters URL knowledge).
+// Re-exported here so existing `import { extractShortHash } from "../sync"` callers
+// and tests keep resolving it.
+export { extractShortHash } from "./domain";
 
 // ============================================================================
 // Exported Functions for Folder Detection
@@ -243,25 +248,6 @@ export function isRemoteNewer(
   return remoteDate > localDate;
 }
 
-/**
- * Extract shortHash from a Matters URL
- * URL format: https://matters.town/@userName/slug-shortHash
- */
-export function extractShortHash(mattersUrl: string): string | null {
-  try {
-    const url = new URL(mattersUrl);
-    const path = url.pathname;
-    // Path format: /@userName/slug-shortHash
-    const lastSegment = path.split("/").pop();
-    if (!lastSegment) return null;
-    // shortHash is the last part after the final hyphen
-    const parts = lastSegment.split("-");
-    if (parts.length < 2) return null;
-    return parts[parts.length - 1];
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Scan local markdown files to find all synced Matters articles
@@ -318,6 +304,14 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
                 title: (parsed.frontmatter.title as string) || file,
                 uid,
               });
+            } else {
+              // Visible signal rather than a silent drop: an article with a
+              // valid Matters syndicated URL whose shortHash can't be parsed
+              // will get no comments/social data, and the user would otherwise
+              // have no way to know why.
+              console.warn(
+                `[matters] could not extract shortHash from syndicated URL "${mattersUrl}" (${file}) — skipping social fetch`
+              );
             }
           }
         }
@@ -383,6 +377,10 @@ export async function syncToLocalFiles(
   // `home: true` marker to match moss's folder-home convention. Falls back to
   // `index.md` when absent (older hosts that don't supply it).
   folderName?: string | null,
+  // Reports per-item sync progress to the unified import task so the hairline
+  // advances within the "syncing" band instead of jumping start→end. Optional:
+  // direct callers (tests) omit it and the per-item reports no-op.
+  onProgress?: ProgressReporter,
 ): Promise<SyncResultWithMap> {
   const result: SyncResult = {
     created: 0,
@@ -466,7 +464,7 @@ export async function syncToLocalFiles(
   // considers index stems, self-named folder notes, and alphabetical fallback. When a
   // home file exists, the Matters plugin should not create a competing index.md.
   processedItems++;
-  await reportProgress("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
+  onProgress?.("syncing_homepage", overallProgress("syncing_homepage", processedItems, totalItems), 100, "Creating homepage...");
 
   if (homepageFile) {
     console.log(`   ⏭️  Skipping homepage (moss detected home file: ${homepageFile})`);
@@ -552,7 +550,7 @@ export async function syncToLocalFiles(
   // Process collections
   for (const collection of collections) {
     processedItems++;
-    await reportProgress(
+    onProgress?.(
       "syncing_collections",
       overallProgress("syncing_collections", processedItems, totalItems),
       100,
@@ -639,7 +637,7 @@ export async function syncToLocalFiles(
   // Process published articles
   for (const article of articles) {
     processedItems++;
-    await reportProgress(
+    onProgress?.(
       "syncing_articles",
       overallProgress("syncing_articles", processedItems, totalItems),
       100,
@@ -760,7 +758,7 @@ export async function syncToLocalFiles(
     for (const draft of drafts) {
       processedItems++;
       const draftTitle = draft.title || "Untitled";
-      await reportProgress(
+      onProgress?.(
         "syncing_drafts",
         overallProgress("syncing_drafts", processedItems, totalItems),
         100,

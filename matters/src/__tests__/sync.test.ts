@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { isRemoteNewer, extractShortHash } from "../sync";
+import { describe, it, expect, vi } from "vitest";
+import { isRemoteNewer } from "../sync";
 
 describe("isRemoteNewer", () => {
   it("returns true when local is undefined", () => {
@@ -132,6 +132,33 @@ describe("syncToLocalFiles - homepage grid from pinned works", () => {
     // `:::` occurrences (open marker prefix + closer), no `:::` between cells.
     expect((homepage!.match(/^:::$/gm) || []).length).toBe(1);
     expect(homepage).toContain(":::");
+  });
+
+  it("forwards sync progress to the onProgress reporter (unified task, not the dropped legacy path)", async () => {
+    const { syncToLocalFiles } = await import("../sync");
+    const onProgress = vi.fn();
+    await syncToLocalFiles(
+      [], // no articles
+      [], // no drafts
+      [], // no collections
+      "testuser",
+      {},
+      { displayName: "Test User", userName: "testuser", description: "", pinnedWorks: [] },
+      null, // homepageFile
+      null, // folderName
+      onProgress,
+    );
+    // The per-item sync now drives the unified import task (was the legacy
+    // reportProgress path, which the panel dropped for the `process` hook).
+    expect(onProgress).toHaveBeenCalledWith(
+      "syncing_homepage",
+      expect.any(Number),
+      100,
+      expect.any(String),
+    );
+    // …carrying a real (non-zero) overall fraction, not a constant 0.
+    const homepageCall = onProgress.mock.calls.find((c) => c[0] === "syncing_homepage");
+    expect(homepageCall?.[1]).toBeGreaterThan(0);
   });
 
   it("should generate :::grid 3 homepage with pinned articles", async () => {
@@ -920,39 +947,6 @@ describe("syncToLocalFiles - skip collection index when folder has home file", (
 });
 
 // ============================================================================
-// extractShortHash Tests
-// ============================================================================
-
-describe("extractShortHash", () => {
-  it("extracts shortHash from standard Matters URL", () => {
-    const url = "https://matters.town/@testuser/test-article-abc123def";
-    expect(extractShortHash(url)).toBe("abc123def");
-  });
-
-  it("extracts shortHash from URL with multiple hyphens in slug", () => {
-    const url = "https://matters.town/@testuser/my-long-article-title-xyz789";
-    expect(extractShortHash(url)).toBe("xyz789");
-  });
-
-  it("extracts shortHash from Chinese article URL", () => {
-    const url = "https://matters.town/@testuser/测试文章-shortHash123";
-    expect(extractShortHash(url)).toBe("shortHash123");
-  });
-
-  it("returns null for invalid URL", () => {
-    expect(extractShortHash("not a url")).toBe(null);
-  });
-
-  it("returns null for URL without path segments", () => {
-    expect(extractShortHash("https://matters.town/")).toBe(null);
-  });
-
-  it("returns null for URL with only slug (no hyphen)", () => {
-    expect(extractShortHash("https://matters.town/@testuser/article")).toBe(null);
-  });
-});
-
-// ============================================================================
 // scanLocalArticles Tests
 // ============================================================================
 
@@ -983,6 +977,46 @@ Article content`;
     expect(articles).toHaveLength(1);
     expect(articles[0].shortHash).toBe("abc123");
     expect(articles[0].title).toBe("Test Article");
+  });
+
+  it("finds articles syndicated with a /a/ short-link URL", async () => {
+    const articleContent = `---
+title: "Short Link Article"
+uid: 9136b141
+syndicated:
+  - "https://matters.town/a/aj5szksg7ppa"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/short-link.md`, articleContent);
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].shortHash).toBe("aj5szksg7ppa");
+    expect(articles[0].uid).toBe("9136b141");
+  });
+
+  it("warns and skips a Matters URL whose shortHash cannot be parsed", async () => {
+    const articleContent = `---
+title: "Unparseable Syndication"
+syndicated:
+  - "https://matters.town/@testuser/nohyphenslug"
+---
+
+Article content`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/articles/unparseable.md`, articleContent);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { scanLocalArticles } = await import("../sync");
+    const articles = await scanLocalArticles();
+
+    expect(articles).toHaveLength(0); // excluded, not silently included
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("could not extract shortHash")
+    );
+    warn.mockRestore();
   });
 
   it("ignores files without syndicated field", async () => {

@@ -8,7 +8,6 @@
 import {
   setMessageContext,
   sendMessage as sdkSendMessage,
-  reportProgress as sdkReportProgress,
   reportError as sdkReportError,
   fetchUrl,
   downloadAsset as sdkDownloadAsset,
@@ -52,20 +51,6 @@ export { originalSetCurrentHookName };
  */
 export async function sendMessage(message: PluginMessage): Promise<void> {
   await sdkSendMessage(message);
-}
-
-/**
- * Report progress to moss during long-running operations
- * Non-blocking: fires progress update without waiting for response
- */
-export function reportProgress(
-  phase: string,
-  current: number,
-  total: number,
-  message?: string
-): void {
-  // Fire-and-forget: don't await to avoid blocking worker pool
-  sdkReportProgress(phase, current, total, message).catch(() => {});
 }
 
 /**
@@ -251,6 +236,55 @@ export async function downloadAsset(
     bytes_written: result.bytesWritten,
     actual_path: result.actualPath,
   };
+}
+
+// ============================================================================
+// Sync receipt formatting
+// ============================================================================
+
+/**
+ * Format the article-sync outcome as a NOUN-LED receipt line for the progress
+ * surface — "12 articles already up to date", not a bare "12 unchanged" whose
+ * subject the reader has to guess. Pure + total-aware so the headline reads as
+ * one fact (how many articles, and what happened to them) rather than a string
+ * of disconnected counts.
+ *
+ * Image/link/comment outcomes are NOT folded in here — successes stay silent
+ * ("success makes no sound") and failed images ride a per-image advisory.
+ */
+export function formatArticleSyncSummary(counts: {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}): string {
+  const { created, updated, skipped, failed } = counts;
+  const synced = created + updated + skipped;
+  const s = (n: number): string => (n === 1 ? "" : "s");
+
+  if (synced === 0) {
+    return failed > 0
+      ? `${failed} article${s(failed)} failed to sync`
+      : "no articles to sync";
+  }
+
+  let base: string;
+  if (created === 0 && updated === 0) {
+    // Every synced article already matched its remote — the common "nothing
+    // changed" run. This is the line the user found opaque as "5 unchanged".
+    base = `${synced} article${s(synced)} already up to date`;
+  } else {
+    const changed: string[] = [];
+    if (created > 0) changed.push(`${created} new`);
+    if (updated > 0) changed.push(`${updated} updated`);
+    if (skipped > 0) changed.push(`${skipped} unchanged`);
+    base = `${synced} article${s(synced)}: ${changed.join(", ")}`;
+  }
+
+  // Trailing failure clause with an explicit verb so it reads as a SEPARATE
+  // cohort, not part of the synced set — "5 articles already up to date,
+  // 2 failed to sync" (the bare ", 2 failed" looked like 2 of the 5 broke).
+  return failed > 0 ? `${base}, ${failed} failed to sync` : base;
 }
 
 // ============================================================================

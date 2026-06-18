@@ -39,7 +39,7 @@ import type {
   UserCollectionsQuery,
   UserProfileQuery,
 } from "./__generated__/types";
-import { getPluginCookie, httpPost, readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
+import { getPluginCookie, httpPost, httpPostMultipart, readPluginFile, writePluginFile, pluginFileExists } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
 // Configuration
@@ -1519,60 +1519,72 @@ mutation SingleFileUpload($input: SingleFileUploadInput!) {
 }
 `;
 
-/**
- * Upload a cover image to Matters by URL
- *
- * Uses the singleFileUpload mutation with a URL parameter so Matters
- * fetches the image from the published site directly.
- *
- * @param url - Full URL of the cover image on the published site
- * @param entityId - Draft ID to attach the cover to (required by Matters API)
- * @returns The Matters asset ID to pass as `cover` in putDraft
- */
-export async function uploadCoverByUrl(url: string, entityId: string): Promise<string> {
-  interface SingleFileUploadResponse {
-    singleFileUpload: { id: string; path: string };
-  }
-
-  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
-    input: {
-      url,
-      type: "cover",
-      entityType: "draft",
-      entityId,
-    },
-  });
-
-  return data.singleFileUpload.id;
-}
 
 /**
- * Upload an embed image to Matters by URL
+ * Upload an asset to Matters by sending its BYTES via multipart — the same
+ * mechanism Matters' own editor uses — instead of asking Matters to fetch it
+ * by URL.
  *
- * Uses the singleFileUpload mutation with a URL parameter so Matters
- * fetches the image from the published site directly.
+ * Why bytes, not URL: Matters' server cannot reliably fetch assets from
+ * arbitrary deployed sites (e.g. Caddy/moss-seta-hosted sites return
+ * `UNABLE_TO_UPLOAD_FROM_URL`), and the `embedaudio` asset type rejects
+ * url-upload entirely. So callers read the asset bytes from the local build
+ * output (`readSiteFile`, already base64) and POST them here.
  *
- * @param url - Full URL of the image on the published site
- * @param entityId - Draft ID the embed is being uploaded into. Required by
- *   Matters: without it the mutation rejects with "Entity id needs to be
- *   specified." (same constraint as cover; see uploadCoverByUrl).
- * @returns The Matters CDN URL (path) of the uploaded image
+ * Uses the GraphQL multipart request spec (operations/map/file) via
+ * `httpPostMultipart`. Requires the `apollo-require-preflight` header — without
+ * it Matters' Apollo server rejects the multipart POST as potential CSRF.
+ *
+ * @param base64 - File bytes, base64-encoded (e.g. straight from readSiteFile)
+ * @param filename - Display filename for the upload
+ * @param contentType - MIME type (e.g. "image/jpeg", "audio/mpeg")
+ * @param assetType - Matters AssetType: "embed" (image), "embedaudio" (audio), or "cover"
+ * @param entityId - Draft ID the asset attaches to (required by singleFileUpload)
+ * @returns The uploaded asset's `{ id, path }` (path = the Matters CDN URL)
  */
-export async function uploadEmbedByUrl(url: string, entityId: string): Promise<string> {
-  interface SingleFileUploadResponse {
-    singleFileUpload: { id: string; path: string };
+export async function uploadAssetMultipart(
+  base64: string,
+  filename: string,
+  contentType: string,
+  assetType: "embed" | "embedaudio" | "cover",
+  entityId: string,
+): Promise<{ id: string; path: string }> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("No access token available. Please login first.");
   }
 
-  const data = await graphqlQuery<SingleFileUploadResponse>(SINGLE_FILE_UPLOAD_MUTATION, {
-    input: {
-      url,
-      type: "embed",
-      entityType: "draft",
-      entityId,
-    },
+  const operations = JSON.stringify({
+    query: SINGLE_FILE_UPLOAD_MUTATION,
+    variables: { input: { type: assetType, entityType: "draft", entityId, file: null } },
   });
+  const map = JSON.stringify({ "0": ["variables.input.file"] });
 
-  return data.singleFileUpload.path;
+  const response = await httpPostMultipart(
+    apiConfig.endpoint,
+    {
+      textFields: [
+        { name: "operations", value: operations },
+        { name: "map", value: map },
+      ],
+      files: [{ field: "0", filename, contentType, contentBase64: base64 }],
+    },
+    {
+      headers: {
+        "x-access-token": token,
+        // Required: Matters' Apollo server treats a bare multipart POST as a
+        // potential CSRF attack and rejects it without this preflight opt-in.
+        "apollo-require-preflight": "true",
+      },
+      timeoutMs: 60000,
+    },
+  );
+
+  const data = await handleGraphqlResponse<{ singleFileUpload: { id: string; path: string } }>(
+    response,
+    true,
+  );
+  return data.singleFileUpload;
 }
 
 /**

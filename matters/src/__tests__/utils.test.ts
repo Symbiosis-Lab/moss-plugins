@@ -5,7 +5,58 @@ import {
   generateLocalFilename,
   getExtensionFromContentType,
   uint8ArrayToBase64,
+  formatArticleSyncSummary,
 } from "../utils";
+
+describe("formatArticleSyncSummary", () => {
+  it("leads with the noun for the all-unchanged run (the opaque '5 unchanged' case)", () => {
+    expect(formatArticleSyncSummary({ created: 0, updated: 0, skipped: 5, failed: 0 })).toBe(
+      "5 articles already up to date",
+    );
+  });
+
+  it("uses the singular noun for one article", () => {
+    expect(formatArticleSyncSummary({ created: 0, updated: 0, skipped: 1, failed: 0 })).toBe(
+      "1 article already up to date",
+    );
+  });
+
+  it("shows the total then the changed breakdown for a mixed run", () => {
+    expect(formatArticleSyncSummary({ created: 3, updated: 2, skipped: 5, failed: 0 })).toBe(
+      "10 articles: 3 new, 2 updated, 5 unchanged",
+    );
+  });
+
+  it("omits zero-count segments", () => {
+    expect(formatArticleSyncSummary({ created: 4, updated: 0, skipped: 0, failed: 0 })).toBe(
+      "4 articles: 4 new",
+    );
+  });
+
+  it("reports nothing-to-do plainly", () => {
+    expect(formatArticleSyncSummary({ created: 0, updated: 0, skipped: 0, failed: 0 })).toBe(
+      "no articles to sync",
+    );
+  });
+
+  it("appends a failure count as a separate cohort when some synced and some failed", () => {
+    expect(formatArticleSyncSummary({ created: 5, updated: 0, skipped: 0, failed: 2 })).toBe(
+      "5 articles: 5 new, 2 failed to sync",
+    );
+  });
+
+  it("keeps the failure cohort distinct from an all-unchanged set (no 'up to date, 2 failed' ambiguity)", () => {
+    expect(formatArticleSyncSummary({ created: 0, updated: 0, skipped: 5, failed: 2 })).toBe(
+      "5 articles already up to date, 2 failed to sync",
+    );
+  });
+
+  it("reports a fully-failed run without a misleading 'synced' noun", () => {
+    expect(formatArticleSyncSummary({ created: 0, updated: 0, skipped: 0, failed: 3 })).toBe(
+      "3 articles failed to sync",
+    );
+  });
+});
 
 describe("slugify", () => {
   it("converts simple text to lowercase slug", () => {

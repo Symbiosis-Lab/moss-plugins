@@ -15,6 +15,7 @@ import {
   reportError,
   setCurrentHookName,
   sleep,
+  formatArticleSyncSummary,
 } from "./utils";
 import { startTask } from "@symbiosis-lab/moss-api";
 import type { TaskHandle } from "@symbiosis-lab/moss-api";
@@ -29,8 +30,7 @@ import {
   fetchAllArticleCommentCounts,
   createDraft,
   fetchDraft,
-  uploadCoverByUrl,
-  uploadEmbedByUrl,
+  uploadAssetMultipart,
   apiConfig,
   getSessionState,
   shouldNudgeSessionExpired,
@@ -40,11 +40,12 @@ import { resolveAuthRoute, isUserPresent } from "./auth-route";
 import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
-import { overallProgress } from "./progress";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { loadSocialData, saveSocialData, mergeSocialData, reconcileLegacySocialData } from "./social";
 import {
   readFile,
   writeFile,
+  readSiteFile,
   showToast,
   dismissToast,
   readPluginFile,
@@ -616,6 +617,16 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     }
 
     // Phase 6: Sync to local files
+    // Route sub-phase progress (per-item sync, per-image media download) to the
+    // unified import task so the hairline advances THROUGH the long phases
+    // instead of stalling. Takes the (phase, absolute-0-100, total=100) shape
+    // the sub-phases emit and converts to the task's 0-1 fraction; fire-and-
+    // forget so a slow IPC never blocks the import worker. Replaces the legacy
+    // `reportProgress` SDK path, which the progress panel drops for `process`.
+    const reportToTask: ProgressReporter = (_phase, current, total, message) => {
+      void task.progress(total > 0 ? current / total : 0, message).catch(() => {});
+    };
+
     const syncTotal = articles.length + drafts.length + allCollections.length + 1;
     await task.progress(overallProgress("syncing", 0, syncTotal) / 100, "Starting sync...");
     const { result: syncResult, articlePathMap } = await syncToLocalFiles(
@@ -627,42 +638,46 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       profile,
       context.project_info.homepage_file,
       context.project_info.folder_name,
+      reportToTask,
     );
 
-    // Build summary message
-    const parts: string[] = [];
-    if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
-    if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
-    if (syncResult.skipped > 0) parts.push(`${syncResult.skipped} unchanged`);
-    if (syncResult.errors.length > 0) parts.push(`${syncResult.errors.length} errors`);
-
-    const summary = parts.length > 0 ? parts.join(", ") : "no changes";
+    // Build the NOUN-LED article summary ("12 articles already up to date"),
+    // not a bare "12 unchanged". One headline fact for the progress surface.
+    const summary = formatArticleSyncSummary({
+      created: syncResult.created,
+      updated: syncResult.updated,
+      skipped: syncResult.skipped,
+      failed: syncResult.errors.length,
+    });
     await task.progress(overallProgress("syncing", syncTotal, syncTotal) / 100, `Sync complete: ${summary}`);
     console.log(`✅ Sync complete: ${summary}`);
 
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
     // Both operations read/write the same markdown files, so they must not run in parallel.
     // Order: Media download first (updates image references), then link rewriting
-    const mediaResult = await downloadMediaAndUpdate();
+    const mediaResult = await downloadMediaAndUpdate(reportToTask);
     await task.progress(overallProgress("rewriting_links", 0, 1) / 100, "Rewriting internal links...");
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
     await task.progress(overallProgress("rewriting_links", 1, 1) / 100, `Rewrote ${linkResult.linksRewritten} internal links`);
 
-    // Build media summary with correct labels:
-    // - imagesDownloaded: successfully downloaded
-    // - imagesSkipped: already existed locally (not failures!)
-    // - errors.length: actual failures
-    const mediaParts: string[] = [];
-    if (mediaResult.imagesDownloaded > 0) {
-      mediaParts.push(`${mediaResult.imagesDownloaded} downloaded`);
+    // Media outcomes do NOT clutter the success receipt: downloads/skips stay
+    // silent ("success makes no sound"), and each FAILED image is proposed as
+    // its own advisory carrying the image's source URL (the dead CDN reference
+    // still in the body) so the user sees WHICH image broke — not an opaque
+    // "1 failed" count. moss groups same-reason advisories into one notice that
+    // lists the URLs (capped + "+N more"). ShippedDegraded: the sync still
+    // succeeded, so this is a quiet hairline dot, never a blocker (gavel: R13).
+    // `?? []`: media is a non-critical path — a result missing this field (e.g.
+    // a partial test mock) must never abort the whole sync over an advisory.
+    for (const url of mediaResult.failedImageUrls ?? []) {
+      await task.advise({
+        scope: "Remote",
+        severity: "ShippedDegraded",
+        item: url,
+        what: "Image could not be downloaded from Matters",
+        action: "None",
+      });
     }
-    if (mediaResult.imagesSkipped > 0) {
-      mediaParts.push(`${mediaResult.imagesSkipped} skipped`);
-    }
-    if (mediaResult.errors.length > 0) {
-      mediaParts.push(`${mediaResult.errors.length} failed`);
-    }
-    const mediaSummary = mediaParts.length > 0 ? `, images: ${mediaParts.join(", ")}` : "";
 
     const linkSummary =
       linkResult.linksRewritten > 0
@@ -766,7 +781,12 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         }
       }
 
-      socialSummary = `, ${totalComments} new comments`;
+      // Only announce comments when there ARE new ones — "0 new comments" is
+      // noise that bloated the receipt and pushed the real outcome past the
+      // truncation edge.
+      if (totalComments > 0) {
+        socialSummary = `, ${totalComments} new comment${totalComments === 1 ? "" : "s"}`;
+      }
       console.log(`✅ Social data: ${fetched} fetched, ${skipped} skipped (no change), ${totalComments} new comments`);
     }
 
@@ -787,7 +807,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     // Only core sync errors are critical; media/link errors are non-critical (nice-to-have)
     // This allows partial success (e.g., all articles synced but some images failed to download)
     const criticalErrors = syncResult.errors;
-    const finalMessage = `Synced from Matters: ${summary}${mediaSummary}${linkSummary}${socialSummary}`;
+    const finalMessage = `Synced from Matters: ${summary}${linkSummary}${socialSummary}`;
 
     // Honest receipt for EVERY unauthenticated-mode run (spec §3.3),
     // state-aware: expired session vs never-logged-in route differently.
@@ -800,7 +820,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       : "";
 
     if (criticalErrors.length === 0) {
-      await task.succeeded(`${summary}${mediaSummary}${linkSummary}${socialSummary}${unauthNote}`);
+      await task.succeeded(`${summary}${linkSummary}${socialSummary}${unauthNote}`);
     } else {
       await task.failed(`${criticalErrors.length} sync error(s)`, true);
     }
@@ -1124,16 +1144,19 @@ export async function syndicateArticle(
     content = addCanonicalLinkToContent(content, canonicalUrl, isHtml, options.lang);
   }
 
-  // Step 4: Absolutize relative <a href> values against the article URL
-  // BEFORE any image work. Without this, matters.town serves `<a href="../../foo.html">`
-  // from its own domain and the link 404s. Same article-relative resolution
-  // rule as image srcs (PR1). Done as a separate pass so href-only updates
-  // don't trip the image-upload waitForUrl gate.
-  //
-  // Local image uploads happen post-draft (Step 8) — Matters' singleFileUpload
-  // requires `entityId` for embeds, just as it does for cover.
+  // Step 4: Absolutize relative <a href> values against the article URL.
+  // Without this, matters.town serves `<a href="../../foo.html">` from its own
+  // domain and the link 404s. Same article-relative resolution rule as asset
+  // srcs. Asset BYTE uploads happen post-draft (Step 8) — Matters'
+  // singleFileUpload requires `entityId` for embeds, just as it does for cover.
   if (isHtml) {
     content = absolutizeRelativeHrefs(content, canonicalUrl);
+    // Restructure moss audio embeds into matters' `<figure class="audio">` shape
+    // and absolutize the `<source>` src to the deployed URL. That absolutized URL
+    // is the FALLBACK — Step 8 then uploads the audio bytes and swaps in the
+    // durable matters CDN URL on success. Without this wrap matters strips moss's
+    // bare `<audio>` entirely. See wrapAudioForMatters.
+    content = wrapAudioForMatters(content, canonicalUrl);
   }
 
   // Step 5: Check for existing tracked draft
@@ -1168,18 +1191,27 @@ export async function syndicateArticle(
 
   console.log(`    📝 Draft ${existingDraftId ? "updated" : "created"} with ID: ${draft.id}`);
 
-  // Step 7: Upload cover if present in frontmatter (requires draft ID as entityId)
+  // Step 7: Upload cover if present in frontmatter (requires draft ID as entityId).
   // Cover paths are conventionally site-relative (e.g. `/og-image.png` or
-  // `assets/covers/foo.jpg`), so resolve against siteUrl, not canonicalUrl.
+  // `assets/covers/foo.jpg`). We read the BYTES from the local build output and
+  // upload them directly — matters' server cannot reliably fetch covers by URL
+  // from a deployed site (see uploadAssetMultipart).
   const coverPath = article.frontmatter.cover as string | undefined;
   if (coverPath) {
-    const coverUrl = new URL(coverPath.replace(/^\//, ""), siteUrl.replace(/\/$/, "") + "/").href;
     try {
-      await waitForUrl(coverUrl);
-      const coverAssetId = await uploadCoverByUrl(coverUrl, draft.id);
-      console.log(`    🖼️ Cover uploaded: ${coverAssetId}`);
+      const coverSitePath = decodeURIComponent(coverPath.replace(/^\//, ""));
+      const base64 = await readSiteFile(coverSitePath);
+      const filename = coverSitePath.split("/").pop() || "cover";
+      const coverAsset = await uploadAssetMultipart(
+        base64,
+        filename,
+        imageMimeForPath(coverSitePath),
+        "cover",
+        draft.id,
+      );
+      console.log(`    🖼️ Cover uploaded (bytes): ${coverAsset.id}`);
       // Update draft with cover
-      await createDraft({ id: draft.id, title: draft.title, cover: coverAssetId });
+      await createDraft({ id: draft.id, title: draft.title, cover: coverAsset.id });
       console.log(`    🖼️ Draft updated with cover`);
     } catch (error) {
       console.warn(`    ⚠️ Cover upload failed, continuing without cover: ${error}`);
@@ -1197,13 +1229,18 @@ export async function syndicateArticle(
   // generic syndication failure instead of the still-usable draft.
   if (isHtml) {
     try {
-      const rewritten = await uploadAndReplaceLocalImages(content, canonicalUrl, draft.id);
+      let rewritten = await uploadAndReplaceLocalImages(content, canonicalUrl, draft.id);
+      // Upload audio bytes too (embedaudio). The figure.audio src is currently
+      // the absolutized deployed URL (from wrapAudioForMatters); on success this
+      // swaps it for the durable matters CDN URL, on failure it stays as the
+      // streamed site URL.
+      rewritten = await uploadAndReplaceLocalAudio(rewritten, canonicalUrl, draft.id);
       if (rewritten !== content) {
         await createDraft({ id: draft.id, title: draft.title, content: rewritten });
-        console.log(`    🖼️ Draft updated with rewritten image srcs`);
+        console.log(`    🖼️ Draft updated with uploaded asset URLs`);
       }
     } catch (error) {
-      console.warn(`    ⚠️ Image upload step failed, draft body keeps relative srcs: ${error}`);
+      console.warn(`    ⚠️ Asset upload step failed, draft body keeps original srcs: ${error}`);
     }
   }
 
@@ -1549,25 +1586,60 @@ export function stripArticleTitleH1(html: string, articleTitle: string): string 
  *
  * Exported for unit testing.
  */
+/**
+ * Resolve a single URL against `baseUrl`, returning it UNCHANGED when it is
+ * already absolute (has a scheme), scheme-relative (`//host`), a fragment
+ * (`#x`), or cannot be parsed. Shared by `absolutizeRelativeHrefs` (links) and
+ * `wrapAudioForMatters` (audio `<source>` srcs) so both resolve article-relative
+ * references against the article's canonical URL the same way.
+ */
+function absolutizeUrl(url: string, baseUrl: string): string {
+  if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(url)) {
+    return url;
+  }
+  try {
+    return new URL(url, baseUrl).href;
+  } catch (error) {
+    console.warn(`    ⚠️ Could not resolve URL ${url} against ${baseUrl}: ${error}`);
+    return url;
+  }
+}
+
 export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
   return html.replace(/<a\b([^>]*?)\shref="([^"]+)"([^>]*)>/gi, (full, before: string, href: string, after: string) => {
-    // Leave absolute URLs, scheme-relative URLs, and fragment links untouched.
-    if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) {
-      return full;
-    }
-    let absolute: string;
-    try {
-      absolute = new URL(href, baseUrl).href;
-    } catch (error) {
-      console.warn(`    ⚠️ Could not resolve href ${href} against ${baseUrl}: ${error}`);
+    const absolute = absolutizeUrl(href, baseUrl);
+    if (absolute === href) {
       return full;
     }
     return `<a${before} href="${absolute}"${after}>`;
   });
 }
 
+/**
+ * Strip moss's heading-anchor permalinks from headings.
+ *
+ * moss appends `<a class="moss-heading-anchor" href="#…"><span
+ * aria-hidden="true">#</span></a>` to every heading for web navigation. On the
+ * site the `#` is hover-only chrome (CSS), but matters' sanitizer keeps the
+ * anchor's text, so headings syndicate as e.g. "1.#" (a stray, linked `#`).
+ * The `#` is not content, so we remove the whole anchor before syndication.
+ * Verified 2026-06-16 against `server.matters.icu`.
+ *
+ * Exported for unit testing.
+ */
+export function stripHeadingAnchors(html: string): string {
+  return html.replace(
+    /<a\b[^>]*\bclass="[^"]*\bmoss-heading-anchor\b[^"]*"[^>]*>[\s\S]*?<\/a>/gi,
+    "",
+  );
+}
+
 export function normalizeHtmlForMatters(html: string): string {
   let result = html;
+
+  // Step 0: Remove moss heading-anchor permalinks (web-only chrome whose `#`
+  // would otherwise leak into matters' heading text). See stripHeadingAnchors.
+  result = stripHeadingAnchors(result);
 
   // Step 1: Collapse h4, h5, h6 → h3 (process these BEFORE h1 to avoid double-shifting)
   result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (_match, slash, attrs) => {
@@ -1669,6 +1741,69 @@ export function wrapImagesForMatters(html: string): string {
 }
 
 /**
+ * Convert moss's audio embed into matters' required `<figure class="audio">`
+ * shape and absolutize the `<source>` URL against the article URL.
+ *
+ * moss emits a bare:
+ *   <audio class="moss-embed moss-embed-audio" controls preload="metadata">
+ *     <source src="REL" type="MIME">Your browser does not support…</audio>
+ *
+ * matters' server-side sanitizer STRIPS that entirely (the `<audio>` vanishes
+ * and the fallback text leaks out as a stray `<p>`). The only audio shape it
+ * keeps — verified 2026-06-16 against `server.matters.icu` — is:
+ *   <figure class="audio"><audio controls><source src="URL" type="MIME"></audio>
+ *     <figcaption></figcaption></figure>
+ * with three hard requirements found empirically:
+ *   1. the URL MUST be on a `<source>` child — a `src` on `<audio>` is dropped;
+ *   2. a `<figcaption>` child is REQUIRED (its absence is a server error,
+ *      "Cannot read properties of undefined (reading 'firstChild')"); empty OK;
+ *   3. matters keeps an EXTERNAL `<source src>` verbatim and its player streams
+ *      from it, so the absolutized deployed URL is a valid src on its own. This
+ *      is the FALLBACK: `uploadAndReplaceLocalAudio` (post-draft) then uploads
+ *      the audio bytes via `embedaudio` and swaps in the durable matters CDN URL
+ *      on success. (matters' `embedaudio` rejects url-upload, hence byte-upload.)
+ *
+ * moss does not yet emit audio captions, so the `<figcaption>` is always empty.
+ *
+ * Exported for unit testing.
+ */
+export function wrapAudioForMatters(html: string, baseUrl: string): string {
+  // moss audio is identified by the `moss-embed-audio` class. Capture the inner
+  // markup (the `<source>` + fallback text) so we can extract the source.
+  const audioPattern =
+    '<audio\\b[^>]*\\bclass="[^"]*\\bmoss-embed-audio\\b[^"]*"[^>]*>([\\s\\S]*?)</audio>';
+
+  const buildFigure = (inner: string): string => {
+    const srcMatch = inner.match(/<source\b[^>]*\bsrc="([^"]*)"[^>]*>/i);
+    const src = srcMatch ? srcMatch[1] : "";
+    const typeMatch = inner.match(/<source\b[^>]*\btype="([^"]*)"[^>]*>/i);
+    const type = typeMatch ? typeMatch[1] : undefined;
+
+    const absSrc = absolutizeUrl(src, baseUrl);
+    const sourceTag = type
+      ? `<source src="${absSrc}" type="${type}">`
+      : `<source src="${absSrc}">`;
+    // Empty figcaption is mandatory (see requirement 2 above). The `<audio>`
+    // fallback text node is intentionally dropped.
+    return `<figure class="audio"><audio controls>${sourceTag}</audio><figcaption></figcaption></figure>`;
+  };
+
+  let result = html;
+  // Pass 1: hoist `<p>…audio…</p>` out of the paragraph — a `<figure>` inside a
+  // `<p>` is invalid HTML and matters splits the `<p>`, leaving stray empties.
+  result = result.replace(
+    new RegExp(`<p>\\s*(?:${audioPattern})\\s*</p>`, "gi"),
+    (_full, inner: string) => buildFigure(inner),
+  );
+  // Pass 2: any remaining standalone moss audio.
+  result = result.replace(
+    new RegExp(audioPattern, "gi"),
+    (_full, inner: string) => buildFigure(inner),
+  );
+  return result;
+}
+
+/**
  * Add canonical link to article content
  *
  * @param lang - Language code; when starting with "zh", uses Chinese text
@@ -1689,124 +1824,202 @@ export function addCanonicalLinkToContent(
   return content + canonicalNotice;
 }
 
+/** Map an image file extension to the MIME type sent on upload. */
+export function imageMimeForPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "avif":
+      return "image/avif";
+    case "svg":
+      return "image/svg+xml";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/** Map an audio file extension to the MIME type sent on upload (mirrors moss-core). */
+export function audioMimeForPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  switch (ext) {
+    case "mp3":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "ogg":
+      return "audio/ogg";
+    case "flac":
+      return "audio/flac";
+    case "m4a":
+      return "audio/mp4";
+    case "opus":
+      return "audio/opus";
+    default:
+      return "application/octet-stream";
+  }
+}
+
 /**
- * Upload all local/relative images in HTML content to Matters CDN
- * and replace their src attributes with CDN URLs.
+ * Resolve an asset `src` (as it appears in the rendered article HTML — a
+ * site-absolute `/image/x.jpg`, an article-relative `../assets/x.jpg`, or an
+ * already-absolutized same-origin URL) to a path relative to the deployed site
+ * root, suitable for `readSiteFile`.
  *
- * - Skips absolute URLs (http://, https://, data:)
- * - Deduplicates: same src used multiple times is only uploaded once
- * - Graceful failure: warns on upload error, leaves original src unchanged
- * - Retries the upload with HEAD-probe backoff on 404s, since the article
- *   may have just been deployed and CDN propagation (GitHub Pages especially)
- *   can lag the deploy command's success by tens of seconds.
+ * Returns `null` for `data:` URIs and for any URL whose origin differs from the
+ * site (e.g. an external CDN or an already-uploaded matters URL) — those are
+ * not local build artifacts and must be left untouched.
+ *
+ * Exported for unit testing.
+ */
+export function siteRelativePathFromSrc(src: string, baseUrl: string): string | null {
+  if (/^data:/i.test(src)) return null;
+  let resolved: URL;
+  let base: URL;
+  try {
+    resolved = new URL(src, baseUrl);
+    base = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== base.origin) return null;
+  // pathname is percent-encoded; decode for the filesystem read.
+  const path = decodeURIComponent(resolved.pathname.replace(/^\//, ""));
+  return path || null;
+}
+
+/**
+ * Upload local images to Matters and replace their `<img src>` with the
+ * returned matters CDN URL.
+ *
+ * Bytes are read from the LOCAL build output (`readSiteFile`) and uploaded
+ * directly via multipart — matters' server cannot reliably fetch images by URL
+ * from a deployed site (Caddy/moss-seta hosts return `UNABLE_TO_UPLOAD_FROM_URL`).
+ *
+ * - Skips external (other-origin) and `data:` srcs.
+ * - Deduplicates: same src is uploaded once.
+ * - Graceful fallback: on read/upload failure the src is rewritten to the
+ *   absolutized deployed URL (matters keeps an external `<img src>` and the
+ *   reader's browser loads it from the live site), so the image still displays
+ *   instead of breaking.
  *
  * @param content - HTML content containing img tags
- * @param baseUrl - URL to resolve relative srcs against. Pass the article's
- *   own canonical URL (e.g. "https://example.com/posts/foo/") so deep-relative
- *   paths like "../../assets/x.gif" resolve correctly. A bare site root would
- *   clamp `../../` to the root and lose the article's directory context.
- * @param entityId - Draft ID the embeds are being uploaded into. Matters'
- *   singleFileUpload requires this for type:"embed" — see uploadEmbedByUrl.
- *   Caller must therefore create the draft first, then call this and re-put
- *   the rewritten content via createDraft({ id: entityId, content: ... }).
- * @returns HTML content with local image srcs replaced by CDN URLs
+ * @param baseUrl - The article's canonical URL (e.g. "https://example.com/posts/foo/"),
+ *   used both to resolve relative srcs and as the origin for site-local detection.
+ * @param entityId - Draft ID the embeds attach to (matters requires it).
+ * @returns HTML with local image srcs replaced by matters CDN (or absolutized) URLs
  */
 export async function uploadAndReplaceLocalImages(
   content: string,
   baseUrl: string,
   entityId: string,
-  options: { waitOptions?: { totalMs?: number; intervalMs?: number } } = {},
 ): Promise<string> {
-  // Collect all img src values
   const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
-  const localSrcs = new Set<string>();
+  const srcs = new Set<string>();
   let match: RegExpExecArray | null;
-
   while ((match = imgSrcRegex.exec(content)) !== null) {
-    const src = match[1];
-    // Skip absolute URLs and data URIs
-    if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) {
-      continue;
-    }
-    localSrcs.add(src);
+    if (!/^data:/i.test(match[1])) srcs.add(match[1]);
   }
+  if (srcs.size === 0) return content;
 
-  if (localSrcs.size === 0) {
-    return content;
-  }
-
-  // Upload each unique local src and build a replacement map
   const replacements = new Map<string, string>();
-
-  for (const src of localSrcs) {
-    let absoluteUrl: string;
+  for (const src of srcs) {
+    const sitePath = siteRelativePathFromSrc(src, baseUrl);
+    let fallbackUrl: string | undefined;
     try {
-      absoluteUrl = new URL(src, baseUrl).href;
-    } catch (error) {
-      console.warn(`    ⚠️ Could not resolve image URL ${src} against ${baseUrl}: ${error}`);
+      fallbackUrl = new URL(src, baseUrl).href;
+    } catch {
+      fallbackUrl = undefined;
+    }
+
+    if (!sitePath) {
+      // External / cross-origin asset: at most absolutize so it isn't a broken
+      // relative path; never try to upload it.
+      if (fallbackUrl && fallbackUrl !== src) replacements.set(src, fallbackUrl);
       continue;
     }
 
     try {
-      await waitForUrl(absoluteUrl, options.waitOptions);
-      const cdnUrl = await uploadEmbedByUrl(absoluteUrl, entityId);
-      replacements.set(src, cdnUrl);
-      console.log(`    🖼️ Image uploaded: ${src} → ${cdnUrl}`);
+      const base64 = await readSiteFile(sitePath);
+      const filename = sitePath.split("/").pop() || "image";
+      const asset = await uploadAssetMultipart(base64, filename, imageMimeForPath(sitePath), "embed", entityId);
+      replacements.set(src, asset.path);
+      console.log(`    🖼️ Image uploaded (bytes): ${src} → ${asset.path}`);
     } catch (error) {
-      console.warn(`    ⚠️ Image upload failed for ${absoluteUrl}, leaving unchanged: ${error}`);
+      const fb = fallbackUrl ?? src;
+      replacements.set(src, fb);
+      console.warn(`    ⚠️ Image byte-upload failed for ${src}, using site URL ${fb}: ${error}`);
     }
   }
 
-  // Replace all occurrences of each local src with its CDN URL
-  let result = content;
-  for (const [originalSrc, cdnUrl] of replacements) {
-    // Escape special regex characters in the src
-    const escaped = originalSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(`src="${escaped}"`, "g"), `src="${cdnUrl}"`);
-  }
-
-  return result;
+  return applySrcReplacements(content, replacements);
 }
 
 /**
- * Poll a URL with HEAD until it returns 2xx, or throw after the budget.
+ * Upload local audio to Matters and replace the `<source src>` inside
+ * `<figure class="audio">` with the returned matters CDN URL.
  *
- * Used before matters' upload-by-URL to absorb the gap between a deploy
- * succeeding and the CDN actually serving the new file. GitHub Pages can
- * take tens of seconds to propagate after `git push` completes; matters'
- * server fetching too early returns a 404 that we cannot recover from
- * (matters silently caches the failure).
+ * Mirrors {@link uploadAndReplaceLocalImages} but for `type:"embedaudio"`. At
+ * this point the `<source src>` is already the absolutized deployed URL (set by
+ * `wrapAudioForMatters`), which is the fallback: on success it becomes the
+ * durable matters CDN URL; on failure it stays as the streamed site URL.
  *
- * Exported for unit testing.
+ * Scoped to `<source src>` INSIDE `<figure class="audio">` so a hand-authored
+ * raw-HTML `<video><source src>` block elsewhere is never mistaken for audio.
+ * (`<picture>` variants use `srcset`, not `src`, so they wouldn't match anyway.)
+ *
+ * @returns HTML with local audio srcs replaced by matters CDN URLs where possible
  */
-export async function waitForUrl(
-  url: string,
-  options: { totalMs?: number; intervalMs?: number } = {}
-): Promise<void> {
-  const totalMs = options.totalMs ?? 60_000;
-  const intervalMs = options.intervalMs ?? 3_000;
-  const deadline = Date.now() + totalMs;
-
-  let lastError: unknown = null;
-  let attempt = 0;
-  while (Date.now() < deadline) {
-    attempt++;
-    try {
-      const response = await fetch(url, { method: "HEAD" });
-      if (response.ok) {
-        if (attempt > 1) {
-          console.log(`    🌐 URL reachable after ${attempt} attempt(s): ${url}`);
-        }
-        return;
-      }
-      lastError = new Error(`HTTP ${response.status}`);
-      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, HTTP ${response.status}): ${url}`);
-    } catch (error) {
-      lastError = error;
-      console.log(`    ⏳ URL not yet reachable (attempt ${attempt}, ${error}): ${url}`);
+export async function uploadAndReplaceLocalAudio(
+  content: string,
+  baseUrl: string,
+  entityId: string,
+): Promise<string> {
+  const figureAudioRegex = /<figure\b[^>]*\bclass="audio"[^>]*>([\s\S]*?)<\/figure>/gi;
+  const sourceRegex = /<source\s[^>]*\bsrc="([^"]+)"[^>]*>/gi;
+  const srcs = new Set<string>();
+  let figure: RegExpExecArray | null;
+  while ((figure = figureAudioRegex.exec(content)) !== null) {
+    let match: RegExpExecArray | null;
+    while ((match = sourceRegex.exec(figure[1])) !== null) {
+      if (!/^data:/i.test(match[1])) srcs.add(match[1]);
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  if (srcs.size === 0) return content;
+
+  const replacements = new Map<string, string>();
+  for (const src of srcs) {
+    const sitePath = siteRelativePathFromSrc(src, baseUrl);
+    if (!sitePath) continue; // external/cross-origin — leave the streamed URL
+    try {
+      const base64 = await readSiteFile(sitePath);
+      const filename = sitePath.split("/").pop() || "audio";
+      const asset = await uploadAssetMultipart(base64, filename, audioMimeForPath(sitePath), "embedaudio", entityId);
+      replacements.set(src, asset.path);
+      console.log(`    🔊 Audio uploaded (bytes): ${src} → ${asset.path}`);
+    } catch (error) {
+      // Leave the absolutized deployed URL in place — matters streams from it.
+      console.warn(`    ⚠️ Audio byte-upload failed for ${src}, keeping site URL: ${error}`);
+    }
   }
 
-  throw new Error(`URL did not become reachable within ${totalMs}ms: ${url} (${lastError})`);
+  return applySrcReplacements(content, replacements);
 }
+
+/** Replace every `src="<original>"` occurrence with the mapped URL. */
+function applySrcReplacements(content: string, replacements: Map<string, string>): string {
+  let result = content;
+  for (const [originalSrc, newUrl] of replacements) {
+    const escaped = originalSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`src="${escaped}"`, "g"), `src="${newUrl}"`);
+  }
+  return result;
+}
+

@@ -10,14 +10,13 @@
  */
 
 import {
-  reportProgress,
   reportError,
   sleep,
 } from "./utils";
-import { overallProgress } from "./progress";
+import { overallProgress, type ProgressReporter } from "./progress";
 import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
-import { isInternalMattersLink as isDomainInternalLink } from "./domain";
+import { isInternalMattersLink as isDomainInternalLink, extractShortHash } from "./domain";
 import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
 
 // ============================================================================
@@ -298,17 +297,28 @@ interface FileState {
  * 3. After all complete, update references in each file
  * 4. Write modified files to disk
  */
-export async function downloadMediaAndUpdate(): Promise<{
+export async function downloadMediaAndUpdate(
+  onProgress?: ProgressReporter,
+): Promise<{
   filesProcessed: number;
   imagesDownloaded: number;
   imagesSkipped: number;
   errors: string[];
+  /**
+   * Source URLs of images that failed to download (the dead CDN references
+   * still sitting in the article bodies). The caller turns each into a
+   * per-image advisory so the user sees WHICH image broke — not an opaque
+   * "N failed" count. A subset of `errors` carrying just the image-download
+   * failures (not list/write failures).
+   */
+  failedImageUrls: string[];
 }> {
   const result = {
     filesProcessed: 0,
     imagesDownloaded: 0,
     imagesSkipped: 0,
     errors: [] as string[],
+    failedImageUrls: [] as string[],
   };
 
   console.log("📸 Downloading media assets and updating references...");
@@ -440,15 +450,22 @@ export async function downloadMediaAndUpdate(): Promise<{
 
   // Fire all downloads in parallel - Rust Semaphore limits to 5 concurrent
   // Promise.allSettled ensures we get results for all, even if some fail
-  const downloadPromises = mediaToDownload.map(async (media, index) => {
+  let completedCount = 0;
+  const downloadPromises = mediaToDownload.map(async (media) => {
     const downloadResult = await downloadAssetWithRetry(media.url);
 
-    // Report progress as each download completes
-    reportProgress(
+    // Report progress as each download COMPLETES. Count completions (single-
+    // threaded `++` in the continuation is atomic), NOT the creation index —
+    // downloads finish out of order, so an index-based fraction would jump the
+    // hairline forward then back. media download is the heaviest phase
+    // (weight 35/100); feeding the unified task here keeps the hairline
+    // advancing monotonically instead of stalling through it.
+    completedCount++;
+    onProgress?.(
       "downloading_media",
-      overallProgress("downloading_media", index + 1, mediaToDownload.length),
+      overallProgress("downloading_media", completedCount, mediaToDownload.length),
       100,
-      `Downloading ${index + 1}/${mediaToDownload.length}...`
+      `Downloading ${completedCount}/${mediaToDownload.length}...`
     );
 
     return { media, downloadResult };
@@ -480,10 +497,14 @@ export async function downloadMediaAndUpdate(): Promise<{
         // sync continues, partial success is allowed.
         const msg = `Image download failed (${downloadResult.error}): ${media.url}`;
         result.errors.push(`${media.url}: ${downloadResult.error}`);
+        result.failedImageUrls.push(media.url);
         await reportError(msg, "downloading_media", false);
       }
     } else {
-      // Promise rejected (shouldn't happen with our try/catch in downloadAssetWithRetry)
+      // Promise rejected (shouldn't happen with our try/catch in
+      // downloadAssetWithRetry). No `media.url` is available here, so this stays
+      // in `errors` only — it is intentionally NOT pushed to `failedImageUrls`,
+      // whose entries must be real image URLs for the per-image advisory.
       const msg = `Image download failed: ${settled.reason}`;
       result.errors.push(`Download failed: ${settled.reason}`);
       await reportError(msg, "downloading_media", false);
@@ -571,8 +592,10 @@ export async function downloadMediaAndUpdate(): Promise<{
     }
   }
 
-  // Final report
-  reportProgress(
+  // Final report. Snap the band to 100% using `totalUrls` (ALL unique media,
+  // including already-cached ones) — NOT `mediaToDownload.length`, which is 0
+  // when everything was cached and would jump progress BACK to the band start.
+  onProgress?.(
     "downloading_media",
     overallProgress("downloading_media", totalUrls, totalUrls),
     100,
@@ -596,22 +619,6 @@ function isInternalMattersLink(url: string, userName: string): boolean {
 }
 
 /**
- * Extract shortHash from Matters article URL
- * URL format: https://matters.town/@user/slug-shortHash
- */
-function extractShortHash(url: string): string | null {
-  const match = url.match(/\/([^/]+)$/);
-  if (!match) return null;
-
-  const slugWithHash = match[1];
-  // shortHash is the last part after final hyphen
-  const lastHyphen = slugWithHash.lastIndexOf("-");
-  if (lastHyphen === -1) return null;
-
-  return slugWithHash.substring(lastHyphen + 1);
-}
-
-/**
  * Rewrite internal Matters links to local paths in a single file's content
  */
 function rewriteLinksInContent(
@@ -625,6 +632,9 @@ function rewriteLinksInContent(
   let linksRewritten = 0;
 
   for (const { url, fullMatch } of links) {
+    // Only own-user canonical `/@userName/...` links are rewritten. `/a/<shortHash>`
+    // short-links never pass this guard, so the shared extractShortHash's short-link
+    // support is intentionally unreachable here — body cross-links are canonical form.
     if (!isInternalMattersLink(url, userName)) continue;
 
     // Try exact URL match first

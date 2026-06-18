@@ -58,6 +58,7 @@ import {
 import { parseFrontmatter, regenerateFrontmatter } from "./converter";
 import {
   initializeDomain,
+  getDomain,
   loginUrl,
   draftUrl,
   articleUrl,

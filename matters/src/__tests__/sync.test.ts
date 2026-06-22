@@ -417,6 +417,9 @@ describe("syncToLocalFiles - self-named home with home:true marker", () => {
     const home = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
     expect(home).toBeDefined();
     expect(home).toContain("home: true");
+    // When folderName is null/undefined, the homepage title falls back to the
+    // Matters profile displayName (the `folderName ?? profile.displayName` branch).
+    expect(home).toContain('title: "Test User"');
   });
 
   it("does not overwrite an existing self-named home", async () => {

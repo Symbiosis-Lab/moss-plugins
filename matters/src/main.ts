@@ -347,12 +347,12 @@ async function promptLogin(): Promise<boolean> {
     return true;
   }
 
-  console.log("🔐 Opening Matters.town login page...");
+  console.log(`🔐 Opening ${getDomain()} login page...`);
 
   try {
     const browser = await openBrowser(loginUrl());
 
-    console.log("🌐 Browser opened. Please log in to Matters.town.");
+    console.log(`🌐 Browser opened. Please log in to ${getDomain()}.`);
     console.log("⏳ Will check for authentication after 20 seconds...");
 
     const authenticated = await waitForToken(browser, 20000, 2000, 300000);

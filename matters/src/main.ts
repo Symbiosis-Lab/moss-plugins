@@ -1610,13 +1610,17 @@ function absolutizeUrl(url: string, baseUrl: string): string {
 }
 
 export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
-  return html.replace(/<a\b([^>]*?)\shref="([^"]+)"([^>]*)>/gi, (full, before: string, href: string, after: string) => {
-    const absolute = absolutizeUrl(href, baseUrl);
-    if (absolute === href) {
-      return full;
-    }
-    return `<a${before} href="${absolute}"${after}>`;
-  });
+  // Linear: scan each <a> tag, then rewrite its href within the short tag
+  // string. One regex with [^>]*? … [^>]* around href= backtracks polynomially
+  // on hostile input (CodeQL js/polynomial-redos); splitting the scan from the
+  // attribute read removes the ambiguity. The function replacer keeps any `$`
+  // in the URL literal.
+  return html.replace(/<a\b[^>]*>/gi, (tag) =>
+    tag.replace(/(\shref=")([^"]+)(")/i, (m, pre: string, href: string, post: string) => {
+      const absolute = absolutizeUrl(href, baseUrl);
+      return absolute === href ? m : `${pre}${absolute}${post}`;
+    }),
+  );
 }
 
 /**
@@ -1925,11 +1929,15 @@ export async function uploadAndReplaceLocalImages(
   baseUrl: string,
   entityId: string,
 ): Promise<string> {
-  const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
+  // Linear tag scan + per-tag src read — avoids the polynomial backtracking of
+  // two [^>]* around src= (CodeQL js/polynomial-redos). `\ssrc="` matches the
+  // real src attribute (whitespace-anchored), not a data-src tail.
+  const imgTagRegex = /<img\b[^>]*>/gi;
   const srcs = new Set<string>();
   let match: RegExpExecArray | null;
-  while ((match = imgSrcRegex.exec(content)) !== null) {
-    if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+  while ((match = imgTagRegex.exec(content)) !== null) {
+    const srcMatch = /\ssrc="([^"]+)"/i.exec(match[0]);
+    if (srcMatch && !/^data:/i.test(srcMatch[1])) srcs.add(srcMatch[1]);
   }
   if (srcs.size === 0) return content;
 
@@ -1987,13 +1995,16 @@ export async function uploadAndReplaceLocalAudio(
   entityId: string,
 ): Promise<string> {
   const figureAudioRegex = /<figure\b[^>]*\bclass="audio"[^>]*>([\s\S]*?)<\/figure>/gi;
-  const sourceRegex = /<source\s[^>]*\bsrc="([^"]+)"[^>]*>/gi;
+  // Linear tag scan + per-tag src read — avoids the polynomial backtracking of
+  // two [^>]* around src= (CodeQL js/polynomial-redos).
+  const sourceTagRegex = /<source\b[^>]*>/gi;
   const srcs = new Set<string>();
   let figure: RegExpExecArray | null;
   while ((figure = figureAudioRegex.exec(content)) !== null) {
-    let match: RegExpExecArray | null;
-    while ((match = sourceRegex.exec(figure[1])) !== null) {
-      if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+    let tag: RegExpExecArray | null;
+    while ((tag = sourceTagRegex.exec(figure[1])) !== null) {
+      const srcMatch = /\ssrc="([^"]+)"/i.exec(tag[0]);
+      if (srcMatch && !/^data:/i.test(srcMatch[1])) srcs.add(srcMatch[1]);
     }
   }
   if (srcs.size === 0) return content;

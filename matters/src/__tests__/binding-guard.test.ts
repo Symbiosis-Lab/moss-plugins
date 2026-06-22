@@ -37,6 +37,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   showToast: vi.fn().mockResolvedValue(undefined),
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
   closeBrowser: (...args: unknown[]) => mockCloseBrowser(...args),
+  returnToEditor: vi.fn().mockResolvedValue(undefined),
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),
@@ -85,6 +86,7 @@ vi.mock("../api", () => ({
 
 vi.mock("../domain", () => ({
   initializeDomain: vi.fn().mockResolvedValue("matters.town"),
+  getDomain: vi.fn().mockReturnValue("matters.town"),
   loginUrl: vi.fn().mockReturnValue("https://matters.town/login"),
   articleUrl: vi.fn(),
   isMattersUrl: vi.fn(),

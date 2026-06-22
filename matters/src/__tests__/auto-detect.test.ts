@@ -204,10 +204,10 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
       article: { id: "a1", shortHash: "a1b2c3", slug: "post" },
     } as never);
 
-    // Start waiting with a long timeout. URL-triggered path resolves the wait;
-    // poll is the fallback (both instant here because sleep is mocked).
+    // Start waiting. The URL-triggered path resolves the wait; the poll is the
+    // fallback (both instant here because sleep is mocked).
     const browserHandle = { closed: new Promise<void>(() => {}) };
-    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     // Give the function time to register the onEvent listener
     await Promise.resolve();
@@ -231,10 +231,9 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
       article: null,
     } as never);
 
-    // Short timeout so the test doesn't hang; browser closes immediately so
-    // the close branch resolves it → null (same as timeout path)
+    // Browser closes immediately, so the close branch resolves the wait → null.
     const browserHandle = { closed: Promise.resolve() };
-    const p = waitForPublishOrClose("d1", 1000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     await Promise.resolve();
     await Promise.resolve();
@@ -259,7 +258,7 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
 
     // Browser closes immediately so we get a null (not stuck waiting)
     const browserHandle = { closed: Promise.resolve() };
-    const p = waitForPublishOrClose("d1", 1000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     await Promise.resolve();
     await Promise.resolve();
@@ -281,7 +280,7 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
     } as never);
 
     const browserHandle = { closed: new Promise<void>(() => {}) };
-    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     await Promise.resolve();
     await Promise.resolve();
@@ -306,7 +305,7 @@ describe("waitForPublishOrClose — URL auto-detect (Task 2.3)", () => {
     // browserHandle.closed is already-resolved → settle(null) fires synchronously
     // in the next microtask, before the onEvent .then() storing unlistenUrl runs.
     const browserHandle = { closed: Promise.resolve() };
-    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     // Drain microtasks so settle(null) fires (browser close branch)
     await Promise.resolve();
@@ -358,7 +357,7 @@ describe("R19 — matters-room-published emitted before closeBrowser on confirme
     });
 
     const browserHandle = { closed: new Promise<void>(() => {}) };
-    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     await Promise.resolve();
     await Promise.resolve();
@@ -377,7 +376,7 @@ describe("R19 — matters-room-published emitted before closeBrowser on confirme
     expect(publishedIdx).toBeLessThan(closeIdx);
   });
 
-  it("does NOT emit matters-room-published on the close/timeout (null) path", async () => {
+  it("does NOT emit matters-room-published on the close (null) path", async () => {
     // API never confirms → browser closes → settle(null)
     vi.mocked(fetchDraft).mockResolvedValue({
       id: "d1",
@@ -389,7 +388,7 @@ describe("R19 — matters-room-published emitted before closeBrowser on confirme
     } as never);
 
     const browserHandle = { closed: Promise.resolve() };
-    const p = waitForPublishOrClose("d1", 600000, browserHandle);
+    const p = waitForPublishOrClose("d1", browserHandle);
 
     await Promise.resolve();
     await Promise.resolve();

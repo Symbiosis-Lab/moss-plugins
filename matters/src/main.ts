@@ -1327,7 +1327,7 @@ export async function syndicateArticle(
     }
     await task.advise({
       scope: "Remote",
-      severity: "Info",
+      severity: "ShippedDegraded",
       item: article.title,
       what: "Article published on Matters — frontmatter will sync",
       action: { Link: { href: publishedUrl, label: "View article" } },

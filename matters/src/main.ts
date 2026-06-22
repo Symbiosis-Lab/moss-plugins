@@ -534,7 +534,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         // with a quiet progress label (spec: no Awaiting amber pulse for
         // in-panel login).
         await task.awaiting("Connect to Matters", "", "cancel");
-        await task.progress(overallProgress("authentication", 0, 1) / 100, "Connect to Matters");
+        await task.progress(undefined, "Connect to Matters");
         const loginSuccess = await promptLogin();
         if (!loginSuccess) {
           await task.failed("Login failed or timeout", true);

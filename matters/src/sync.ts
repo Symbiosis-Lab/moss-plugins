@@ -476,7 +476,7 @@ export async function syncToLocalFiles(
       // tell us the folder name.
       const homeFilename = folderName ? `${folderName}.md` : "index.md";
       const homepageFrontmatter = generateFrontmatter({
-        title: profile.displayName,
+        title: folderName ?? profile.displayName,
         home: true,
       });
 

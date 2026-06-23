@@ -9,7 +9,7 @@
  * a browser uninvited is the bug class this module exists to kill.
  */
 
-import type { SessionState } from "./api";
+import type { SessionState } from "./credential";
 
 export type AuthRoute = "proceed" | "prompt_login" | "public_fallback" | "soft_fail";
 

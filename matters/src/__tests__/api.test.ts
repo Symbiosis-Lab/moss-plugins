@@ -14,17 +14,13 @@ import {
   USER_COLLECTIONS_QUERY,
   USER_PROFILE_QUERY,
   apiConfig,
-  clearTokenCache,
-  getAccessToken,
-  saveStoredToken,
-  loadStoredToken,
-  clearStoredToken,
   fetchAllDraftsSince,
   fetchArticleComments,
   fetchAllArticleCommentCounts,
   VIEWER_ARTICLE_COMMENT_COUNTS_QUERY,
   USER_ARTICLE_COMMENT_COUNTS_QUERY,
 } from "../api";
+import { clearTokenCache } from "../credential";
 import type { MattersDraft } from "../types";
 
 // Mock the SDK's getPluginCookie, httpPost, and plugin storage
@@ -40,7 +36,7 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
   };
 });
 
-import { getPluginCookie, httpPost, pluginFileExists, readPluginFile, writePluginFile } from "@symbiosis-lab/moss-api";
+import { httpPost, pluginFileExists, readPluginFile } from "@symbiosis-lab/moss-api";
 
 describe("API Constants", () => {
   it("has correct GraphQL endpoint", () => {
@@ -200,204 +196,6 @@ describe("Pinned Works in Profile Queries", () => {
     expect(USER_PROFILE_QUERY).toContain("... on Article");
     expect(USER_PROFILE_QUERY).toContain("slug");
     expect(USER_PROFILE_QUERY).toContain("shortHash");
-  });
-});
-
-describe("getAccessToken", () => {
-  const mockGetPluginCookie = vi.mocked(getPluginCookie);
-  const mockPluginFileExists = vi.mocked(pluginFileExists);
-  const mockReadPluginFile = vi.mocked(readPluginFile);
-  const mockWritePluginFile = vi.mocked(writePluginFile);
-
-  beforeEach(() => {
-    clearTokenCache();
-    mockGetPluginCookie.mockReset();
-    mockPluginFileExists.mockReset();
-    mockReadPluginFile.mockReset();
-    mockWritePluginFile.mockReset();
-
-    // Default: no stored token
-    mockPluginFileExists.mockResolvedValue(false);
-  });
-
-  describe("project-scoped storage (default mode)", () => {
-    it("returns token from project storage when auth.json exists", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue(JSON.stringify({
-        accessToken: "stored-project-token",
-        savedAt: "2026-01-01T00:00:00Z",
-      }));
-
-      const result = await getAccessToken();
-
-      expect(result).toBe("stored-project-token");
-      // Should NOT check cookies
-      expect(mockGetPluginCookie).not.toHaveBeenCalled();
-    });
-
-    it("returns null when no stored token and fromCookie is false (default)", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-
-      const result = await getAccessToken();
-
-      expect(result).toBeNull();
-      // Should NOT check cookies in default mode
-      expect(mockGetPluginCookie).not.toHaveBeenCalled();
-    });
-
-    it("returns null when auth.json exists but has no accessToken field", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue("{}");
-
-      const result = await getAccessToken();
-
-      expect(result).toBeNull();
-    });
-
-    it("returns null when auth.json contains invalid JSON", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue("not-json");
-
-      const result = await getAccessToken();
-
-      expect(result).toBeNull();
-    });
-
-    it("returns null when storage read throws an error", async () => {
-      mockPluginFileExists.mockRejectedValue(new Error("storage read failed"));
-
-      const result = await getAccessToken();
-
-      expect(result).toBeNull();
-    });
-
-    it("caches the stored token after first retrieval", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue(JSON.stringify({
-        accessToken: "cached-stored-token",
-      }));
-
-      const result1 = await getAccessToken();
-      expect(result1).toBe("cached-stored-token");
-
-      // Second call should use cache
-      mockPluginFileExists.mockResolvedValue(false); // would return null if not cached
-      const result2 = await getAccessToken();
-
-      expect(result2).toBe("cached-stored-token");
-      expect(mockReadPluginFile).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("cookie fallback (login flow, fromCookie=true)", () => {
-    it("checks cookies when fromCookie=true and no stored token", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue([
-        { name: "__access_token", value: "cookie-token" },
-      ]);
-      mockWritePluginFile.mockResolvedValue(undefined);
-
-      const result = await getAccessToken(true);
-
-      expect(result).toBe("cookie-token");
-      expect(mockGetPluginCookie).toHaveBeenCalled();
-    });
-
-    it("persists cookie token to project storage", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue([
-        { name: "__access_token", value: "cookie-to-store" },
-      ]);
-      mockWritePluginFile.mockResolvedValue(undefined);
-
-      await getAccessToken(true);
-
-      expect(mockWritePluginFile).toHaveBeenCalledWith(
-        "auth.json",
-        expect.stringContaining("cookie-to-store")
-      );
-    });
-
-    it("returns undefined when getPluginCookie returns null (no context)", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue(null);
-
-      const result = await getAccessToken(true);
-
-      expect(result).toBeUndefined();
-    });
-
-    it("returns null when cookie exists but __access_token is not present", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue([
-        { name: "other_cookie", value: "some_value" },
-      ]);
-
-      const result = await getAccessToken(true);
-
-      expect(result).toBeNull();
-    });
-
-    it("still returns cookie token when auto-persist to storage fails", async () => {
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue([
-        { name: "__access_token", value: "cookie-despite-storage-fail" },
-      ]);
-      mockWritePluginFile.mockRejectedValue(new Error("storage write failed"));
-
-      const result = await getAccessToken(true);
-
-      expect(result).toBe("cookie-despite-storage-fail");
-    });
-
-    it("prefers stored token over cookie even when fromCookie=true", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue(JSON.stringify({
-        accessToken: "stored-token",
-      }));
-
-      const result = await getAccessToken(true);
-
-      expect(result).toBe("stored-token");
-      expect(mockGetPluginCookie).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("cache management", () => {
-    it("clearTokenCache allows fresh retrieval from storage", async () => {
-      mockPluginFileExists.mockResolvedValue(true);
-      mockReadPluginFile.mockResolvedValue(JSON.stringify({
-        accessToken: "first-token",
-      }));
-
-      await getAccessToken();
-      clearTokenCache();
-
-      mockReadPluginFile.mockResolvedValue(JSON.stringify({
-        accessToken: "second-token",
-      }));
-
-      const result = await getAccessToken();
-
-      expect(result).toBe("second-token");
-      expect(mockReadPluginFile).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe("cross-project isolation", () => {
-    it("does NOT return global cookie in default mode (prevents cross-project leak)", async () => {
-      // Simulate: no stored token for this project, but global cookie exists
-      mockPluginFileExists.mockResolvedValue(false);
-      mockGetPluginCookie.mockResolvedValue([
-        { name: "__access_token", value: "leaked-global-token" },
-      ]);
-
-      // Default mode should NOT check cookies
-      const result = await getAccessToken();
-
-      expect(result).toBeNull();
-      expect(mockGetPluginCookie).not.toHaveBeenCalled();
-    });
   });
 });
 

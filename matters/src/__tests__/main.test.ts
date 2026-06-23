@@ -61,13 +61,23 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   }),
 }));
 
+// Mock the credential module (moved symbols from api.ts)
+vi.mock("../credential", () => ({
+  clearTokenCache: vi.fn(),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
+  getSessionState: vi.fn().mockResolvedValue("valid"),
+  shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn().mockResolvedValue("test-token"),
+  captureLogin: vi.fn().mockResolvedValue("test-token"),
+  prepareWebviewAuth: vi.fn().mockResolvedValue(undefined),
+  beginFreshLogin: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock the api module
 vi.mock("../api", () => ({
-  clearTokenCache: vi.fn(),
-  getAccessToken: vi.fn().mockResolvedValue("test-token"),
-  saveStoredToken: vi.fn().mockResolvedValue(undefined),
-  loadStoredToken: vi.fn().mockResolvedValue(null),
-  clearStoredToken: vi.fn().mockResolvedValue(undefined),
   createDraft: vi.fn(),
   fetchDraft: vi.fn(),
   uploadAssetMultipart: vi.fn(),

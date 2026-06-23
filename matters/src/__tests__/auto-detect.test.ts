@@ -71,11 +71,21 @@ vi.mock("../config", () => ({
   saveConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../credential", () => ({
   clearTokenCache: vi.fn(),
-  getAccessToken: vi.fn().mockResolvedValue("tok"),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
   getSessionState: vi.fn().mockResolvedValue("valid"),
   shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn().mockResolvedValue("tok"),
+  captureLogin: vi.fn().mockResolvedValue("tok"),
+  prepareWebviewAuth: vi.fn().mockResolvedValue(undefined),
+  beginFreshLogin: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../api", () => ({
   createDraft: vi.fn().mockResolvedValue({
     id: "d1",
     title: "Post",

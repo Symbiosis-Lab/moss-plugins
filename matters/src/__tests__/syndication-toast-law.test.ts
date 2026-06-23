@@ -81,12 +81,21 @@ vi.mock("../config", () => ({
   saveConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../credential", () => ({
   clearTokenCache: vi.fn(),
-  getAccessToken: vi.fn().mockResolvedValue("tok"),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
   clearStoredToken: vi.fn().mockResolvedValue(undefined),
   getSessionState: vi.fn().mockResolvedValue("valid"),
   shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn().mockResolvedValue("tok"),
+  captureLogin: vi.fn().mockResolvedValue("tok"),
+  prepareWebviewAuth: vi.fn().mockResolvedValue(undefined),
+  beginFreshLogin: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../api", () => ({
   createDraft: vi.fn().mockResolvedValue({
     id: "d1",
     title: "Post",
@@ -200,7 +209,8 @@ function restartMockTask() {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 import { syndicate } from "../main";
-import { fetchDraft, getSessionState } from "../api";
+import { fetchDraft } from "../api";
+import { getSessionState } from "../credential";
 
 /**
  * Shared "happy path" setup: fetchDraft returns published draft.
@@ -474,6 +484,44 @@ describe("Law 2 — draft-timeout becomes a NeedsAction advisory with a link (no
     // task.succeeded must receive exactly 1.
     expect(mockTaskSucceeded).toHaveBeenCalledWith(undefined, 1);
   });
+
+  it("prepareWebviewAuth is called BEFORE the draft-room openBrowser on the unpublished-draft path", async () => {
+    // Drive the unpublished-draft → browser-close path so openBrowser(draftPageUrl) is reached.
+    // createDraft returns unpublished (no article); browser closes immediately.
+    const { fetchDraft: fd, createDraft } = await import("../api");
+    vi.mocked(createDraft).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "unpublished",
+      article: null,
+    } as never);
+    vi.mocked(fd).mockResolvedValue({
+      id: "d1",
+      title: "Post",
+      content: "",
+      createdAt: "2026-01-01T00:00:00Z",
+      publishState: "unpublished",
+      article: null,
+    } as never);
+    // Browser closes immediately → waitForPublishOrClose exits null.
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
+
+    const { prepareWebviewAuth } = await import("../credential");
+
+    const ctx = makeSyndicateContext([makeUnsyncedArticle({ source_path: "posts/alpha.md" })]);
+    await syndicate(ctx);
+
+    // prepareWebviewAuth must have been called and must precede openBrowser(draftPageUrl).
+    expect(vi.mocked(prepareWebviewAuth)).toHaveBeenCalled();
+    expect(mockOpenBrowser).toHaveBeenCalled();
+
+    const prepareOrder = vi.mocked(prepareWebviewAuth).mock.invocationCallOrder[0];
+    // The last openBrowser call is the draft-room one (first invocation index).
+    const openBrowserOrder = mockOpenBrowser.mock.invocationCallOrder.at(-1)!;
+    expect(prepareOrder).toBeLessThan(openBrowserOrder);
+  });
 });
 
 describe("Law 3 — one terminal L3 ack after the loop (not per article)", () => {
@@ -578,7 +626,8 @@ describe("Law 2 — session-expired toast is persistent (not duration: 8000)", (
   it("session-expired showToast has persistent:true, no duration field", async () => {
     // Drive the expired path via a MattersAuthError in the per-article loop.
     // notifySessionExpired() is called from the outer catch when shouldNudge=true.
-    const { shouldNudgeSessionExpired, MattersAuthError, createDraft } = await import("../api");
+    const { MattersAuthError, createDraft } = await import("../api");
+    const { shouldNudgeSessionExpired } = await import("../credential");
     vi.mocked(shouldNudgeSessionExpired).mockResolvedValue(true);
     vi.mocked(createDraft).mockRejectedValue(
       new (MattersAuthError as new (code: string, msg: string) => Error)("TOKEN_INVALID", "rejected"),

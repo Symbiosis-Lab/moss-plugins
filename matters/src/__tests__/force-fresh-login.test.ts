@@ -2,9 +2,12 @@
  * Tests for force-fresh login behavior (per-folder isolation).
  *
  * Verifies that promptLogin():
- *   (a) clears the stored token AND plugin cookies BEFORE opening the browser
+ *   (a) calls beginFreshLogin() BEFORE opening the browser
+ *       (beginFreshLogin internally clears the stored token AND plugin cookies,
+ *        which is proven by credential.test.ts)
  *   (b) re-binds boundUserName/userName to the freshly-authenticated account
  *       via affirmBindingFromProfile() on success
+ *   (c) prepareWebviewAuth() is called BEFORE the draft-room openBrowser()
  *
  * Mirror of auth-routing.test.ts mock harness — same factory structure, same
  * hoisted helpers, same full mock set needed to drive process() end-to-end.
@@ -38,10 +41,9 @@ const mockApiConfig = vi.hoisted(() => ({
 }));
 const mockTaskAwaiting = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
-// Capture mock refs for clearStoredToken / clearPluginCookies so tests can
-// push call-order sentinels into an array.
-const mockClearStoredToken = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockClearPluginCookies = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+// Hoisted credential mock spies so tests can inspect invocationCallOrder.
+const mockBeginFreshLogin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockPrepareWebviewAuth = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockOpenBrowserHoisted = vi.hoisted(() => vi.fn().mockResolvedValue({ closed: new Promise<void>(() => {}) }));
 
 vi.mock("@symbiosis-lab/moss-api", () => ({
@@ -60,8 +62,9 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   pluginFileExists: vi.fn(),
   // T8a escape hatch — undefined = no test profile = production path.
   getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
-  // clearPluginCookies — called by promptLogin() before opening the browser.
-  clearPluginCookies: (...args: unknown[]) => mockClearPluginCookies(...args),
+  // clearPluginCookies — kept for the @symbiosis-lab/moss-api mock surface
+  // (credential.ts uses it, but credential is fully mocked below).
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
   startTask: vi.fn().mockResolvedValue({
     id: "0",
     progress: vi.fn().mockResolvedValue(undefined),
@@ -71,6 +74,20 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
     failed: (...args: unknown[]) => mockTaskFailed(...args),
     cancelled: vi.fn().mockResolvedValue(undefined),
   }),
+}));
+
+vi.mock("../credential", () => ({
+  clearTokenCache: vi.fn(),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
+  getSessionState: (...args: unknown[]) => mockGetSessionState(...args),
+  shouldNudgeSessionExpired: (...args: unknown[]) => mockShouldNudge(...args),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn(),
+  captureLogin: (...args: unknown[]) => mockGetAccessToken(...args),
+  prepareWebviewAuth: (...args: unknown[]) => mockPrepareWebviewAuth(...args),
+  beginFreshLogin: (...args: unknown[]) => mockBeginFreshLogin(...args),
 }));
 
 vi.mock("../config", () => ({
@@ -88,11 +105,6 @@ vi.mock("../sync", () => ({
 }));
 
 vi.mock("../api", () => ({
-  clearTokenCache: vi.fn(),
-  getAccessToken: (...args: unknown[]) => mockGetAccessToken(...args),
-  saveStoredToken: vi.fn().mockResolvedValue(undefined),
-  loadStoredToken: vi.fn().mockResolvedValue(null),
-  clearStoredToken: (...args: unknown[]) => mockClearStoredToken(...args),
   fetchAllArticlesSince: (...args: unknown[]) => mockFetchAllArticlesSince(...args),
   fetchAllDraftsSince: vi.fn().mockResolvedValue([]),
   fetchAllCollections: vi.fn().mockResolvedValue([]),
@@ -100,9 +112,6 @@ vi.mock("../api", () => ({
   fetchArticleComments: vi.fn().mockResolvedValue({ comments: [], donations: [], appreciations: [] }),
   fetchAllArticleCommentCounts: vi.fn().mockResolvedValue(new Map()),
   apiConfig: mockApiConfig,
-  getSessionState: (...args: unknown[]) => mockGetSessionState(...args),
-  shouldNudgeSessionExpired: (...args: unknown[]) => mockShouldNudge(...args),
-  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
   MattersAuthError: class MattersAuthError extends Error {
     readonly code: string;
     constructor(code: string, message: string) {
@@ -164,9 +173,9 @@ beforeEach(() => {
   mockTaskAwaiting.mockResolvedValue(undefined);
   // Restore hoisted openBrowser after clearAllMocks
   mockOpenBrowserHoisted.mockResolvedValue({ closed: new Promise<void>(() => {}) });
-  // Default: clearStoredToken + clearPluginCookies no-op
-  mockClearStoredToken.mockResolvedValue(undefined);
-  mockClearPluginCookies.mockResolvedValue(undefined);
+  // Default: beginFreshLogin + prepareWebviewAuth no-op
+  mockBeginFreshLogin.mockResolvedValue(undefined);
+  mockPrepareWebviewAuth.mockResolvedValue(undefined);
 });
 
 // ============================================================================
@@ -174,7 +183,7 @@ beforeEach(() => {
 // ============================================================================
 
 describe("force-fresh login", () => {
-  it("clears stored token AND cookies BEFORE opening the login browser", async () => {
+  it("calls beginFreshLogin BEFORE opening the login browser", async () => {
     // Unbound fresh folder — will reach promptLogin() via the binding-guard path.
     mockGetConfig.mockResolvedValue({});
     mockGetSessionState.mockResolvedValue("none");
@@ -184,33 +193,20 @@ describe("force-fresh login", () => {
     // Browser closes immediately so the hook exits cleanly (login fails).
     mockOpenBrowserHoisted.mockResolvedValue({ closed: Promise.resolve() });
 
-    // Track call order via a shared sentinel array.
-    const order: string[] = [];
-    mockClearStoredToken.mockImplementation(async () => { order.push("clearStoredToken"); });
-    mockClearPluginCookies.mockImplementation(async () => { order.push("clearPluginCookies"); });
-    mockOpenBrowserHoisted.mockImplementation(async () => {
-      order.push("openBrowser");
-      return { closed: Promise.resolve() };
-    });
-
     await processHook({
       trigger: "onboarding_flow",
       config: { sync_on_build: false },
       project_info: { folder_name: "test", homepage_file: null, lang: "en" },
     } as never);
 
-    // Both clear operations must have fired.
-    const clearTokenIdx = order.indexOf("clearStoredToken");
-    const clearCookiesIdx = order.indexOf("clearPluginCookies");
-    const openBrowserIdx = order.indexOf("openBrowser");
+    // beginFreshLogin must have been called.
+    expect(mockBeginFreshLogin).toHaveBeenCalled();
+    expect(mockOpenBrowserHoisted).toHaveBeenCalled();
 
-    expect(clearTokenIdx).toBeGreaterThanOrEqual(0);
-    expect(clearCookiesIdx).toBeGreaterThanOrEqual(0);
-    expect(openBrowserIdx).toBeGreaterThanOrEqual(0);
-
-    // Both clears must precede openBrowser.
-    expect(clearTokenIdx).toBeLessThan(openBrowserIdx);
-    expect(clearCookiesIdx).toBeLessThan(openBrowserIdx);
+    // Order invariant: beginFreshLogin must precede openBrowser.
+    const beginFreshLoginOrder = mockBeginFreshLogin.mock.invocationCallOrder[0];
+    const openBrowserOrder = mockOpenBrowserHoisted.mock.invocationCallOrder[0];
+    expect(beginFreshLoginOrder).toBeLessThan(openBrowserOrder);
   });
 
   it("re-binds boundUserName to the freshly-authenticated account on success", async () => {

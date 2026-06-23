@@ -86,12 +86,21 @@ vi.mock("../sync", () => ({
   scanLocalArticles: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../credential", () => ({
   clearTokenCache: vi.fn(),
-  getAccessToken: (...args: unknown[]) => mockGetAccessToken(...args),
-  saveStoredToken: vi.fn().mockResolvedValue(undefined),
   loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
   clearStoredToken: vi.fn().mockResolvedValue(undefined),
+  getSessionState: (...args: unknown[]) => mockGetSessionState(...args),
+  shouldNudgeSessionExpired: (...args: unknown[]) => mockShouldNudge(...args),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn(),
+  captureLogin: (...args: unknown[]) => mockGetAccessToken(...args),
+  prepareWebviewAuth: vi.fn().mockResolvedValue(undefined),
+  beginFreshLogin: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../api", () => ({
   fetchAllArticlesSince: (...args: unknown[]) => mockFetchAllArticlesSince(...args),
   fetchAllDraftsSince: vi.fn().mockResolvedValue([]),
   fetchAllCollections: vi.fn().mockResolvedValue([]),
@@ -99,9 +108,6 @@ vi.mock("../api", () => ({
   fetchArticleComments: vi.fn().mockResolvedValue({ comments: [], donations: [], appreciations: [] }),
   fetchAllArticleCommentCounts: vi.fn().mockResolvedValue(new Map()),
   apiConfig: mockApiConfig,
-  getSessionState: (...args: unknown[]) => mockGetSessionState(...args),
-  shouldNudgeSessionExpired: (...args: unknown[]) => mockShouldNudge(...args),
-  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
   MattersAuthError: class MattersAuthError extends Error {
     readonly code: string;
     constructor(code: string, message: string) {

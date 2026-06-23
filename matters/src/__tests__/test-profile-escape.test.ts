@@ -65,12 +65,24 @@ vi.mock("../sync", () => ({
   scanLocalArticles: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../credential", () => ({
+  clearTokenCache: vi.fn(),
+  loadStoredToken: vi.fn().mockResolvedValue(null),
+  saveStoredToken: vi.fn().mockResolvedValue(undefined),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
+  getSessionState: vi.fn().mockResolvedValue("none"),
+  shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
+  markSessionInvalidated: vi.fn().mockResolvedValue(undefined),
+  authHeaderToken: vi.fn().mockResolvedValue(""),
+  captureLogin: vi.fn().mockResolvedValue(""),
+  prepareWebviewAuth: vi.fn().mockResolvedValue(undefined),
+  beginFreshLogin: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
   return {
     ...actual,
-    clearTokenCache: vi.fn(),
-    getAccessToken: vi.fn().mockResolvedValue(""),
     fetchAllArticlesSince: vi.fn().mockResolvedValue({ articles: [], userName: "guo" }),
     fetchAllDraftsSince: vi.fn().mockResolvedValue([]),
     fetchAllCollections: vi.fn().mockResolvedValue([]),

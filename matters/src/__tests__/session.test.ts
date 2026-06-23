@@ -13,7 +13,7 @@ vi.mock("@symbiosis-lab/moss-api", async () => {
   };
 });
 
-import { decodeJwtExpiryMs } from "../api";
+import { decodeJwtExpiryMs } from "../credential";
 
 /** Build an unsigned JWT with the given payload (header/sig are ignored by the decoder). */
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -56,8 +56,8 @@ import {
   loadStoredToken,
   saveStoredToken,
   clearTokenCache,
-  getAccessToken,
-} from "../api";
+  captureLogin,
+} from "../credential";
 import {
   getPluginCookie,
   pluginFileExists,
@@ -153,7 +153,7 @@ describe("loadStoredToken dead-token filtering", () => {
   });
 });
 
-describe("getAccessToken cookie-branch dead-token filter (login poll)", () => {
+describe("captureLogin cookie-branch dead-token filter (login poll)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearTokenCache();
@@ -165,7 +165,7 @@ describe("getAccessToken cookie-branch dead-token filter (login poll)", () => {
     vi.mocked(getPluginCookie).mockResolvedValue([
       { name: "__access_token", value: fakeJwt({ exp: PAST }) },
     ]);
-    expect(await getAccessToken(true)).toBeNull();
+    expect(await captureLogin()).toBeNull();
     expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled();
   });
 
@@ -178,7 +178,7 @@ describe("getAccessToken cookie-branch dead-token filter (login poll)", () => {
     vi.mocked(getPluginCookie).mockResolvedValue([
       { name: "__access_token", value: revoked },
     ]);
-    expect(await getAccessToken(true)).toBeNull();
+    expect(await captureLogin()).toBeNull();
     expect(vi.mocked(writePluginFile)).not.toHaveBeenCalled();
   });
 
@@ -189,7 +189,7 @@ describe("getAccessToken cookie-branch dead-token filter (login poll)", () => {
     vi.mocked(getPluginCookie).mockResolvedValue([
       { name: "__access_token", value: fresh },
     ]);
-    expect(await getAccessToken(true)).toBe(fresh);
+    expect(await captureLogin()).toBe(fresh);
     expect(vi.mocked(writePluginFile)).toHaveBeenCalledWith(
       "auth.json",
       expect.stringContaining(fresh)

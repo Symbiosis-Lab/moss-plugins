@@ -20,9 +20,6 @@ import {
 import { startTask } from "@symbiosis-lab/moss-api";
 import type { TaskHandle } from "@symbiosis-lab/moss-api";
 import {
-  clearTokenCache,
-  clearStoredToken,
-  getAccessToken,
   fetchAllArticlesSince,
   fetchAllDraftsSince,
   fetchAllCollections,
@@ -33,10 +30,16 @@ import {
   fetchDraft,
   uploadAssetMultipart,
   apiConfig,
-  getSessionState,
-  shouldNudgeSessionExpired,
   MattersAuthError,
 } from "./api";
+import {
+  clearTokenCache,
+  getSessionState,
+  shouldNudgeSessionExpired,
+  captureLogin,
+  beginFreshLogin,
+  prepareWebviewAuth,
+} from "./credential";
 import { resolveAuthRoute, isUserPresent } from "./auth-route";
 import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
@@ -193,7 +196,6 @@ export async function removeDraftId(sourcePath: string): Promise<void> {
 import {
   openBrowser,
   closeBrowser,
-  clearPluginCookies,
   returnToEditor,
   type BrowserHandle,
 } from "@symbiosis-lab/moss-api";
@@ -252,10 +254,9 @@ async function waitForToken(
     }
 
     clearTokenCache();
-    // During login flow, check global cookies (fromCookie=true) since
-    // the login page sets the token as a cookie in the shared WebKit store.
-    // getAccessToken(true) will also persist the token to project storage.
-    const token = await getAccessToken(true);
+    // During login flow, capture the freshly-set cookie (captureLogin checks the
+    // global WebKit store) — it also persists the token to project storage.
+    const token = await captureLogin();
 
     // Exit if context was lost (SDK returns undefined)
     if (token === undefined) {
@@ -373,14 +374,9 @@ async function promptLogin(): Promise<boolean> {
   // Force-fresh login (per-folder isolation): clear THIS folder's stored token
   // AND the matters-domain cookies before opening the webview, so (a) the login
   // page shows a real credential screen (no lingering server session) and (b)
-  // waitForToken can only capture a freshly-logged-in token — never a stale
-  // auth.json token (getAccessToken reads the stored token before the cookie).
-  await clearStoredToken();
-  try {
-    await clearPluginCookies();
-  } catch (e) {
-    console.warn(`⚠️ Failed to clear matters cookies before login: ${e}`);
-  }
+  // captureLogin can only capture a freshly-logged-in token — never a stale
+  // auth.json token (it reads the stored token before the cookie).
+  await beginFreshLogin();
 
   console.log(`🔐 Opening ${getDomain()} login page...`);
 
@@ -1305,6 +1301,11 @@ export async function syndicateArticle(
   // user is never killed by inactivity while the browser is open.
   const draftPageUrl = draftUrl(draft.id);
   console.log(`    🌐 Opening draft for review: ${draftPageUrl}`);
+  // Project THIS folder's token into the matters cookie so the draft-room
+  // webview authenticates as the bound account (the cookie is the webview's
+  // only credential — see credential.prepareWebviewAuth), not whoever logged
+  // in last in the process-shared WebKit store.
+  await prepareWebviewAuth();
   const browserHandle = await openBrowser(draftPageUrl);
   await task.awaiting("publish the draft", "Matters editor", "cancel");
 

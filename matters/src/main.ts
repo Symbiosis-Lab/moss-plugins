@@ -488,6 +488,69 @@ async function promptLogin(): Promise<boolean> {
 // ============================================================================
 
 /**
+ * Standalone login export — invoked by the `connect_account` Tauri command
+ * outside any build hook.
+ *
+ * Creates its own PanelTask and immediately signals `task.awaiting()` so the
+ * Rust inactivity watchdog is permanently suppressed for the lifetime of this
+ * call (a human login can take arbitrarily long). The login attempt ends on:
+ *   - Success (token captured) → task.succeeded + success toast
+ *   - User closes the panel  → task.succeeded("dismissed") — no error badge
+ *   - Unexpected error       → task.failed (logged, never silent)
+ *
+ * The underlying login flow (beginFreshLogin → openBrowser → waitForToken →
+ * affirmBindingFromProfile → success toast) lives in `promptLogin()` and is
+ * shared with the `process` hook's call sites — no duplication.
+ *
+ * Phase 4a (B1): "Extract login from the hook".
+ * Design: docs/plans/2026-06-23-matters-login-lifecycle-and-minimal-browser-design.md §B1
+ */
+export async function login(context: ProcessContext): Promise<HookResult> {
+  clearTokenCache();
+  await initializeDomain();
+
+  // Under the test-profile escape hatch, skip the real login entirely.
+  const testProfile = await getMattersTestProfile();
+  if (testProfile) {
+    console.log(`🧪 Matters: skipping login UI (test profile @${testProfile})`);
+    return { success: true, message: "Login skipped (test profile)" };
+  }
+
+  const task = await startTask("Connect to Matters", {
+    hook: "import",
+    trigger: context.trigger ?? "settings_manual",
+    hasProgress: false,
+    cancellable: false,
+  });
+
+  // Immediately signal Awaiting so the Rust inactivity watchdog is suppressed
+  // for the entire duration of the login (a human login can take arbitrarily
+  // long — the watchdog must never kill this hook). Phase 2 fix ensures the
+  // watchdog checks the *executing* hook name ("login"), matching this signal.
+  await task.awaiting("Connect to Matters", "", "cancel");
+
+  try {
+    console.log("🔐 Matters: standalone login started");
+    const loginSuccess = await promptLogin();
+    if (loginSuccess) {
+      await task.succeeded("Connected to Matters");
+      return { success: true, message: "Connected to Matters" };
+    } else {
+      // User closed the panel — not an error, just dismissed.
+      await task.succeeded("Login dismissed");
+      // Return to the editor so the user isn't left with an empty panel.
+      void returnToEditor().catch(() => { /* best-effort */ });
+      return { success: true, message: "Login dismissed by user" };
+    }
+  } catch (error) {
+    const message = `Login failed: ${error}`;
+    console.error(`❌ Matters: standalone login error: ${error}`);
+    await task.failed(message, true);
+    return { success: false, message };
+  }
+}
+
+/**
  * process hook - Check authentication and sync articles from Matters
  *
  * This capability pre-processes content before generation.
@@ -644,15 +707,24 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       }
 
       case "soft_fail": {
-        // 'expired' gets the nudge; 'none' is quiet (no session event to
-        // report, and sync_on_build would re-toast every build).
+        // soft_fail is ONLY reached on background/non-user-present triggers
+        // (resolveAuthRoute returns soft_fail only when !isUserPresent). A
+        // background build showing a persistent error badge on every preview
+        // rebuild would be noise. Report as success ("not connected") so there
+        // is no badge. The auto-open trigger (Phase 4b) and the settings
+        // "Connect to Matters" affordance (Phase 4b) carry the actual prompt.
+        //
+        // 'expired' still nudges (a toast, not a badge) so the user sees the
+        // notification, but the overall task is succeeded — not failed.
         const message =
           sessionState === "expired"
             ? "session expired, log in again to import."
-            : "not logged in, log in to import.";
+            : "not connected — log in to import.";
         if (sessionState === "expired") await notifySessionExpired();
-        await task.failed(message, true);
-        return { success: false, message };
+        // Phase 4a B2: background "needs connection" → silent success (no
+        // error badge on every rebuild). NOT task.failed().
+        await task.succeeded("not connected");
+        return { success: true, message };
       }
     }
 

@@ -158,7 +158,7 @@ vi.mock("../social", () => ({
   reconcileLegacySocialData: vi.fn().mockResolvedValue(false),
 }));
 
-import { process as processHook, syndicate } from "../main";
+import { process as processHook, syndicate, login as loginHook } from "../main";
 // Resolves to the class in our ../api mock, so instanceof matches what
 // main.ts (which imports from the same mocked module) catches.
 import { MattersAuthError } from "../api";
@@ -218,12 +218,21 @@ describe("process hook auth routing", () => {
     expect(String(mockTaskSucceeded.mock.calls[0][0])).toContain("log in to resume"); // receipt still honest
   });
 
-  it("expired + background + NO userName → soft fail with session-expired copy", async () => {
+  it("expired + background + NO userName → silent success (no error badge on background rebuild)", async () => {
+    // Phase 4a B2: soft_fail on a background build should NOT show an error
+    // badge — it would recur on every rebuild for unlogged-but-Matters-installed
+    // folders. The standalone connect_account command + the Phase 4b auto-open
+    // trigger carry the actual prompt; background builds exit quietly.
     mockGetConfig.mockResolvedValue({ ...BOUND_CONFIG, userName: undefined });
     mockGetSessionState.mockResolvedValue("expired");
     const result = await processHook(makeContext("background"));
-    expect(result.success).toBe(false);
-    expect(String(mockTaskFailed.mock.calls[0][0])).toContain("session expired");
+    // B2: background "needs connection" → task.succeeded (not task.failed).
+    expect(result.success).toBe(true);
+    expect(mockTaskFailed).not.toHaveBeenCalled();
+    expect(mockTaskSucceeded).toHaveBeenCalled();
+    expect(String(mockTaskSucceeded.mock.calls[0][0])).toBe("not connected");
+    // Session-expired nudge toast still fires (it's a toast, not a badge).
+    expect(mockShowToast).toHaveBeenCalled();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -458,5 +467,83 @@ describe("process hook login-awaiting (Task 2 watchdog fix)", () => {
     const awaitingOrder = mockTaskAwaiting.mock.invocationCallOrder[0];
     const openBrowserOrder = mockOpenBrowser.mock.invocationCallOrder[0];
     expect(awaitingOrder).toBeLessThan(openBrowserOrder);
+  });
+});
+
+// ============================================================================
+// login export (Phase 4a B1 — standalone connect_account hook)
+// ============================================================================
+
+describe("login export (standalone connect_account hook)", () => {
+  const baseLoginContext = {
+    project_path: "/test-project",
+    moss_dir: "/test-project/.moss",
+    config: {},
+    project_info: { homepage_file: null, lang: "en" },
+    trigger: "settings_manual",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore awaiting so watchdog-suppression assertion works.
+    mockTaskAwaiting.mockResolvedValue(undefined);
+    mockGetConfig.mockResolvedValue({ userName: "guo", boundUserName: "guo" });
+    mockFetchUserProfile.mockResolvedValue({ userName: "guo", displayName: "Guo", language: "en" });
+  });
+
+  it("creates a task, immediately calls task.awaiting() (watchdog suppression)", async () => {
+    // Token appears on first poll — login succeeds fast.
+    mockOpenBrowser.mockResolvedValue({ closed: new Promise(() => {}) });
+    mockGetAccessToken.mockResolvedValue("tok");
+
+    await loginHook(baseLoginContext as never);
+
+    // task.awaiting() must be called before openBrowser so the Rust watchdog
+    // marks the hook Awaiting before any long human-paced operation starts.
+    expect(mockTaskAwaiting).toHaveBeenCalledWith("Connect to Matters", "", "cancel");
+    expect(mockOpenBrowser).toHaveBeenCalled();
+    const awaitOrder = mockTaskAwaiting.mock.invocationCallOrder[0];
+    const openOrder = mockOpenBrowser.mock.invocationCallOrder[0];
+    expect(awaitOrder).toBeLessThan(openOrder);
+  });
+
+  it("returns success and calls task.succeeded on successful login", async () => {
+    mockOpenBrowser.mockResolvedValue({ closed: new Promise(() => {}) });
+    mockGetAccessToken.mockResolvedValue("tok");
+
+    const result = await loginHook(baseLoginContext as never);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskSucceeded).toHaveBeenCalledWith("Connected to Matters");
+    expect(mockTaskFailed).not.toHaveBeenCalled();
+  });
+
+  it("returns success (dismissed) and calls task.succeeded when user closes panel", async () => {
+    // User closes the panel immediately — BrowserHandle.closed resolves.
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
+    mockGetAccessToken.mockResolvedValue(null); // no token found
+
+    const result = await loginHook(baseLoginContext as never);
+
+    // Closing is NOT an error — task.succeeded (not task.failed).
+    expect(result.success).toBe(true);
+    expect(mockTaskSucceeded).toHaveBeenCalledWith("Login dismissed");
+    expect(mockTaskFailed).not.toHaveBeenCalled();
+  });
+
+  it("calls promptLogin (shared logic) — same openBrowser path as process hook", async () => {
+    // This proves login() shares promptLogin() with the process hook (no
+    // duplicated login-flow implementation). Both call openBrowser with
+    // the same login URL from loginUrl().
+    mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() });
+    mockGetAccessToken.mockResolvedValue(null);
+
+    await loginHook(baseLoginContext as never);
+
+    // beginFreshLogin + openBrowser are called by promptLogin() — evidence
+    // the login export delegates to the shared flow, not a bespoke copy.
+    const { beginFreshLogin } = await import("../credential");
+    expect(beginFreshLogin).toHaveBeenCalled();
+    expect(mockOpenBrowser).toHaveBeenCalledWith(expect.stringContaining("matters.town"));
   });
 });

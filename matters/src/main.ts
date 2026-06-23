@@ -302,7 +302,7 @@ async function waitForToken(
     }
 
     if (token) {
-      console.log(`🔑 Token found after ${pollCount} poll(s)!`);
+      console.info(`🔑 Token found after ${pollCount} poll(s)!`);
       return true;
     }
 
@@ -427,19 +427,19 @@ async function promptLogin(): Promise<boolean> {
   // auth.json token (it reads the stored token before the cookie).
   await beginFreshLogin();
 
-  console.log(`🔐 Opening ${getDomain()} login page...`);
+  console.info(`🔐 Opening ${getDomain()} login page (${loginUrl()})...`);
 
   try {
     const browser = await openBrowser(loginUrl());
 
-    console.log(`🌐 Browser opened. Please log in to ${getDomain()}.`);
+    console.info(`🌐 Browser opened. Please log in to ${getDomain()}.`);
 
     // Phase 2 B2: no maxWaitMs ceiling — poll until token found or user closes.
     // initialDelayMs reduced from 20 s to 1 s so a fast login is not missed.
     const authenticated = await waitForToken(browser);
 
     if (authenticated) {
-      console.log("✅ Login successful, closing browser...");
+      console.info("✅ Login successful, closing browser...");
       // Login is the authoritative binding event: bind THIS folder to the
       // account just authenticated (covers all three promptLogin call sites).
       await affirmBindingFromProfile();
@@ -530,7 +530,7 @@ export async function login(context: ProcessContext): Promise<HookResult> {
   await task.awaiting("Connect to Matters", "", "cancel");
 
   try {
-    console.log("🔐 Matters: standalone login started");
+    console.info("🔐 Matters: standalone login started");
     const loginSuccess = await promptLogin();
     if (loginSuccess) {
       await task.succeeded("Connected to Matters");

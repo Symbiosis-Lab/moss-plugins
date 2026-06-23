@@ -45,7 +45,7 @@ export async function initializeDomain(): Promise<string> {
   // endpoint is set so the whole init uses the env-specified domain.
   const envDomain = await getPluginEnvVar("MOSS_MATTERS_DOMAIN");
   if (envDomain && envDomain.length > 0) {
-    console.log(`📍 MOSS_MATTERS_DOMAIN override: ${envDomain} (was: ${currentDomain})`);
+    console.info(`📍 MOSS_MATTERS_DOMAIN override: ${envDomain} (was: ${currentDomain})`);
     currentDomain = envDomain;
   }
 
@@ -71,7 +71,7 @@ export async function initializeDomain(): Promise<string> {
     );
   }
 
-  console.log(`📍 Matters domain: ${currentDomain}`);
+  console.info(`📍 Matters domain: ${currentDomain}`);
   return currentDomain;
 }
 

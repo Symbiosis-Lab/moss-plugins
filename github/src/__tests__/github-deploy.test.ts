@@ -265,7 +265,7 @@ describe("github-deploy", () => {
         execResult(false, "", "readlink: .moss/build/current: No such file or directory")
       );
 
-      await expect(resolveCurrentGenDir("git")).rejects.toThrow(
+      await expect(resolveCurrentGenDir()).rejects.toThrow(
         "Cannot locate current generation"
       );
     });
@@ -275,7 +275,7 @@ describe("github-deploy", () => {
         execResult(true, "")
       );
 
-      await expect(resolveCurrentGenDir("git")).rejects.toThrow(
+      await expect(resolveCurrentGenDir()).rejects.toThrow(
         "Cannot locate current generation"
       );
     });

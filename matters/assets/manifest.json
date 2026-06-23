@@ -11,6 +11,7 @@
   ],
   "global_name": "MattersPlugin",
   "domain": "matters.town",
+  "domains": ["matters.town", "matters.icu"],
   "icon": "icon.svg",
   "config": {
     "auto_publish": false,

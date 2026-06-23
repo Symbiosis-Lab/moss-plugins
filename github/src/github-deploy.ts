@@ -241,15 +241,55 @@ function parsePushProgress(
 }
 
 /**
+ * Resolve the current generation directory path (relative to project root).
+ *
+ * The build pipeline writes output to `.moss/build/generations/<hash>/` and
+ * updates `.moss/build/current` (a symlink) to point to that directory.
+ * `.moss/build/site/` is empty in the generations model — never stage from there.
+ *
+ * Returns a path like `.moss/build/generations/abc123def456` — the real directory
+ * git can stage and extract a tree from (git does not follow symlinks for
+ * `write-tree --prefix`).
+ *
+ * @throws {Error} if the current symlink is absent or unresolvable
+ */
+export async function resolveCurrentGenDir(): Promise<string> {
+  // `readlink` on macOS does NOT support -f, but the symlink target is already
+  // absolute (set_current_ptr uses an absolute path), so plain `readlink` suffices.
+  const result = await executeBinary({
+    binaryPath: "readlink",
+    args: [".moss/build/current"],
+    workingDir: ".",
+    timeoutMs: 5_000,
+    env: {},
+  });
+  if (!result.success || !result.stdout.trim()) {
+    throw new Error(
+      "Cannot locate current generation: .moss/build/current symlink is missing or unresolvable. " +
+      "Run a build first before deploying."
+    );
+  }
+  // The symlink target is absolute: /abs/path/to/.moss/build/generations/<id>
+  // Extract just the generation ID and reconstruct the relative path.
+  const absTarget = result.stdout.trim();
+  const genId = absTarget.split("/").filter(Boolean).pop();
+  if (!genId) {
+    throw new Error(`Unexpected generation symlink target: ${absTarget}`);
+  }
+  return `.moss/build/generations/${genId}`;
+}
+
+/**
  * Deploy site to GitHub Pages via a single git repo.
  *
- * Uses one git repo at the project root. Commits source + .moss/build/site/,
- * pushes to main, then extracts the .moss/build/site/ tree as an orphan commit
- * and pushes it to gh-pages. This gives GitHub Pages the site content at
- * the branch root while keeping source on main.
+ * Uses one git repo at the project root. Stages site files from the current
+ * generation directory (.moss/build/current → .moss/build/generations/<id>/),
+ * extracts the generation tree as an orphan commit and pushes it to gh-pages,
+ * then backs up source files to main. This gives GitHub Pages the site content
+ * at the branch root while keeping source on main.
  *
  * Enforces GitHub's 100MB per-file limit:
- * - Site files (.moss/build/site/): ABORT if any exceed 100MB
+ * - Site files (current generation dir): ABORT if any exceed 100MB
  * - Source files (project root): SKIP >100MB files with a warning toast
  *
  * @param options - Deploy options
@@ -347,9 +387,14 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
       workingDir: ".", timeoutMs: 5_000, env: {},
     });
 
-    // ── 2. Stage ONLY site files (fast — skips scanning the whole vault) ──
+    // ── 2. Resolve current generation dir and stage its files ────────────
+    // .moss/build/site/ is empty in the generations model (#816). The real
+    // output lives at .moss/build/current → .moss/build/generations/<id>/.
+    // git does not follow symlinks for write-tree --prefix, so we resolve
+    // the symlink to the actual (relative) generation directory first.
     onProgress(5, "Staging site files...");
-    await git(["add", ".moss/build/site/"]);
+    const genDir = await resolveCurrentGenDir();
+    await git(["add", `${genDir}/`]);
 
     // ── 3. Get site tree SHA directly from index ─────────────────────────
     // Remove index.lock again: iCloud can re-lock the index between git add
@@ -360,7 +405,7 @@ export async function deployViaGitPush(options: DeployViaGitPushOptions): Promis
       workingDir: ".", timeoutMs: 5_000, env: {},
     });
     onProgress(10, "Preparing gh-pages...");
-    const writeTree = await git(["write-tree", "--prefix=.moss/build/site/"]);
+    const writeTree = await git(["write-tree", `--prefix=${genDir}/`]);
     if (!writeTree.success) throw new Error(`Failed to write site tree: ${sanitize(writeTree.stderr, token)}`);
 
     // Inject .nojekyll (always) and CNAME (when domain is set) into the

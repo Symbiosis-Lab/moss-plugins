@@ -38,8 +38,10 @@ describe("WORKFLOW_TEMPLATE", () => {
     expect(WORKFLOW_TEMPLATE).toContain("id-token: write");
   });
 
-  it("references .moss/build/site as the upload path", () => {
-    expect(WORKFLOW_TEMPLATE).toContain("path: .moss/build/site");
+  it("references .moss/build/current as the upload path (current generation symlink)", () => {
+    expect(WORKFLOW_TEMPLATE).toContain("path: .moss/build/current");
+    // Must NOT reference the now-empty legacy .moss/build/site path
+    expect(WORKFLOW_TEMPLATE).not.toContain("path: .moss/build/site");
   });
 
   it("includes workflow_dispatch trigger", () => {

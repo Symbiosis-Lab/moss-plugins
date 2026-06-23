@@ -1,5 +1,6 @@
 {
   "name": "@symbiosis-lab/moss-plugin-terrarium",
+  "private": true,
   "version": "0.1.0",
   "description": "moss advisory-window review harness (dev/test)",
   "main": "dist/main.bundle.js",

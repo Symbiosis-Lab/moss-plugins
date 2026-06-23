@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+### Patch Changes
+
+- [#738](https://github.com/Symbiosis-Lab/moss/pull/738) [`8539776`](https://github.com/Symbiosis-Lab/moss/commit/853977618a92b5d66853be8ca9558012b45183e5) Thanks [@guoliu](https://github.com/guoliu)! - First publish of the github and matters moss plugins to npm under the @symbiosis-lab scope. Sources consolidated into the moss monorepo; published from the changesets workflow. (The five other plugins originally listed here — douban, linkedin, substack, x, xiaohongshu — do not yet exist as packages and were removed so `changeset version` can resolve.)
+
 All notable changes to this plugin are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -7,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 _Pending publish — cumulative since `1.1.2` (last released on main); full detail under [1.4.0] and [1.2.0]._
+
 - Changed (`1.4.1`): the login flow is quieter and recoverable — a cancelled or failed Matters login now returns you to the editor (empty-folder onboarding) instead of leaving an empty action panel, the login status label reads calmer, and the in-flight watchdog is preserved across the cancel.
 - Fixed (`1.4.1`): a freshly imported vault's homepage title comes from the vault folder name, not the Matters display name.
 - Fixed: the import progress bar no longer stalls during media download. Per-article sync and image-download progress now drive the unified progress surface, so the hairline advances smoothly through the heaviest phase. (These previously used a legacy progress channel that moss's panel drops for background imports, so the bar appeared frozen while images downloaded.)
@@ -22,17 +29,20 @@ _Pending publish — cumulative since `1.1.2` (last released on main); full deta
 ## [1.4.0] - 2026-06-11
 
 ### Added
+
 - Local-first comments integration: `uid` contract, env-derived Artalk server URL,
   tombstone reconcile, morph-proof preview stub.
 - Social data written to `.moss/data/social/` alongside build; recovers stranded comments.
 - Diagnostic advisories on hook-failure with full refetch on cleared counts.
 
 ### Fixed
+
 - Full refetch on cleared platform counts to avoid stale display.
 
 ## [1.2.0] - 2026-06-04
 
 ### Added
+
 - Session-expiry handling across 7 implementation tasks (T1–T7):
   - Decode JWT `exp` claim locally (T1).
   - Tri-state session check with dead-token filtering and persisted nudge stamp (T2).
@@ -49,11 +59,13 @@ _Pending publish — cumulative since `1.1.2` (last released on main); full deta
 ## [1.1.2] - 2026-05-30
 
 ### Changed
+
 - Reconcile plugin manifest after QuickJS runtime upgrade in moss v0.7.x.
 
 ## [1.1.1] - 2026-05-29
 
 ### Fixed
+
 - Rebuild bundled plugin correctly on release build (`cargo build --release`).
 - Language-aware article folder (文章 for Chinese content).
 - Convert HTML via moss's shared htmd converter.
@@ -62,6 +74,7 @@ _Pending publish — cumulative since `1.1.2` (last released on main); full deta
 - Pre-merge review fixes: G runtime no-op, title wikilink, hairline clip.
 
 ### Added
+
 - Generate self-named home article with `home: true` marker.
 - Marker-aware home detection exposed to plugin-facing API.
 

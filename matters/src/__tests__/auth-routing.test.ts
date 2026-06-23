@@ -56,6 +56,8 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // T8a escape hatch — undefined return = no test profile = production
   // path (which is what these routing tests exercise).
   getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
+  // clearPluginCookies — called by promptLogin() before opening the browser.
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
   // startTask mock — returns a TaskHandle whose terminal transitions are
   // captured so tests can assert on the receipt copy.
   // mockTaskAwaiting is hoisted so tests can assert call-order vs openBrowser.

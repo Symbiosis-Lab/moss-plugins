@@ -72,6 +72,8 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // Returns a no-op unlisten function; the URL path is never exercised in
   // these law tests (browser-close / poll are the drivers here).
   onEvent: vi.fn().mockResolvedValue(vi.fn()),
+  // clearPluginCookies — called by promptLogin() before opening the browser.
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../config", () => ({
@@ -82,6 +84,7 @@ vi.mock("../config", () => ({
 vi.mock("../api", () => ({
   clearTokenCache: vi.fn(),
   getAccessToken: vi.fn().mockResolvedValue("tok"),
+  clearStoredToken: vi.fn().mockResolvedValue(undefined),
   getSessionState: vi.fn().mockResolvedValue("valid"),
   shouldNudgeSessionExpired: vi.fn().mockResolvedValue(false),
   createDraft: vi.fn().mockResolvedValue({

@@ -37,6 +37,8 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn().mockResolvedValue(false),
   getPluginEnvVar: (...args: unknown[]) => mockGetPluginEnvVar(...args),
+  // clearPluginCookies — called by promptLogin() before opening the browser.
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
   // setMessageContext is called at module load by utils.ts — stub it.
   setMessageContext: vi.fn(),
   sendMessage: vi.fn().mockResolvedValue(undefined),

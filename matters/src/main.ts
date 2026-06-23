@@ -21,6 +21,7 @@ import { startTask } from "@symbiosis-lab/moss-api";
 import type { TaskHandle } from "@symbiosis-lab/moss-api";
 import {
   clearTokenCache,
+  clearStoredToken,
   getAccessToken,
   fetchAllArticlesSince,
   fetchAllDraftsSince,
@@ -192,6 +193,7 @@ export async function removeDraftId(sourcePath: string): Promise<void> {
 import {
   openBrowser,
   closeBrowser,
+  clearPluginCookies,
   returnToEditor,
   type BrowserHandle,
 } from "@symbiosis-lab/moss-api";
@@ -337,6 +339,26 @@ async function applyTestProfileEscapeHatch(): Promise<string | null> {
   return profile;
 }
 
+/**
+ * Bind the current folder to the just-authenticated Matters account. Login is
+ * the single authoritative binding event (per-folder isolation spec): this runs
+ * on EVERY successful login, so all three promptLogin call sites re-bind without
+ * touching the call sites. Best-effort — a profile-fetch failure must not fail
+ * an otherwise-successful login.
+ */
+async function affirmBindingFromProfile(): Promise<void> {
+  try {
+    const profile = await fetchUserProfile();
+    const config = await getConfig();
+    if (config.boundUserName !== profile.userName || config.userName !== profile.userName) {
+      await saveConfig({ ...config, boundUserName: profile.userName, userName: profile.userName });
+      console.log(`🔗 Bound this folder to @${profile.userName} via login`);
+    }
+  } catch (e) {
+    console.warn(`⚠️ Failed to affirm Matters binding after login: ${e}`);
+  }
+}
+
 async function promptLogin(): Promise<boolean> {
   // UI-layer escape hatch: when MOSS_MATTERS_TEST_PROFILE is set, skip
   // the login webview entirely and pretend authentication succeeded.
@@ -346,6 +368,18 @@ async function promptLogin(): Promise<boolean> {
   if (testProfile) {
     console.log(`🧪 Matters: skipping login UI (test profile @${testProfile})`);
     return true;
+  }
+
+  // Force-fresh login (per-folder isolation): clear THIS folder's stored token
+  // AND the matters-domain cookies before opening the webview, so (a) the login
+  // page shows a real credential screen (no lingering server session) and (b)
+  // waitForToken can only capture a freshly-logged-in token — never a stale
+  // auth.json token (getAccessToken reads the stored token before the cookie).
+  await clearStoredToken();
+  try {
+    await clearPluginCookies();
+  } catch (e) {
+    console.warn(`⚠️ Failed to clear matters cookies before login: ${e}`);
   }
 
   console.log(`🔐 Opening ${getDomain()} login page...`);
@@ -360,6 +394,9 @@ async function promptLogin(): Promise<boolean> {
 
     if (authenticated) {
       console.log("✅ Login successful, closing browser...");
+      // Login is the authoritative binding event: bind THIS folder to the
+      // account just authenticated (covers all three promptLogin call sites).
+      await affirmBindingFromProfile();
       try {
         await closeBrowser();
       } catch {
@@ -480,14 +517,8 @@ export async function process(context: ProcessContext): Promise<HookResult> {
               message: "No Matters account bound. Skipping sync.",
             };
           }
-          // Fetch profile to get username for binding
-          const profile = await fetchUserProfile();
-          await saveConfig({
-            ...bindingConfig,
-            boundUserName: profile.userName,
-            userName: profile.userName,
-          });
-          console.log(`🔗 Bound to @${profile.userName} via login`);
+          // promptLogin() now affirms the binding (affirmBindingFromProfile) on
+          // success — the folder is bound to the just-authenticated account.
         }
       }
     }

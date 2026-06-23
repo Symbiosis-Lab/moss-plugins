@@ -205,6 +205,31 @@ import {
 // ============================================================================
 
 /**
+ * Build the locale-aware login-success toast message.
+ *
+ * Uses the Matters profile language stored in config (populated by
+ * `affirmBindingFromProfile` → `saveConfig`) to match the moss shell's three
+ * locales (en / zh-hans / zh-hant). The `language` field from the Matters API
+ * uses underscore format ("zh_hans", "zh_hant"); we normalize to dash format.
+ *
+ * Mirrors the `matters.login_success` key added to ui-strings.ts for shell use.
+ *
+ * @param userName - Matters username (e.g. "@guo"), empty string if unknown
+ * @param language - Matters profile language (e.g. "zh_hans"), may be undefined
+ */
+function mattersLoginSuccessMessage(userName: string, language?: string): string {
+  const suffix = userName ? ` · @${userName}` : "";
+  const lang = (language ?? "").toLowerCase().replace("_", "-");
+  if (lang.startsWith("zh-hant") || lang === "zh_hant") {
+    return `已連接 Matters${suffix}`;
+  }
+  if (lang.startsWith("zh") || lang === "zh_hans") {
+    return `已连接 Matters${suffix}`;
+  }
+  return `Connected to Matters${suffix}`;
+}
+
+/**
  * Session-expired nudge. Throttled once per expiry event via a nudgedAt
  * stamp in auth.json (engine-independent: module state may reset per build
  * under the off-webview runtime). Every suppressed occurrence still logs.
@@ -221,38 +246,48 @@ async function notifySessionExpired(): Promise<void> {
 }
 
 /**
- * Wait for access token by polling for cookie
+ * Wait for access token by polling for cookie.
+ *
+ * Polls until the token is found OR the browser window is closed by the user.
+ * There is NO wall-clock timeout — the user may take as long as they need.
+ * The poll exits only on:
+ *   - Token found (returns true)
+ *   - Browser panel closed by user (returns false)
+ *   - Plugin context lost (returns false)
  *
  * @param browserHandle - Handle from openBrowser() to detect window closure
- * @param initialDelayMs - Wait before first check (default: 20s)
+ * @param initialDelayMs - Short pause before first poll (default: 1s). Gives
+ *   the login page time to start loading before the first cookie check, without
+ *   delaying a fast local login. The old 20 s default caused fast logins to be
+ *   missed (Phase 2 B2 fix: reduced from 20000 to 1000).
  * @param pollIntervalMs - Time between checks (default: 2s)
- * @param maxWaitMs - Maximum total wait time (default: 5 minutes)
- * @returns true if token found, false if window closed or timeout
+ * @returns true if token found, false if window closed or context lost
  */
 async function waitForToken(
   browserHandle: BrowserHandle,
-  initialDelayMs = 20000,
+  initialDelayMs = 1000,
   pollIntervalMs = 2000,
-  maxWaitMs = 300000
 ): Promise<boolean> {
-  console.log(`⏳ Waiting ${initialDelayMs / 1000}s before checking for token...`);
+  console.log(`⏳ Waiting ${initialDelayMs / 1000}s before first token check...`);
   await sleep(initialDelayMs);
 
-  const startTime = Date.now();
   let windowClosed = false;
 
-  // Listen for window close
+  // Listen for window close — this is the ONLY exit condition besides finding
+  // the token. There is no maxWaitMs ceiling (Phase 2 B2: removed).
   browserHandle.closed.then(() => {
     windowClosed = true;
   });
 
-  while (Date.now() - startTime < maxWaitMs - initialDelayMs) {
+  let pollCount = 0;
+  while (true) {
     // Exit immediately if window was closed
     if (windowClosed) {
       console.log("🚪 Browser window closed by user");
       return false;
     }
 
+    pollCount++;
     clearTokenCache();
     // During login flow, capture the freshly-set cookie (captureLogin checks the
     // global WebKit store) — it also persists the token to project storage.
@@ -265,14 +300,19 @@ async function waitForToken(
     }
 
     if (token) {
-      console.log("🔑 Token found!");
+      console.log(`🔑 Token found after ${pollCount} poll(s)!`);
       return true;
+    }
+
+    // Throttled poll log: emit once every 30 s (~15 polls at 2 s interval)
+    // instead of every 2 s to reduce log spam.
+    if (pollCount % 15 === 0) {
+      const elapsed = Math.round((pollCount * pollIntervalMs) / 1000);
+      console.log(`⏳ Still waiting for token (${elapsed}s elapsed, poll #${pollCount})...`);
     }
 
     await sleep(pollIntervalMs);
   }
-
-  return false;
 }
 
 /**
@@ -384,15 +424,30 @@ async function promptLogin(): Promise<boolean> {
     const browser = await openBrowser(loginUrl());
 
     console.log(`🌐 Browser opened. Please log in to ${getDomain()}.`);
-    console.log("⏳ Will check for authentication after 20 seconds...");
 
-    const authenticated = await waitForToken(browser, 20000, 2000, 300000);
+    // Phase 2 B2: no maxWaitMs ceiling — poll until token found or user closes.
+    // initialDelayMs reduced from 20 s to 1 s so a fast login is not missed.
+    const authenticated = await waitForToken(browser);
 
     if (authenticated) {
       console.log("✅ Login successful, closing browser...");
       // Login is the authoritative binding event: bind THIS folder to the
       // account just authenticated (covers all three promptLogin call sites).
       await affirmBindingFromProfile();
+      // Show a success toast so the user gets confirmation that login worked
+      // and sync is about to start (Phase 2 B2: today there is NO feedback).
+      // We use the Matters profile language stored by affirmBindingFromProfile
+      // to pick the locale-appropriate message.
+      try {
+        const loginConfig = await getConfig();
+        const loginUserName = loginConfig.userName ?? loginConfig.boundUserName ?? "";
+        await showToast({
+          message: mattersLoginSuccessMessage(loginUserName, loginConfig.language),
+          variant: "success",
+        });
+      } catch {
+        // Toast failure must not fail the login flow
+      }
       try {
         await closeBrowser();
       } catch {

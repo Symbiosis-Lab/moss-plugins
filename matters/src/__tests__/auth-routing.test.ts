@@ -49,6 +49,7 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   dismissToast: (...args: unknown[]) => mockDismissToast(...args),
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
   closeBrowser: (...args: unknown[]) => mockCloseBrowser(...args),
+  returnToEditor: vi.fn().mockResolvedValue(undefined),
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock("../api", () => ({
 
 vi.mock("../domain", () => ({
   initializeDomain: vi.fn().mockResolvedValue("matters.town"),
+  getDomain: vi.fn().mockReturnValue("matters.town"),
   loginUrl: vi.fn().mockReturnValue("https://matters.town/login"),
   articleUrl: vi.fn(),
   isMattersUrl: vi.fn(),
@@ -401,7 +403,12 @@ describe("syndicate session gate", () => {
     mockOpenBrowser.mockResolvedValue({ closed: Promise.resolve() }); // closes immediately
     await syndicate(SYNDICATE_CONTEXT);
 
-    expect(mockTaskAwaiting).toHaveBeenCalledWith("log in to Matters", "Matters", "cancel");
+    // Spec: quiet label, no Awaiting pulse — awaiting is called with an empty
+    // venue string so the UI shows the directive text as a quiet label rather
+    // than "Waiting for you to [x] in [venue]". The core invariant (called
+    // BEFORE openBrowser so the Rust watchdog marks the hook Awaiting) is
+    // unchanged.
+    expect(mockTaskAwaiting).toHaveBeenCalledWith("Connect to Matters", "", "cancel");
     expect(mockOpenBrowser).toHaveBeenCalled();
 
     // Order invariant: awaiting must precede openBrowser so the watchdog
@@ -435,7 +442,9 @@ describe("process hook login-awaiting (Task 2 watchdog fix)", () => {
   it("login-awaiting: task.awaiting() is called BEFORE openBrowser (promptLogin) in fresh-bind login", async () => {
     await processHook(UNBOUND_CONTEXT);
 
-    expect(mockTaskAwaiting).toHaveBeenCalledWith("log in to Matters", "Matters", "cancel");
+    // Spec: quiet label — same empty venue, same order invariant (awaiting
+    // before openBrowser so the Rust watchdog marks the hook Awaiting).
+    expect(mockTaskAwaiting).toHaveBeenCalledWith("Connect to Matters", "", "cancel");
     expect(mockOpenBrowser).toHaveBeenCalled();
 
     const awaitingOrder = mockTaskAwaiting.mock.invocationCallOrder[0];

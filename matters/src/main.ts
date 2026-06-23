@@ -192,6 +192,7 @@ export async function removeDraftId(sourcePath: string): Promise<void> {
 import {
   openBrowser,
   closeBrowser,
+  returnToEditor,
   type BrowserHandle,
 } from "@symbiosis-lab/moss-api";
 
@@ -347,12 +348,12 @@ async function promptLogin(): Promise<boolean> {
     return true;
   }
 
-  console.log("🔐 Opening Matters.town login page...");
+  console.log(`🔐 Opening ${getDomain()} login page...`);
 
   try {
     const browser = await openBrowser(loginUrl());
 
-    console.log("🌐 Browser opened. Please log in to Matters.town.");
+    console.log(`🌐 Browser opened. Please log in to ${getDomain()}.`);
     console.log("⏳ Will check for authentication after 20 seconds...");
 
     const authenticated = await waitForToken(browser, 20000, 2000, 300000);
@@ -459,12 +460,21 @@ export async function process(context: ProcessContext): Promise<HookResult> {
               message: "No Matters account bound. Skipping sync.",
             };
           }
-          await task.awaiting("log in to Matters", "Matters", "cancel");
+          // Suspend the Rust 60s inactivity watchdog (task.awaiting sets the
+          // hook as awaiting permanently until hook teardown — the watchdog
+          // skips it while waiting for the user). Immediately follow with a
+          // quiet progress label so the UI shows "Connect to Matters" rather
+          // than the Awaiting amber pulse (spec: in-band login must not use
+          // the Awaiting tone).
+          await task.awaiting("Connect to Matters", "", "cancel");
+          await task.progress(undefined, "Connect to Matters");
           const loginSuccess = await promptLogin();
           if (!loginSuccess) {
             // Terminate the task before returning, or it stays Running in the
             // registry forever. Not bound ⇒ nothing to import; a clean success.
             await task.succeeded("No Matters account bound");
+            // Return to the editor so the user isn't left with an empty panel.
+            void returnToEditor().catch(() => { /* best-effort */ });
             return {
               success: true,
               message: "No Matters account bound. Skipping sync.",
@@ -519,11 +529,18 @@ export async function process(context: ProcessContext): Promise<HookResult> {
 
       case "prompt_login": {
         console.log(`🔐 Session ${sessionState}, prompting login (trigger: ${context.trigger})...`);
-        await task.progress(overallProgress("authentication", 0, 1) / 100, "Waiting for login...");
+        // Suspend the Rust 60s inactivity watchdog before showing the login
+        // panel (same rationale as the binding path above). Follow immediately
+        // with a quiet progress label (spec: no Awaiting amber pulse for
+        // in-panel login).
+        await task.awaiting("Connect to Matters", "", "cancel");
+        await task.progress(undefined, "Connect to Matters");
         const loginSuccess = await promptLogin();
         if (!loginSuccess) {
           await task.failed("Login failed or timeout", true);
           await reportError("Login failed or timeout", "authentication", true);
+          // Return to the editor so the user isn't left with an empty panel.
+          void returnToEditor().catch(() => { /* best-effort */ });
           return {
             success: false,
             message: "Login failed or timeout. Please try again.",
@@ -928,7 +945,10 @@ export async function syndicate(context: SyndicateContext): Promise<HookResult> 
       // Law 4: dismiss the toast if login succeeds so a resolved warning
       //         doesn't linger alongside the terminal ack.
       await showToast({ message: "Matters login required", variant: "warning", persistent: true, id: "matters-login-required" });
-      await task.awaiting("log in to Matters", "Matters", "cancel");
+      // Suspend the Rust 60s inactivity watchdog. Follow with a quiet progress
+      // label (spec: no Awaiting amber pulse for in-panel login).
+      await task.awaiting("Connect to Matters", "", "cancel");
+      await task.progress(undefined, "Connect to Matters");
       const loginSuccess = await promptLogin();
       if (loginSuccess) {
         await dismissToast("matters-login-required");
@@ -1327,7 +1347,7 @@ export async function syndicateArticle(
     }
     await task.advise({
       scope: "Remote",
-      severity: "Info",
+      severity: "ShippedDegraded",
       item: article.title,
       what: "Article published on Matters — frontmatter will sync",
       action: { Link: { href: publishedUrl, label: "View article" } },
@@ -1610,13 +1630,17 @@ function absolutizeUrl(url: string, baseUrl: string): string {
 }
 
 export function absolutizeRelativeHrefs(html: string, baseUrl: string): string {
-  return html.replace(/<a\b([^>]*?)\shref="([^"]+)"([^>]*)>/gi, (full, before: string, href: string, after: string) => {
-    const absolute = absolutizeUrl(href, baseUrl);
-    if (absolute === href) {
-      return full;
-    }
-    return `<a${before} href="${absolute}"${after}>`;
-  });
+  // Linear: scan each <a> tag, then rewrite its href within the short tag
+  // string. One regex with [^>]*? … [^>]* around href= backtracks polynomially
+  // on hostile input (CodeQL js/polynomial-redos); splitting the scan from the
+  // attribute read removes the ambiguity. The function replacer keeps any `$`
+  // in the URL literal.
+  return html.replace(/<a\b[^>]*>/gi, (tag) =>
+    tag.replace(/(\shref=")([^"]+)(")/i, (m, pre: string, href: string, post: string) => {
+      const absolute = absolutizeUrl(href, baseUrl);
+      return absolute === href ? m : `${pre}${absolute}${post}`;
+    }),
+  );
 }
 
 /**
@@ -1925,11 +1949,15 @@ export async function uploadAndReplaceLocalImages(
   baseUrl: string,
   entityId: string,
 ): Promise<string> {
-  const imgSrcRegex = /<img\s[^>]*src="([^"]+)"[^>]*>/gi;
+  // Linear tag scan + per-tag src read — avoids the polynomial backtracking of
+  // two [^>]* around src= (CodeQL js/polynomial-redos). `\ssrc="` matches the
+  // real src attribute (whitespace-anchored), not a data-src tail.
+  const imgTagRegex = /<img\b[^>]*>/gi;
   const srcs = new Set<string>();
   let match: RegExpExecArray | null;
-  while ((match = imgSrcRegex.exec(content)) !== null) {
-    if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+  while ((match = imgTagRegex.exec(content)) !== null) {
+    const srcMatch = /\ssrc="([^"]+)"/i.exec(match[0]);
+    if (srcMatch && !/^data:/i.test(srcMatch[1])) srcs.add(srcMatch[1]);
   }
   if (srcs.size === 0) return content;
 
@@ -1987,13 +2015,16 @@ export async function uploadAndReplaceLocalAudio(
   entityId: string,
 ): Promise<string> {
   const figureAudioRegex = /<figure\b[^>]*\bclass="audio"[^>]*>([\s\S]*?)<\/figure>/gi;
-  const sourceRegex = /<source\s[^>]*\bsrc="([^"]+)"[^>]*>/gi;
+  // Linear tag scan + per-tag src read — avoids the polynomial backtracking of
+  // two [^>]* around src= (CodeQL js/polynomial-redos).
+  const sourceTagRegex = /<source\b[^>]*>/gi;
   const srcs = new Set<string>();
   let figure: RegExpExecArray | null;
   while ((figure = figureAudioRegex.exec(content)) !== null) {
-    let match: RegExpExecArray | null;
-    while ((match = sourceRegex.exec(figure[1])) !== null) {
-      if (!/^data:/i.test(match[1])) srcs.add(match[1]);
+    let tag: RegExpExecArray | null;
+    while ((tag = sourceTagRegex.exec(figure[1])) !== null) {
+      const srcMatch = /\ssrc="([^"]+)"/i.exec(tag[0]);
+      if (srcMatch && !/^data:/i.test(srcMatch[1])) srcs.add(srcMatch[1]);
     }
   }
   if (srcs.size === 0) return content;

@@ -9,6 +9,7 @@
     "copy-assets": "cp assets/* dist/",
     "build": "npm run clean && npm run bundle && npm run copy-assets",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"
   },
   "keywords": [

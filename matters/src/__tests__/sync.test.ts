@@ -404,6 +404,8 @@ describe("syncToLocalFiles - self-named home with home:true marker", () => {
     const home = ctx.filesystem.getFile(`${ctx.projectPath}/刘果.md`)?.content;
     expect(home).toBeDefined();
     expect(home).toContain("home: true");
+    // Feature C: homepage title must use the vault folder name, not the Matters displayName.
+    expect(home).toContain('title: "刘果"');
     // Must NOT create a competing index.md.
     expect(ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)).toBeUndefined();
   });
@@ -415,6 +417,9 @@ describe("syncToLocalFiles - self-named home with home:true marker", () => {
     const home = ctx.filesystem.getFile(`${ctx.projectPath}/index.md`)?.content;
     expect(home).toBeDefined();
     expect(home).toContain("home: true");
+    // When folderName is null/undefined, the homepage title falls back to the
+    // Matters profile displayName (the `folderName ?? profile.displayName` branch).
+    expect(home).toContain('title: "Test User"');
   });
 
   it("does not overwrite an existing self-named home", async () => {

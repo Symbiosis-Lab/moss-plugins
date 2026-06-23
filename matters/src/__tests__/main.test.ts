@@ -43,6 +43,8 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   emitEvent: vi.fn().mockResolvedValue(undefined),
   onEvent: vi.fn().mockResolvedValue(() => { /* unlisten no-op */ }),
   getPluginEnvVar: vi.fn().mockResolvedValue(null),
+  // clearPluginCookies — called by promptLogin() before opening the browser.
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
   readPluginFile: vi.fn(),
   writePluginFile: vi.fn().mockResolvedValue(undefined),
   pluginFileExists: vi.fn(),

@@ -44,6 +44,8 @@ vi.mock("@symbiosis-lab/moss-api", () => ({
   // T8a escape hatch — undefined return = no test profile = production
   // path (which is what these binding-guard tests exercise).
   getPluginEnvVar: vi.fn().mockResolvedValue(undefined),
+  // clearPluginCookies — called by promptLogin() before opening the browser.
+  clearPluginCookies: vi.fn().mockResolvedValue(undefined),
   // startTask mock — returns a no-op TaskHandle so process hook can drive
   // the PanelTask lifecycle without a real Tauri context.
   startTask: vi.fn().mockResolvedValue({
@@ -206,6 +208,7 @@ describe("process hook binding guard", () => {
   it("binds after successful login on fresh project", async () => {
     mockGetConfig
       .mockResolvedValueOnce({}) // binding guard check
+      .mockResolvedValueOnce({}) // affirmBindingFromProfile inside promptLogin
       .mockResolvedValue({ boundUserName: "carol", userName: "carol" }); // after binding
     mockDetectBoundUser.mockResolvedValue(null); // no existing articles
     // openBrowser returns handle; token appears after login
@@ -228,7 +231,9 @@ describe("process hook binding guard", () => {
     const result = await process({ ...baseContext, trigger: "onboarding_flow" });
 
     expect(result.success).toBe(true);
-    // Should have saved boundUserName from profile
+    // affirmBindingFromProfile (called from promptLogin) saves the binding.
+    // The condition fires because getConfig returns {} (no boundUserName yet)
+    // while fetchUserProfile returns "carol".
     expect(mockSaveConfig).toHaveBeenCalledWith(
       expect.objectContaining({ boundUserName: "carol" })
     );

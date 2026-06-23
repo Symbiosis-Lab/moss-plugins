@@ -219,11 +219,13 @@ import {
  */
 function mattersLoginSuccessMessage(userName: string, language?: string): string {
   const suffix = userName ? ` · @${userName}` : "";
+  // Matters API uses underscore locales ("zh_hans"); normalize to dashes so
+  // the startsWith checks below cover both forms.
   const lang = (language ?? "").toLowerCase().replace("_", "-");
-  if (lang.startsWith("zh-hant") || lang === "zh_hant") {
+  if (lang.startsWith("zh-hant")) {
     return `已連接 Matters${suffix}`;
   }
-  if (lang.startsWith("zh") || lang === "zh_hans") {
+  if (lang.startsWith("zh")) {
     return `已连接 Matters${suffix}`;
   }
   return `Connected to Matters${suffix}`;
@@ -392,7 +394,14 @@ async function affirmBindingFromProfile(): Promise<void> {
     const profile = await fetchUserProfile();
     const config = await getConfig();
     if (config.boundUserName !== profile.userName || config.userName !== profile.userName) {
-      await saveConfig({ ...config, boundUserName: profile.userName, userName: profile.userName });
+      // Persist the profile language too, so the login-success toast localizes
+      // correctly on the FIRST login (before the process hook's Phase-5 save).
+      await saveConfig({
+        ...config,
+        boundUserName: profile.userName,
+        userName: profile.userName,
+        language: profile.language,
+      });
       console.log(`🔗 Bound this folder to @${profile.userName} via login`);
     }
   } catch (e) {

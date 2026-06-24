@@ -1,6 +1,6 @@
 {
   "name": "matters",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Syndicate your articles to Matters.town (POSSE)",
   "author": "moss team",
   "entry": "main.bundle.js",

@@ -677,3 +677,167 @@ cover: "../../assets/${uuid}.jpg"
     expect(result.filesProcessed).toBe(0);
   });
 });
+
+// ============================================================================
+// Permanent-failure memo (failed-media.json) integration tests
+// ============================================================================
+
+describe("downloadMediaAndUpdate - permanent-failure memo", () => {
+  let ctx: MockTauriContext;
+
+  beforeEach(() => {
+    ctx = setupMockTauri({ projectPath: "/test-project" });
+  });
+
+  afterEach(() => {
+    ctx.cleanup();
+  });
+
+  it("(a) a non-retryable 403 writes failed-media.json with url and filePaths", async () => {
+    const uuid = "aaaa0403-0000-0000-0000-000000000403";
+    const url = `https://assets.matters.news/embed/${uuid}.jpg`;
+    const markdownContent = `---
+title: "403 Article"
+---
+
+![](${url})
+`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/article.md`, markdownContent);
+
+    ctx.urlConfig.setResponse(url, {
+      status: 403,
+      ok: false,
+      contentType: null,
+      bytesWritten: 0,
+      actualPath: "",
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate();
+
+    // The URL must appear in failedImageUrls (existing behaviour preserved)
+    expect(result.failedImageUrls).toContain(url);
+
+    // A failed-media.json must have been written
+    const memoPath = `${ctx.projectPath}/.moss/plugins/test-plugin/failed-media.json`;
+    const memoFile = ctx.filesystem.getFile(memoPath);
+    expect(memoFile).toBeDefined();
+
+    const entries = JSON.parse(memoFile!.content) as Array<{ url: string; filePaths: string[]; failedAt: string }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].url).toBe(url);
+    expect(entries[0].filePaths).toEqual(["posts/article.md"]);
+    // failedAt is a valid ISO timestamp (parses to a real Date).
+    expect(Number.isNaN(new Date(entries[0].failedAt).getTime())).toBe(false);
+  });
+
+  it("(a2) a dead URL referenced by MULTIPLE articles records ALL filePaths", async () => {
+    const uuid = "aaaa0410-0000-0000-0000-000000000410";
+    const url = `https://assets.matters.news/embed/${uuid}.jpg`;
+    const md = `---
+title: "Shared Dead Image"
+---
+
+![](${url})
+`;
+    // Two distinct articles reference the SAME dead URL.
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/one.md`, md);
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/two.md`, md);
+
+    ctx.urlConfig.setResponse(url, {
+      status: 410,
+      ok: false,
+      contentType: null,
+      bytesWritten: 0,
+      actualPath: "",
+    });
+
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    await downloadMediaAndUpdate();
+
+    const memoPath = `${ctx.projectPath}/.moss/plugins/test-plugin/failed-media.json`;
+    const memoFile = ctx.filesystem.getFile(memoPath);
+    expect(memoFile).toBeDefined();
+    const entries = JSON.parse(memoFile!.content) as Array<{ url: string; filePaths: string[] }>;
+    expect(entries).toHaveLength(1);
+    // Both referencing articles are recorded (order-independent).
+    expect([...entries[0].filePaths].sort()).toEqual(["posts/one.md", "posts/two.md"]);
+  });
+
+  it("(b) a URL already in failed-media.json is skipped: no network attempt, imagesSkipped increments, not in failedImageUrls", async () => {
+    const uuid = "bbbb0404-0000-0000-0000-000000000404";
+    const url = `https://assets.matters.news/embed/${uuid}.jpg`;
+    const markdownContent = `---
+title: "Already Known Dead"
+---
+
+![](${url})
+`;
+    ctx.filesystem.setFile(`${ctx.projectPath}/posts/dead.md`, markdownContent);
+
+    // Pre-populate the memo with this URL
+    const memoPath = `${ctx.projectPath}/.moss/plugins/test-plugin/failed-media.json`;
+    ctx.filesystem.setFile(
+      memoPath,
+      JSON.stringify([
+        { url, filePaths: ["posts/dead.md"], failedAt: "2026-06-01T00:00:00.000Z" },
+      ])
+    );
+
+    // The mock's DEFAULT response for an unconfigured URL is 200 OK. If the
+    // memo-skip were broken and the downloader attempted a network call, the
+    // image would DOWNLOAD successfully → imagesDownloaded would be 1 and
+    // imagesSkipped 0, FAILING the assertions below. That is the correct
+    // regression signal: these assertions prove no network attempt was made.
+    const { downloadMediaAndUpdate } = await import("../downloader");
+    const result = await downloadMediaAndUpdate();
+
+    // URL was memo-skipped: counts as skipped, NOT a new error/failedImageUrl
+    expect(result.imagesSkipped).toBeGreaterThanOrEqual(1);
+    expect(result.failedImageUrls).not.toContain(url);
+    // And definitely not downloaded
+    expect(result.imagesDownloaded).toBe(0);
+  });
+
+  it("(c) a transient 503 failure is NOT memoized as permanent", async () => {
+    // Fake timers so the 3 retry sleeps (Fibonacci 1s+1s) resolve instantly
+    // instead of burning ~2s of real wall-clock time.
+    vi.useFakeTimers();
+    try {
+      const uuid = "cccc0503-0000-0000-0000-000000000503";
+      const url = `https://assets.matters.news/embed/${uuid}.jpg`;
+      const markdownContent = `---
+title: "Transient Failure"
+---
+
+![](${url})
+`;
+      ctx.filesystem.setFile(`${ctx.projectPath}/posts/transient.md`, markdownContent);
+
+      // 503 is a retryable status; all 3 attempts fail
+      ctx.urlConfig.setResponse(url, [
+        { status: 503, ok: false, contentType: null, bytesWritten: 0, actualPath: "" },
+        { status: 503, ok: false, contentType: null, bytesWritten: 0, actualPath: "" },
+        { status: 503, ok: false, contentType: null, bytesWritten: 0, actualPath: "" },
+      ]);
+
+      const { downloadMediaAndUpdate } = await import("../downloader");
+      // Kick off the download, then drain all pending timers (the retry sleeps)
+      // so the promise resolves without real-time delay.
+      const pending = downloadMediaAndUpdate();
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      // The URL is a failure (appears in failedImageUrls)
+      expect(result.failedImageUrls).toContain(url);
+
+      // But NO failed-media.json should have been written (transient errors are
+      // not permanent — the server may recover on the next build)
+      const memoPath = `${ctx.projectPath}/.moss/plugins/test-plugin/failed-media.json`;
+      const memoFile = ctx.filesystem.getFile(memoPath);
+      expect(memoFile).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

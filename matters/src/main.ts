@@ -836,29 +836,16 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     // Phase 7: Post-sync processing (run SEQUENTIALLY to avoid race conditions)
     // Both operations read/write the same markdown files, so they must not run in parallel.
     // Order: Media download first (updates image references), then link rewriting
-    const mediaResult = await downloadMediaAndUpdate(reportToTask);
+    await downloadMediaAndUpdate(reportToTask);
     await task.progress(overallProgress("rewriting_links", 0, 1) / 100, "Rewriting internal links...");
     const linkResult = await rewriteAllInternalLinks(articlePathMap, userName);
     await task.progress(overallProgress("rewriting_links", 1, 1) / 100, `Rewrote ${linkResult.linksRewritten} internal links`);
 
-    // Media outcomes do NOT clutter the success receipt: downloads/skips stay
-    // silent ("success makes no sound"), and each FAILED image is proposed as
-    // its own advisory carrying the image's source URL (the dead CDN reference
-    // still in the body) so the user sees WHICH image broke — not an opaque
-    // "1 failed" count. moss groups same-reason advisories into one notice that
-    // lists the URLs (capped + "+N more"). ShippedDegraded: the sync still
-    // succeeded, so this is a quiet hairline dot, never a blocker (gavel: R13).
-    // `?? []`: media is a non-critical path — a result missing this field (e.g.
-    // a partial test mock) must never abort the whole sync over an advisory.
-    for (const url of mediaResult.failedImageUrls ?? []) {
-      await task.advise({
-        scope: "Remote",
-        severity: "ShippedDegraded",
-        item: url,
-        what: "Image could not be downloaded from Matters",
-        action: "None",
-      });
-    }
+    // Permanently-failed image downloads are persisted to failed-media.json by
+    // downloadMediaAndUpdate and surfaced in the Matters settings page as an
+    // informational list. No per-URL advisory is filed here: dead CDN URLs are
+    // non-actionable and repetitive; the settings page is the right surface for
+    // an inventory the user can review at leisure.
 
     const linkSummary =
       linkResult.linksRewritten > 0

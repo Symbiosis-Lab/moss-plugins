@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Pending publish — cumulative since `1.1.2` (last released on main); full detail under [1.4.0] and [1.2.0]._
 
+- Fixed (`1.4.4`): images whose CDN URL returned a non-retryable HTTP error (403, 404, 410) are now recorded in `failed-media.json` so subsequent builds skip them without a network attempt, eliminating the repeated "Image could not be downloaded" advisory toast on every sync. Permanently unavailable images are listed in the Matters settings page for review. Transient errors (5xx, timeouts) are still retried on the next build and are not memoized.
+
 - Added: standalone, reopenable Matters login. A new `login` capability lets you connect your account from Settings or when previewing an unlogged vault — no import required — via the shell's single-bar login chrome; login auto-opens once on an unlogged preview with a dismiss latch so it doesn't nag, and a locale-aware "Connected to Matters" toast confirms success (the profile language is now persisted on the first login so the toast localizes correctly).
 - Fixed: fast logins are no longer missed — the first cookie check starts after 1 s instead of 20 s, there's no artificial login timeout, and the in-flight watchdog no longer fires while a hook is awaiting keys. Login-path milestones (connect / panel / url / domain) are now logged for diagnosability.
 - Changed (`1.4.1`): the login flow is quieter and recoverable — a cancelled or failed Matters login now returns you to the editor (empty-folder onboarding) instead of leaving an empty action panel, the login status label reads calmer, and the in-flight watchdog is preserved across the cancel.

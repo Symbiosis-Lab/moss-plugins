@@ -18,6 +18,11 @@ import { downloadAsset as downloadAssetRust } from "@symbiosis-lab/moss-api";
 import { extractRemoteImageUrls, extractMarkdownLinks } from "./converter";
 import { isInternalMattersLink as isDomainInternalLink, extractShortHash } from "./domain";
 import { listFiles, readFile, writeFile } from "@symbiosis-lab/moss-api";
+import {
+  loadFailedMediaMemo,
+  mergePermanentFailures,
+  type FailedMediaEntry,
+} from "./failed-media";
 
 // ============================================================================
 // Constants
@@ -205,7 +210,7 @@ class DownloadError extends Error {
  */
 async function downloadAssetWithRetry(
   url: string
-): Promise<{ actualPath: string; success: boolean; error?: string }> {
+): Promise<{ actualPath: string; success: boolean; error?: string; permanent?: boolean }> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`   [↓] Attempt ${attempt}/${MAX_RETRIES}: ${url}`);
@@ -217,9 +222,11 @@ async function downloadAssetWithRetry(
         const err = new DownloadError(`HTTP ${result.status}`, result.status);
         console.warn(`   [!] HTTP ${result.status} for ${url}`);
 
-        if (!err.isRetryable() || attempt === MAX_RETRIES) {
-          console.error(`   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}`);
-          return { actualPath: "", success: false, error: `HTTP ${result.status}` };
+        const retryable = err.isRetryable();
+        if (!retryable || attempt === MAX_RETRIES) {
+          const isPermanent = !retryable;
+          console.error(`   [✗] FAILED after ${attempt} attempts: ${url} - HTTP ${result.status}${isPermanent ? " (permanent)" : ""}`);
+          return { actualPath: "", success: false, error: `HTTP ${result.status}`, permanent: isPermanent };
         }
 
         const delay = getFibonacciDelay(attempt);
@@ -244,7 +251,10 @@ async function downloadAssetWithRetry(
 
       if (attempt === MAX_RETRIES) {
         console.error(`   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
-        return { actualPath: "", success: false, error: message };
+        // Network/timeout errors (no HTTP status) are not permanent — the server
+        // may be transiently unreachable. Only non-retryable HTTP statuses are
+        // permanent.
+        return { actualPath: "", success: false, error: message, permanent: false };
       }
 
       const delay = getFibonacciDelay(attempt);
@@ -254,7 +264,7 @@ async function downloadAssetWithRetry(
   }
 
   console.error(`   [✗] FAILED after ${MAX_RETRIES} attempts: ${url}`);
-  return { actualPath: "", success: false, error: "Max retries exceeded" };
+  return { actualPath: "", success: false, error: "Max retries exceeded", permanent: false };
 }
 
 // ============================================================================
@@ -306,9 +316,11 @@ export async function downloadMediaAndUpdate(
   errors: string[];
   /**
    * Source URLs of images that failed to download (the dead CDN references
-   * still sitting in the article bodies). The caller turns each into a
-   * per-image advisory so the user sees WHICH image broke — not an opaque
-   * "N failed" count. A subset of `errors` carrying just the image-download
+   * still sitting in the article bodies). Populated for observability and
+   * tests; the caller no longer acts on it. Permanent failures are persisted
+   * to failed-media.json and surfaced in the Matters settings page (the
+   * per-image advisory was removed — dead URLs are non-actionable and
+   * repetitive). A subset of `errors` carrying just the image-download
    * failures (not list/write failures).
    */
   failedImageUrls: string[];
@@ -426,6 +438,27 @@ export async function downloadMediaAndUpdate(
   // Phase 2: Download all images in parallel (Rust handles concurrency)
   // ========================================================================
 
+  // Load the permanent-failure memo once. URLs in this set returned a
+  // non-retryable HTTP status on a prior build and will never succeed — skip
+  // them immediately without any network attempt.
+  const permFailedMemo = await loadFailedMediaMemo();
+  const permFailed = new Set(permFailedMemo.map((e) => e.url));
+
+  // Build a url → filePaths map for the permanent-failure record. A single
+  // dead URL can be referenced by MULTIPLE articles, so collect every file
+  // that references it (deduped per-url).
+  const urlToFilePaths = new Map<string, string[]>();
+  for (const file of filesToProcess) {
+    for (const media of file.mediaUrls) {
+      const paths = urlToFilePaths.get(media.url);
+      if (paths) {
+        if (!paths.includes(file.path)) paths.push(file.path);
+      } else {
+        urlToFilePaths.set(media.url, [file.path]);
+      }
+    }
+  }
+
   // Collect all unique media that needs downloading (not already in existing assets)
   const mediaToDownload: { url: string; uuid: string | null }[] = [];
   const seenUuids = new Set<string>();
@@ -437,6 +470,13 @@ export async function downloadMediaAndUpdate(
 
       // Skip if asset already exists
       if (media.uuid && existingAssetsByUuid.has(media.uuid)) {
+        result.imagesSkipped++;
+        continue;
+      }
+
+      // Skip permanently-failed URLs — they will never succeed and do not need
+      // another network attempt. Count as skipped (not as errors).
+      if (permFailed.has(media.url)) {
         result.imagesSkipped++;
         continue;
       }
@@ -479,6 +519,9 @@ export async function downloadMediaAndUpdate(
   const downloadedUuids = new Map<string, string>();
   const downloadedByUrl = new Map<string, string>();
 
+  // Permanent failures to persist after Phase 3.
+  const permanentFailures: FailedMediaEntry[] = [];
+
   for (const settled of downloadResults) {
     if (settled.status === "fulfilled") {
       const { media, downloadResult } = settled.value;
@@ -499,6 +542,16 @@ export async function downloadMediaAndUpdate(
         result.errors.push(`${media.url}: ${downloadResult.error}`);
         result.failedImageUrls.push(media.url);
         await reportError(msg, "downloading_media", false);
+
+        // If the failure is permanent (non-retryable HTTP status such as 403 /
+        // 404 / 410), record it so future builds skip the URL entirely.
+        if (downloadResult.permanent) {
+          permanentFailures.push({
+            url: media.url,
+            filePaths: urlToFilePaths.get(media.url) ?? [],
+            failedAt: new Date().toISOString(),
+          });
+        }
       }
     } else {
       // Promise rejected (shouldn't happen with our try/catch in
@@ -590,6 +643,13 @@ export async function downloadMediaAndUpdate(
         console.error(`   [✗] Failed to write: ${file.path} - ${err}`);
       }
     }
+  }
+
+  // Persist any new permanent failures so future builds skip them.
+  // Must run after Phase 3 (file writes) but before returning — we want the
+  // memo on disk even if Phase 3 had no changes.
+  if (permanentFailures.length > 0) {
+    await mergePermanentFailures(permanentFailures);
   }
 
   // Final report. Snap the band to 100% using `totalUrls` (ALL unique media,

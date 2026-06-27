@@ -1009,7 +1009,10 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       return { success: false, message };
     }
     const cause = error instanceof Error ? error.message : String(error);
-    await task.failed(`Sync failed: ${cause}`);
+    // recoverable=true → NeedsAction severity → no persistent blocking toast
+    // (the PanelTask badge is the self-reported failure surface for login-capable
+    // plugins; a separate Blocking toast would be a double-signal).
+    await task.failed(`Sync failed: ${cause}`, true);
     await reportError(`Sync failed: ${cause}`, "process", true);
     console.error(`❌ Matters: Sync failed: ${cause}`);
     return {

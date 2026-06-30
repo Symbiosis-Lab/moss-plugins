@@ -19,6 +19,7 @@ import {
   setPluginCookie,
   clearPluginCookies,
 } from "@symbiosis-lab/moss-api";
+import { accessTokenCookieName } from "./domain";
 
 // ============================================================================
 // Token storage (auth.json = SSOT)
@@ -253,7 +254,7 @@ export async function captureLogin(): Promise<string | null | undefined> {
       return undefined;
     }
 
-    const tokenCookie = cookies.find((c) => c.name === "__access_token");
+    const tokenCookie = cookies.find((c) => c.name === accessTokenCookieName());
 
     if (tokenCookie) {
       console.log(`Found __access_token cookie (length: ${tokenCookie.value?.length ?? 0})`);
@@ -307,7 +308,7 @@ export async function prepareWebviewAuth(): Promise<void> {
     return;
   }
   try {
-    await setPluginCookie([{ name: "__access_token", value: token }]);
+    await setPluginCookie([{ name: accessTokenCookieName(), value: token }]);
   } catch (e) {
     console.warn(`⚠️ prepareWebviewAuth: failed to set matters cookie: ${e}`);
   }

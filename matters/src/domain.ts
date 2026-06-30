@@ -20,6 +20,12 @@ import { apiConfig } from "./api";
 const DEFAULT_DOMAIN = "matters.town";
 let currentDomain = DEFAULT_DOMAIN;
 
+// The auth-token cookie name is env-specific: production (matters.town) names it
+// `__access_token`, but the staging web app (e.g. matters.icu) names it
+// `__dev__access_token`. Derived from currentDomain in initializeDomain() so the
+// login poll reads the right cookie and login is actually detected.
+let currentTokenCookieName = "__access_token";
+
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -48,6 +54,13 @@ export async function initializeDomain(): Promise<string> {
     console.info(`📍 MOSS_MATTERS_DOMAIN override: ${envDomain} (was: ${currentDomain})`);
     currentDomain = envDomain;
   }
+
+  // Derive the auth-token cookie name from the finalized domain. Production
+  // (matters.town) uses `__access_token`; any non-default (staging) domain uses
+  // `__dev__access_token`. Without this, the login poll watches the wrong cookie
+  // on staging and never detects login.
+  currentTokenCookieName =
+    currentDomain === DEFAULT_DOMAIN ? "__access_token" : "__dev__access_token";
 
   // Update API endpoint
   apiConfig.endpoint = `https://server.${currentDomain}/graphql`;
@@ -80,6 +93,7 @@ export async function initializeDomain(): Promise<string> {
  */
 export function resetDomain(): void {
   currentDomain = DEFAULT_DOMAIN;
+  currentTokenCookieName = "__access_token";
   apiConfig.endpoint = `https://server.${DEFAULT_DOMAIN}/graphql`;
 }
 
@@ -92,6 +106,15 @@ export function resetDomain(): void {
  */
 export function getDomain(): string {
   return currentDomain;
+}
+
+/**
+ * Get the env-specific auth-token cookie name (`__access_token` on production,
+ * `__dev__access_token` on staging). Reflects the domain resolved by the most
+ * recent initializeDomain() call.
+ */
+export function accessTokenCookieName(): string {
+  return currentTokenCookieName;
 }
 
 // ============================================================================

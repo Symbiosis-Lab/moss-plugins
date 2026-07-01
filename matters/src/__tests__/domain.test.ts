@@ -6,6 +6,7 @@ import { apiConfig } from "../api";
 import {
   initializeDomain,
   getDomain,
+  accessTokenCookieName,
   loginUrl,
   draftUrl,
   articleUrl,
@@ -288,6 +289,51 @@ describe("Domain Module", () => {
 
       resetDomain();
       expect(getDomain()).toBe("matters.town");
+    });
+  });
+
+  // ==========================================================================
+  // accessTokenCookieName — env-specific auth-token cookie name (guards A2/BUG#4)
+  //
+  // Regression guard: initializeDomain() derives the auth-token cookie name from
+  // the finalized domain. Production (matters.town) names the cookie
+  // `__access_token`; the staging web app (matters.icu) names it
+  // `__dev__access_token`. Before this fix, the login poll watched the wrong
+  // cookie on staging and never detected login. The cookie name is derived
+  // purely from the resolved domain, whatever its source (config.json here, or
+  // the MOSS_MATTERS_DOMAIN env override in the harness) — the same code path.
+  // ==========================================================================
+  describe("accessTokenCookieName", () => {
+    it("resolves __access_token on production (default matters.town)", async () => {
+      // No config file → defaults to matters.town.
+      await initializeDomain();
+
+      expect(getDomain()).toBe("matters.town");
+      expect(accessTokenCookieName()).toBe("__access_token");
+    });
+
+    it("resolves __dev__access_token on staging (matters.icu)", async () => {
+      // Staging domain, switched exactly like the existing domain tests do.
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/${PLUGIN_NAME}/config.json`,
+        JSON.stringify({ domain: "matters.icu" })
+      );
+      await initializeDomain();
+
+      expect(getDomain()).toBe("matters.icu");
+      expect(accessTokenCookieName()).toBe("__dev__access_token");
+    });
+
+    it("resetDomain restores the production cookie name", async () => {
+      ctx.filesystem.setFile(
+        `${ctx.projectPath}/.moss/plugins/${PLUGIN_NAME}/config.json`,
+        JSON.stringify({ domain: "matters.icu" })
+      );
+      await initializeDomain();
+      expect(accessTokenCookieName()).toBe("__dev__access_token");
+
+      resetDomain();
+      expect(accessTokenCookieName()).toBe("__access_token");
     });
   });
 });

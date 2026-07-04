@@ -383,6 +383,25 @@ async function applyTestProfileEscapeHatch(): Promise<string | null> {
 }
 
 /**
+ * Persist the reason the last sync FAILED into config.json so the settings panel
+ * can surface it even when it was closed at failure time (most syncs are
+ * background). Cleared on the next successful sync. Best-effort — a config-write
+ * failure must not mask the original sync error.
+ */
+async function persistSyncError(reason: string): Promise<void> {
+  try {
+    const cfg = await getConfig();
+    await saveConfig({
+      ...cfg,
+      lastSyncError: reason,
+      lastSyncErrorAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.warn(`Failed to persist lastSyncError: ${e}`);
+  }
+}
+
+/**
  * Bind the current folder to the just-authenticated Matters account. Login is
  * the single authoritative binding event (per-folder isolation spec): this runs
  * on EVERY successful login, so all three promptLogin call sites re-bind without
@@ -966,6 +985,10 @@ export async function process(context: ProcessContext): Promise<HookResult> {
         ...currentConfig,
         lastSyncedAt: syncEndTime,
         knownCollectionIds: allCollectionIds,
+        // Clear any prior failure now that a sync has succeeded, so the settings
+        // panel stops showing a stale "Last sync failed" once things recover.
+        lastSyncError: undefined,
+        lastSyncErrorAt: undefined,
       });
       console.log(`📅 Updated lastSyncedAt to ${syncEndTime}`);
     } catch (error) {
@@ -991,6 +1014,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       await task.succeeded(`${summary}${linkSummary}${socialSummary}${unauthNote}`);
     } else {
       await task.failed(`${criticalErrors.length} sync error(s)`, true);
+      await persistSyncError(`${criticalErrors.length} sync error(s)`);
     }
 
     return {
@@ -1005,6 +1029,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       const message = "session expired, log in again to import.";
       await notifySessionExpired();
       await task.failed(message, true);
+      await persistSyncError(message);
       console.error("❌ Matters: sync aborted, session rejected by server");
       return { success: false, message };
     }
@@ -1014,6 +1039,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     // plugins; a separate Blocking toast would be a double-signal).
     await task.failed(`Sync failed: ${cause}`, true);
     await reportError(`Sync failed: ${cause}`, "process", true);
+    await persistSyncError(`Sync failed: ${cause}`);
     console.error(`❌ Matters: Sync failed: ${cause}`);
     return {
       success: false,

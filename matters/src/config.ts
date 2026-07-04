@@ -28,6 +28,14 @@ export interface MattersPluginConfig {
   language?: string;
   /** ISO timestamp of last successful sync completion (for incremental sync) */
   lastSyncedAt?: string;
+  /**
+   * Human-readable reason the last sync FAILED, persisted so the settings panel
+   * can surface it even if it was closed when the (often background) sync failed.
+   * Set on the process-hook failure branches; cleared on the next success.
+   */
+  lastSyncError?: string;
+  /** ISO timestamp when `lastSyncError` was recorded. */
+  lastSyncErrorAt?: string;
   /** Whether to sync drafts (default: false) */
   sync_drafts?: boolean;
   /** Explicit article folder name override (auto-detected if not set) */

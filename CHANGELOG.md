@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 _Pending publish with the next moss release._
 - `[matters]` `1.4.4`: permanently-dead image downloads (403/404/410) are memoized to `failed-media.json`; future builds skip them without a network attempt. Unavailable images surface in Matters settings instead of as repetitive advisory toasts. See [matters/CHANGELOG.md](./matters/CHANGELOG.md).
 - `[matters]` `1.4.1`+ — local-first comments (`uid` contract, Artalk integration, tombstone reconcile), social data to `.moss/data/social/`, stranded-comment recovery, session-expiry/auth-routing hardening; quieter, recoverable login (cancel/fail returns to the editor) and homepage title from the vault folder name; plus a **standalone, reopenable login** (new `login` capability — connect from Settings or an unlogged preview without importing, auto-open-once with a dismiss latch, faster first cookie check, locale-aware success toast). See [matters/CHANGELOG.md](./matters/CHANGELOG.md).
-- `[github]` README / public-mirror documentation refresh (no behavior change; manifest stays `1.5.0`).
+- `[github]` `1.5.1`: deploy from the active build generation (`.moss/build/current` → `.moss/build/generations/<id>/`) instead of the now-permanently-empty `.moss/build/site/`; the generated GitHub Actions workflow uploads from `.moss/build/current`. Plus a README / public-mirror docs refresh. See [github/CHANGELOG.md](./github/CHANGELOG.md). (#816)
 
 ## 2026-06-11
 

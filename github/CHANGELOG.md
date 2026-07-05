@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- README / public-mirror documentation refresh. No behavior change (manifest remains `1.5.0`).
+- Fixed (`1.5.1`): deploy from the active build generation instead of the now-permanently-empty `.moss/build/site/` (generations model). The plugin resolves `.moss/build/current` via `readlink`, derives the generation ID, and runs `git add` / `git write-tree --prefix` against `.moss/build/generations/<id>/`; the generated GitHub Actions workflow template now uploads from `.moss/build/current`. New exported `resolveCurrentGenDir()`. (#816)
+- README / public-mirror documentation refresh.
 
 ## [1.5.0] - 2026-04-20
 

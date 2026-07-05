@@ -107,11 +107,22 @@ export function resolveContentLanguage(
 }
 
 /**
- * Check if drafts should be synced based on config.
- * Default is FALSE - user must explicitly enable draft sync.
+ * Whether to import (sync) draft articles from Matters.town locally.
+ *
+ * Removed as a user-facing toggle (2026-07-05, settings UI polish pass): the
+ * `sync_drafts` setting was persisted to config.toml by the Settings UI, but
+ * `get_plugin_config` preferred config.json wholesale the instant it existed
+ * (created on first Matters login) — so for virtually every real user this
+ * toggle silently stopped reaching `context.config` at hook time regardless
+ * of what they'd set (see the discovery.rs config.json/config.toml merge fix
+ * landed alongside this change). Hardcoded off, matching this function's
+ * original default intent ("user must explicitly enable draft sync") and the
+ * effective behavior almost everyone already experienced. Drafts are
+ * typically unpublished/private-in-progress content; keeping this off avoids
+ * surprise-importing them into a public site repo.
  */
-export function shouldSyncDrafts(config: MattersPluginConfig): boolean {
-  return config.sync_drafts ?? false;
+export function shouldSyncDrafts(): boolean {
+  return false;
 }
 
 /**
@@ -753,8 +764,8 @@ export async function syncToLocalFiles(
     }
   }
 
-  // Process drafts (disabled by default - must be explicitly enabled)
-  if (shouldSyncDrafts(config)) {
+  // Process drafts (permanently disabled — see shouldSyncDrafts() doc comment)
+  if (shouldSyncDrafts()) {
     for (const draft of drafts) {
       processedItems++;
       const draftTitle = draft.title || "Untitled";

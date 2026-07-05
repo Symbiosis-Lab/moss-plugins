@@ -1,6 +1,6 @@
 {
   "name": "matters",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Syndicate your articles to Matters.town (POSSE)",
   "author": "moss team",
   "entry": "main.bundle.js",
@@ -15,16 +15,19 @@
   "domains": ["matters.town", "matters.icu"],
   "icon": "icon.svg",
   "config": {
-    "auto_publish": false,
     "add_canonical_link": true,
-    "sync_on_build": true,
-    "sync_drafts": true
+    "sync_on_build": true
   },
   "config_schema": {
-    "auto_publish": "boolean",
     "add_canonical_link": "boolean",
-    "sync_on_build": "boolean",
-    "sync_drafts": "boolean"
+    "sync_on_build": "boolean"
+  },
+  "config_labels": {
+    "sync_on_build": "Auto-Import Posts"
+  },
+  "config_descriptions": {
+    "add_canonical_link": "Add a link back to your site when your posts are syndicated to Matters.",
+    "sync_on_build": "Automatically check Matters.town for new posts and drafts each time your site rebuilds."
   },
   "contributes": {
     "jobs": {

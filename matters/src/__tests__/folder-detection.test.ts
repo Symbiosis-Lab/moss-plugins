@@ -2,7 +2,8 @@
  * Tests for folder detection and sync configuration
  *
  * These tests verify:
- * 1. sync_drafts defaults to false (not true)
+ * 1. draft sync is permanently disabled (shouldSyncDrafts() hardcoded false —
+ *    removed as a user-facing toggle; see sync.ts's doc comment)
  * 2. Default article folder is "posts" (not language-based)
  * 3. Auto-detection of existing article folder by scanning for syndicated content
  */
@@ -230,27 +231,13 @@ describe("Sync Drafts Config", () => {
     ctx.cleanup();
   });
 
-  describe("sync_drafts default value", () => {
-    it("defaults to false when not specified in config", async () => {
-      // Import the function that checks sync_drafts
+  describe("draft sync (permanently disabled toggle removal)", () => {
+    it("shouldSyncDrafts is hardcoded to false, taking no config argument", async () => {
       const { shouldSyncDrafts } = await import("../sync");
 
-      const config = {}; // No sync_drafts set
-      expect(shouldSyncDrafts(config)).toBe(false);
-    });
-
-    it("respects explicit true setting", async () => {
-      const { shouldSyncDrafts } = await import("../sync");
-
-      const config = { sync_drafts: true };
-      expect(shouldSyncDrafts(config)).toBe(true);
-    });
-
-    it("respects explicit false setting", async () => {
-      const { shouldSyncDrafts } = await import("../sync");
-
-      const config = { sync_drafts: false };
-      expect(shouldSyncDrafts(config)).toBe(false);
+      expect(shouldSyncDrafts()).toBe(false);
+      // The function no longer reads a config field — nothing can flip this on.
+      expect(shouldSyncDrafts.length).toBe(0);
     });
   });
 });

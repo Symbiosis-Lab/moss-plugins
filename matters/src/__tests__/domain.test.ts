@@ -13,6 +13,8 @@ import {
   isMattersUrl,
   isInternalMattersLink,
   extractShortHash,
+  collectionUrl,
+  extractCollectionId,
   resetDomain,
 } from "../domain";
 
@@ -383,5 +385,51 @@ describe("extractShortHash", () => {
   it("returns null for bare /a path with no shortHash", () => {
     expect(extractShortHash("https://matters.town/a")).toBe(null);
     expect(extractShortHash("https://matters.town/a/")).toBe(null);
+  });
+
+  it("returns null for collection URLs (never mistakes a collection for an article)", () => {
+    // No hyphen in the id — falls through hyphen parsing anyway
+    expect(
+      extractShortHash("https://matters.town/@guo/collections/Q29sbGVjdGlvbjo0ODQx")
+    ).toBe(null);
+    // Hyphen INSIDE the id (URL-safe base64) — must not yield a bogus shortHash
+    expect(
+      extractShortHash("https://matters.town/@guo/collections/abc-def")
+    ).toBe(null);
+  });
+});
+
+// ============================================================================
+// Collection URLs — pure URL construction/parsing (no Tauri context needed)
+// ============================================================================
+
+describe("collectionUrl / extractCollectionId", () => {
+  it("builds the canonical Matters collection URL", () => {
+    expect(collectionUrl("guo", "Q29sbGVjdGlvbjo0ODQx")).toBe(
+      "https://matters.town/@guo/collections/Q29sbGVjdGlvbjo0ODQx"
+    );
+  });
+
+  it("round-trips: extractCollectionId(collectionUrl(...)) returns the id", () => {
+    const id = "Q29sbGVjdGlvbjo0ODQx";
+    expect(extractCollectionId(collectionUrl("guo", id))).toBe(id);
+  });
+
+  it("extracts the id from a collection URL with query/fragment", () => {
+    expect(
+      extractCollectionId("https://matters.town/@guo/collections/Q29sbGVjdGlvbjoxMzI?utm=x#top")
+    ).toBe("Q29sbGVjdGlvbjoxMzI");
+  });
+
+  it("returns null for article URLs", () => {
+    expect(
+      extractCollectionId("https://matters.town/@guo/下一代开放互联网-vt5utvta7h49")
+    ).toBe(null);
+  });
+
+  it("returns null for short-link and invalid URLs", () => {
+    expect(extractCollectionId("https://matters.town/a/aj5szksg7ppa")).toBe(null);
+    expect(extractCollectionId("not a url")).toBe(null);
+    expect(extractCollectionId("https://matters.town/@guo/collections/")).toBe(null);
   });
 });

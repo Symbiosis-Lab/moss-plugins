@@ -110,8 +110,12 @@ export function parseFrontmatter(content: string): ParsedFrontmatter | null {
   let currentArray: string[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("  - ")) {
-      const value = line.substring(4).replace(/^"(.*)"$/, "$1");
+    // Accept both the plugin's own emission (`  - "item"`) and serde_yaml's
+    // normalized form (`- item`, unindented/unquoted) — moss's uid stamping
+    // and editor round-trips rewrite every synced file into the latter.
+    if (line.startsWith("  - ") || line.startsWith("- ")) {
+      const raw = line.substring(line.indexOf("- ") + 2).trim();
+      const value = raw.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
       currentArray.push(value);
     } else if (line.includes(":")) {
       // Save previous array if any

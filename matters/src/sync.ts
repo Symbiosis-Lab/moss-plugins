@@ -41,12 +41,18 @@ import type {
   SyncResult,
   SyncResultWithMap,
 } from "./types";
-import type { MattersPluginConfig } from "./config";
+import { getConfig, type MattersPluginConfig } from "./config";
 import { slugify, reportError } from "./utils";
 import { overallProgress, type ProgressReporter } from "./progress";
 import { generateFrontmatter, parseFrontmatter } from "./converter";
 import { htmlToMarkdown, readFile, writeFile, listFiles, listProjectTree } from "@symbiosis-lab/moss-api";
-import { isMattersUrl, articleUrl, extractShortHash } from "./domain";
+import {
+  isMattersUrl,
+  articleUrl,
+  collectionUrl,
+  extractShortHash,
+  extractCollectionId,
+} from "./domain";
 
 // Canonical home for extractShortHash is ./domain (it owns Matters URL knowledge).
 // Re-exported here so existing `import { extractShortHash } from "../sync"` callers
@@ -261,14 +267,24 @@ export function isRemoteNewer(
 
 
 /**
- * Scan local markdown files to find all synced Matters articles
- * Returns array of { shortHash, path, title, uid } for all articles with Matters syndicated URLs
+ * Scan local markdown files to find all synced Matters content, by identity:
+ * - articles: files whose `syndicated:` carries a Matters ARTICLE URL,
+ *   keyed by shortHash
+ * - collections: files whose `syndicated:` carries a Matters COLLECTION URL
+ *   (`/@user/collections/<id>`), as a collectionId → path map
  *
- * The uid comes from frontmatter and is used as the key for local social data storage.
- * When uid is null (file hasn't been built yet), callers should fall back to path.
+ * Identity lives in the files themselves, so both survive local rename/move.
+ *
+ * The uid comes from frontmatter and is used as the key for local social data
+ * storage. When uid is null (file hasn't been built yet), callers should fall
+ * back to path.
  */
-export async function scanLocalArticles(): Promise<Array<{ shortHash: string; path: string; title: string; uid: string | null }>> {
+export async function scanLocalContent(): Promise<{
+  articles: Array<{ shortHash: string; path: string; title: string; uid: string | null }>;
+  collections: Map<string, string>;
+}> {
   const articles: Array<{ shortHash: string; path: string; title: string; uid: string | null }> = [];
+  const collections = new Map<string, string>();
 
   try {
     // List all files in the project
@@ -304,6 +320,15 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
           );
 
           if (mattersUrl) {
+            // Collection identity marker — a collection page, not an article.
+            // Must be recognized BEFORE shortHash extraction so it neither
+            // triggers the shortHash warning nor enters the social-fetch list.
+            const collectionId = extractCollectionId(mattersUrl);
+            if (collectionId) {
+              collections.set(collectionId, file);
+              continue;
+            }
+
             const shortHash = extractShortHash(mattersUrl);
             if (shortHash) {
               const uid = typeof parsed.frontmatter.uid === "string"
@@ -334,7 +359,55 @@ export async function scanLocalArticles(): Promise<Array<{ shortHash: string; pa
     console.warn(`Failed to scan local articles: ${error}`);
   }
 
-  return articles;
+  return { articles, collections };
+}
+
+/**
+ * Scan local markdown files for synced Matters articles only.
+ * Kept as the stable entry point for the social-data phase (comments are
+ * fetched per-article; collection pages must never enter that list).
+ */
+export async function scanLocalArticles(): Promise<Array<{ shortHash: string; path: string; title: string; uid: string | null }>> {
+  return (await scanLocalContent()).articles;
+}
+
+/**
+ * Parent directory of a project-relative path ("" for root-level files).
+ */
+function parentDir(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.substring(0, i);
+}
+
+/** Join a project-relative dir ("" = project root) with a filename. */
+function joinPath(dir: string, name: string): string {
+  return dir ? `${dir}/${name}` : name;
+}
+
+/**
+ * The directory holding the plurality of the given paths, or null when the
+ * list is empty or tied. Used to locate a previously-synced collection's
+ * actual local folder from where its member articles live.
+ */
+export function majorityParentDir(paths: string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const p of paths) {
+    const dir = parentDir(p);
+    counts.set(dir, (counts.get(dir) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  let tied = false;
+  for (const [dir, n] of counts) {
+    if (n > bestN) {
+      best = dir;
+      bestN = n;
+      tied = false;
+    } else if (n === bestN) {
+      tied = true;
+    }
+  }
+  return tied ? null : best;
 }
 
 /**
@@ -421,11 +494,20 @@ export async function syncToLocalFiles(
 
   // Build dedup index: shortHash → local file path
   // Catches renamed files that still have a Matters syndicated URL in frontmatter
-  const localArticles = await scanLocalArticles();
+  const { articles: localArticles, collections: localCollectionFiles } =
+    await scanLocalContent();
   const knownShortHashes = new Map<string, string>();
   for (const local of localArticles) {
     knownShortHashes.set(local.shortHash, local.path);
   }
+
+  // Collection ids synced in a previous run (persisted to plugin config after
+  // every successful sync). A known collection is NEVER re-created: if the
+  // user renamed, moved, or deleted its folder, that local state is
+  // authoritative — same "download new content only" model as articles.
+  const knownCollectionIds = new Set(
+    (await getConfig()).knownCollectionIds ?? [],
+  );
 
   const totalItems = articles.length + drafts.length + collections.length + 1; // +1 for homepage
   let processedItems = 0;
@@ -439,12 +521,39 @@ export async function syncToLocalFiles(
   console.log(`   Content folder: ${folders.article}/`);
   console.log(`   Drafts folder: ${folders.drafts}/`);
 
-  // Build article ID → collection memberships mapping
+  // Build article ID → collection memberships mapping.
+  // articleCollections stays slug-keyed (slugs are what the `collections:`
+  // frontmatter field carries); articleFirstCollection maps to the collection
+  // ID so placement can go through the resolved local folder below.
   const articleCollections = new Map<string, Record<string, number>>();
   const articleFirstCollection = new Map<string, string>();
+  const collectionSlugById = new Map<string, string>();
+  const collectionDirById = new Map<string, string>();
 
   for (const collection of collections) {
     const collectionSlug = slugify(collection.title);
+    collectionSlugById.set(collection.id, collectionSlug);
+
+    // Resolve the collection's ACTUAL local folder: the identity marker wins
+    // (exact match, survives any rename); for collections synced in a prior
+    // run, fall back to the folder holding the plurality of its member
+    // articles. Genuinely new collections always get the computed slug —
+    // member location must not hijack them (their members may legitimately
+    // live elsewhere, e.g. as standalone articles).
+    const markerPath = localCollectionFiles.get(collection.id);
+    let localDir: string | null = markerPath !== undefined ? parentDir(markerPath) : null;
+    if (localDir === null && knownCollectionIds.has(collection.id)) {
+      localDir = majorityParentDir(
+        collection.articles
+          .map((a) => knownShortHashes.get(a.shortHash))
+          .filter((p): p is string => p !== undefined),
+      );
+    }
+    collectionDirById.set(
+      collection.id,
+      localDir ?? `${folders.article}/${collectionSlug}`,
+    );
+
     for (let i = 0; i < collection.articles.length; i++) {
       const article = collection.articles[i];
       const articleKey = article.shortHash;
@@ -455,7 +564,7 @@ export async function syncToLocalFiles(
       articleCollections.get(articleKey)![collectionSlug] = i;
 
       if (!articleFirstCollection.has(articleKey)) {
-        articleFirstCollection.set(articleKey, collectionSlug);
+        articleFirstCollection.set(articleKey, collection.id);
       }
     }
   }
@@ -497,18 +606,24 @@ export async function syncToLocalFiles(
         const gridItems = profile.pinnedWorks.map((work) => {
           if (work.type === "collection") {
             const slug = slugify(work.title);
-            // In file mode, collections are .md files; in folder mode, they are directories
+            // In file mode, collections are .md files; in folder mode, they
+            // are directories. Both link through the RESOLVED local location
+            // so a renamed collection folder/file keeps working.
+            const markerPath = localCollectionFiles.get(work.id);
             const collectionPath = useFileMode
-              ? `/${folders.article}/${slug}`
-              : `/${folders.article}/${slug}/`;
+              ? `/${(markerPath ?? `${folders.article}/${slug}.md`).replace(/\.md$/, "")}`
+              : `/${collectionDirById.get(work.id) ?? `${folders.article}/${slug}`}/`;
             return `[${work.title}](${collectionPath})`;
           } else {
             // Article — find its path (standalone or in collection)
             const slug = work.slug || slugify(work.title);
             const shortHash = work.shortHash ?? "";
-            const collectionSlug = articleFirstCollection.get(shortHash);
-            const path = collectionSlug
-              ? `/${folders.article}/${collectionSlug}/${slug}/`
+            const firstCollectionId = articleFirstCollection.get(shortHash);
+            const collectionDir = firstCollectionId
+              ? collectionDirById.get(firstCollectionId)
+              : undefined;
+            const path = collectionDir !== undefined
+              ? `/${joinPath(collectionDir, slug)}/`
               : `/${folders.article}/${slug}/`;
             return `[${work.title}](${path})`;
           }
@@ -571,6 +686,23 @@ export async function syncToLocalFiles(
     try {
       const collectionSlug = slugify(collection.title);
 
+      // Identity gates — a collection that exists locally under ANY name
+      // (identity marker in `syndicated:`) or that was synced in a previous
+      // run (id persisted to plugin config) is never re-created. The user's
+      // local rename/move/delete is authoritative; path-based existence
+      // checks below can't see renames.
+      const markerPath = localCollectionFiles.get(collection.id);
+      if (markerPath !== undefined) {
+        console.log(`   ⏭️  Skipping collection (exists locally as: ${markerPath})`);
+        result.skipped++;
+        continue;
+      }
+      if (knownCollectionIds.has(collection.id)) {
+        console.log(`   ⏭️  Skipping collection (synced previously): ${collection.title}`);
+        result.skipped++;
+        continue;
+      }
+
       // Determine path based on mode
       // All collections live under the article/ folder
       const collectionPath = useFileMode
@@ -624,6 +756,9 @@ export async function syncToLocalFiles(
         description: collection.description,
         cover: collection.cover,  // Keep remote URL, will be downloaded in phase 2
         order: orderField,
+        // Identity marker: lets future syncs recognize this collection under
+        // any local name (mirrors the article `syndicated:` dedup mechanism).
+        syndicated: [collectionUrl(userName, collection.id)],
       });
 
       const fullContent = `${frontmatter}\n\n${collection.description || ""}`;
@@ -666,10 +801,14 @@ export async function syncToLocalFiles(
         // File mode: all articles directly under article/, collections via frontmatter
         filename = `${folders.article}/${articleSlug}.md`;
       } else {
-        // Folder mode: articles in their first collection's folder
-        const firstCollectionSlug = articleFirstCollection.get(article.shortHash);
-        if (firstCollectionSlug) {
-          filename = `${folders.article}/${firstCollectionSlug}/${articleSlug}.md`;
+        // Folder mode: articles in their first collection's RESOLVED local
+        // folder (survives a locally-renamed collection folder)
+        const firstCollectionId = articleFirstCollection.get(article.shortHash);
+        const collectionDir = firstCollectionId
+          ? collectionDirById.get(firstCollectionId)
+          : undefined;
+        if (collectionDir !== undefined) {
+          filename = joinPath(collectionDir, `${articleSlug}.md`);
         } else {
           // Standalone articles (not in any collection) go directly under article/
           filename = `${folders.article}/${articleSlug}.md`;
@@ -702,7 +841,8 @@ export async function syncToLocalFiles(
         }
       } else {
         // Folder mode: only additional collections (not the first one where article lives)
-        const firstCollectionSlug = articleFirstCollection.get(article.shortHash);
+        const firstId = articleFirstCollection.get(article.shortHash);
+        const firstCollectionSlug = firstId ? collectionSlugById.get(firstId) : undefined;
         const additionalCollections: Record<string, number> = {};
         for (const [slug, order] of Object.entries(allCollections)) {
           if (slug !== firstCollectionSlug) {

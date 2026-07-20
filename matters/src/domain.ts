@@ -146,6 +146,16 @@ export function articleUrl(
   return `https://${currentDomain}/@${userName}/${slug}-${shortHash}`;
 }
 
+/**
+ * Get the published collection URL.
+ *
+ * Collection ids are Matters global ids (base64, e.g. "Q29sbGVjdGlvbjo0ODQx");
+ * encode defensively so an id with reserved characters still forms a valid URL.
+ */
+export function collectionUrl(userName: string, collectionId: string): string {
+  return `https://${currentDomain}/@${userName}/collections/${encodeURIComponent(collectionId)}`;
+}
+
 // ============================================================================
 // URL Matchers
 // ============================================================================
@@ -184,10 +194,39 @@ export function extractShortHash(url: string): string | null {
     return segments[1] || null;
   }
 
+  // Collection form: /@user/collections/<id> — not an article. Without this
+  // guard an id containing a hyphen would yield a bogus "shortHash".
+  if (segments[1] === "collections") return null;
+
   // Canonical form: /@user/<slug>-<shortHash> — hash is after the final hyphen.
   const last = segments[segments.length - 1];
   const hyphen = last.lastIndexOf("-");
   return hyphen === -1 ? null : last.substring(hyphen + 1) || null;
+}
+
+/**
+ * Extract the Matters collection id from a collection URL.
+ *
+ * Matches the canonical form /@user/collections/<id> (absolute or
+ * root-relative). Returns null for anything else, including article URLs.
+ */
+export function extractCollectionId(url: string): string | null {
+  let path: string;
+  try {
+    path = new URL(url, "https://matters.town").pathname;
+  } catch {
+    return null;
+  }
+
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length < 3) return null;
+  if (!segments[0].startsWith("@") || segments[1] !== "collections") return null;
+
+  try {
+    return decodeURIComponent(segments[2]) || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

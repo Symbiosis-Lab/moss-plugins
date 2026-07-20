@@ -118,6 +118,44 @@ title: "Test"
     const result = parseFrontmatter(content);
     expect(result?.body).toBe("");
   });
+
+  // moss's build pipeline (uid stamping, editor round-trips) rewrites
+  // frontmatter with serde_yaml, which emits UNINDENTED, unquoted list items
+  // (`- item`, not `  - "item"`). Every synced vault ends up in this format,
+  // and the whole identity system (article dedup by syndicated shortHash,
+  // folder detection, collection markers) reads through this parser — so it
+  // must accept both formats or renamed/stamped files become invisible.
+  it("parses serde_yaml-normalized (moss-rewritten) frontmatter", () => {
+    // Verbatim shape of a real uid-stamped article file
+    const content = `---
+uid: 46b110ee
+tags:
+- 互联网
+- 區塊鏈
+title: 下一代开放互联网
+syndicated:
+- https://matters.town/@guo/下一代开放互联网-vt5utvta7h49
+---
+Body`;
+    const result = parseFrontmatter(content);
+    expect(result?.frontmatter.syndicated).toEqual([
+      "https://matters.town/@guo/下一代开放互联网-vt5utvta7h49",
+    ]);
+    expect(result?.frontmatter.tags).toEqual(["互联网", "區塊鏈"]);
+    expect(result?.frontmatter.title).toBe("下一代开放互联网");
+  });
+
+  it("strips single quotes from unindented list items", () => {
+    const content = `---
+syndicated:
+- 'https://matters.town/@guo/collections/Q29sbGVjdGlvbjo0ODQx'
+---
+Body`;
+    const result = parseFrontmatter(content);
+    expect(result?.frontmatter.syndicated).toEqual([
+      "https://matters.town/@guo/collections/Q29sbGVjdGlvbjo0ODQx",
+    ]);
+  });
 });
 
 describe("regenerateFrontmatter", () => {

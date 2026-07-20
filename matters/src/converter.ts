@@ -109,14 +109,24 @@ export function parseFrontmatter(content: string): ParsedFrontmatter | null {
   let currentKey = "";
   let currentArray: string[] = [];
 
+  // Strip a surrounding quote pair. Double-quoted per the plugin's own
+  // emission; single-quoted per serde_yaml's normalized form (moss's uid
+  // stamping and editor round-trips rewrite every synced file with it, and it
+  // single-quotes any scalar that would otherwise read as number/bool). YAML
+  // escapes ' as '' inside single-quoted style, so unescape those.
+  const unquote = (raw: string): string => {
+    const dq = raw.match(/^"(.*)"$/);
+    if (dq) return dq[1];
+    const sq = raw.match(/^'(.*)'$/);
+    if (sq) return sq[1].replace(/''/g, "'");
+    return raw;
+  };
+
   for (const line of lines) {
-    // Accept both the plugin's own emission (`  - "item"`) and serde_yaml's
-    // normalized form (`- item`, unindented/unquoted) — moss's uid stamping
-    // and editor round-trips rewrite every synced file into the latter.
-    if (line.startsWith("  - ") || line.startsWith("- ")) {
-      const raw = line.substring(line.indexOf("- ") + 2).trim();
-      const value = raw.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
-      currentArray.push(value);
+    // Accept both the plugin's `  - "item"` and serde_yaml's `- item` forms.
+    const listItem = line.match(/^( {2})?- (.*)$/);
+    if (listItem) {
+      currentArray.push(unquote(listItem[2].trim()));
     } else if (line.includes(":")) {
       // Save previous array if any
       if (currentKey && currentArray.length > 0) {
@@ -135,7 +145,7 @@ export function parseFrontmatter(content: string): ParsedFrontmatter | null {
       } else {
         // Simple key-value pair
         currentKey = "";
-        frontmatter[key] = rest.replace(/^"(.*)"$/, "$1");
+        frontmatter[key] = unquote(rest);
       }
     }
   }

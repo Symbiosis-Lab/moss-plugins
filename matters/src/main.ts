@@ -41,7 +41,7 @@ import {
   prepareWebviewAuth,
 } from "./credential";
 import { resolveAuthRoute, isUserPresent } from "./auth-route";
-import { syncToLocalFiles, scanLocalArticles, detectBoundUser } from "./sync";
+import { syncToLocalFiles, scanLocalArticles, detectBoundUser, nextKnownCollectionIds } from "./sync";
 import { downloadMediaAndUpdate, rewriteAllInternalLinks } from "./downloader";
 import { getConfig, saveConfig } from "./config";
 import { overallProgress, type ProgressReporter } from "./progress";
@@ -788,7 +788,6 @@ export async function process(context: ProcessContext): Promise<HookResult> {
     const allCollections = await fetchAllCollections();
     const knownCollectionIds = new Set(pluginConfig.knownCollectionIds || []);
     const newCollections = allCollections.filter(c => !knownCollectionIds.has(c.id));
-    const allCollectionIds = allCollections.map(c => c.id);
     await task.progress(overallProgress("fetching_collections", 1, 1) / 100, `Found ${newCollections.length} new collection(s) (${allCollections.length} total)`);
     console.log(`   Found ${newCollections.length} new collection(s) (${allCollections.length} total)`);
 
@@ -829,7 +828,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
 
     const syncTotal = articles.length + drafts.length + allCollections.length + 1;
     await task.progress(overallProgress("syncing", 0, syncTotal) / 100, "Starting sync...");
-    const { result: syncResult, articlePathMap } = await syncToLocalFiles(
+    const { result: syncResult, articlePathMap, syncedCollectionIds } = await syncToLocalFiles(
       articles,
       drafts,
       allCollections,
@@ -839,6 +838,7 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       context.project_info.homepage_file,
       context.project_info.folder_name,
       reportToTask,
+      knownCollectionIds,
     );
 
     // Build the NOUN-LED article summary ("12 articles already up to date"),
@@ -984,7 +984,14 @@ export async function process(context: ProcessContext): Promise<HookResult> {
       await saveConfig({
         ...currentConfig,
         lastSyncedAt: syncEndTime,
-        knownCollectionIds: allCollectionIds,
+        // Union, never overwrite: a collection missing from one remote fetch
+        // keeps its identity, and a collection whose creation failed this run
+        // (absent from syncedCollectionIds) is retried next run instead of
+        // being gated forever.
+        knownCollectionIds: nextKnownCollectionIds(
+          currentConfig.knownCollectionIds,
+          syncedCollectionIds,
+        ),
         // Clear any prior failure now that a sync has succeeded, so the settings
         // panel stops showing a stale "Last sync failed" once things recover.
         lastSyncError: undefined,

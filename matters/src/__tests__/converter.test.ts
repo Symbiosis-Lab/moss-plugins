@@ -156,6 +156,32 @@ Body`;
       "https://matters.town/@guo/collections/Q29sbGVjdGlvbjo0ODQx",
     ]);
   });
+
+  it("strips single quotes from scalar values (serde_yaml quotes ambiguous scalars)", () => {
+    // serde_yaml single-quotes scalars that would otherwise parse as
+    // number/bool — e.g. an all-digit uid, or `is_collection: 'true'`
+    const content = `---
+uid: '46110234'
+is_collection: 'true'
+---
+Body`;
+    const result = parseFrontmatter(content);
+    expect(result?.frontmatter.uid).toBe("46110234");
+    expect(result?.frontmatter.is_collection).toBe("true");
+  });
+
+  it("unescapes doubled apostrophes inside single-quoted values", () => {
+    // YAML single-quoted style escapes ' as '' — both scalars and list items
+    const content = `---
+title: 'it''s here'
+tags:
+- 'rock ''n'' roll'
+---
+Body`;
+    const result = parseFrontmatter(content);
+    expect(result?.frontmatter.title).toBe("it's here");
+    expect(result?.frontmatter.tags).toEqual(["rock 'n' roll"]);
+  });
 });
 
 describe("regenerateFrontmatter", () => {

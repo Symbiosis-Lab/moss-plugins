@@ -41,7 +41,7 @@ import type {
   SyncResult,
   SyncResultWithMap,
 } from "./types";
-import { getConfig, type MattersPluginConfig } from "./config";
+import type { MattersPluginConfig } from "./config";
 import { slugify, reportError } from "./utils";
 import { overallProgress, type ProgressReporter } from "./progress";
 import { generateFrontmatter, parseFrontmatter } from "./converter";
@@ -159,8 +159,12 @@ async function scanForMattersContent(): Promise<{ folder: string | null; userNam
           parsed?.frontmatter?.syndicated &&
           Array.isArray(parsed.frontmatter.syndicated)
         ) {
+          // Only ARTICLE URLs define the article folder / bound user. A
+          // collection identity marker can legitimately live outside the
+          // article folder (the user may move collection pages anywhere) and
+          // must not flip the detected content root.
           const mattersUrl = parsed.frontmatter.syndicated.find(
-            (url: string) => isMattersUrl(url)
+            (url: string) => isMattersUrl(url) && !extractCollectionId(url)
           );
           if (mattersUrl) {
             // Extract username from URL: https://matters.town/@username/slug-hash
@@ -411,6 +415,51 @@ export function majorityParentDir(paths: string[]): string | null {
 }
 
 /**
+ * Next value to persist as knownCollectionIds: union of what was stored and
+ * what this run confirmed locally present. Union (never overwrite) so a
+ * collection temporarily missing from a remote fetch keeps its identity, and
+ * a collection whose creation FAILED this run (absent from `synced`) is
+ * retried next run instead of being gated forever.
+ */
+export function nextKnownCollectionIds(
+  stored: string[] | undefined,
+  synced: string[],
+): string[] {
+  return Array.from(new Set([...(stored ?? []), ...synced]));
+}
+
+/**
+ * Insert the collection identity marker into an existing collection file's
+ * frontmatter, preserving every other byte (no parse → re-serialize). Used to
+ * backfill collections synced before the marker existed, so their identity
+ * stops depending on machine-local plugin config. No-op when the file has no
+ * frontmatter or already carries a `syndicated:` key.
+ */
+async function backfillCollectionMarker(
+  filePath: string,
+  markerUrl: string,
+): Promise<void> {
+  try {
+    const content = await readFile(filePath);
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return;
+    if (/^syndicated:/m.test(match[1])) return;
+
+    const insertAt = match[0].length - "---".length;
+    const updated =
+      content.substring(0, insertAt) +
+      `syndicated:\n- ${markerUrl}\n` +
+      content.substring(insertAt);
+    await writeFile(filePath, updated);
+    console.log(`   🔖 Backfilled collection marker into: ${filePath}`);
+  } catch (err) {
+    // Non-fatal: identity stays config-based for this collection until a
+    // future sync succeeds in writing the marker.
+    console.warn(`   ⚠️ Could not backfill collection marker (${filePath}): ${err}`);
+  }
+}
+
+/**
  * Find an available filename by adding sequence numbers if needed
  */
 async function findAvailableFilename(
@@ -465,6 +514,12 @@ export async function syncToLocalFiles(
   // advances within the "syncing" band instead of jumping start→end. Optional:
   // direct callers (tests) omit it and the per-item reports no-op.
   onProgress?: ProgressReporter,
+  // Collection ids synced in a previous run (from plugin config, persisted by
+  // the caller after every successful sync via nextKnownCollectionIds). A
+  // known collection is NEVER re-created: if the user renamed, moved, or
+  // deleted its folder, that local state is authoritative — same "download
+  // new content only" model as articles.
+  knownCollectionIds?: Set<string>,
 ): Promise<SyncResultWithMap> {
   const result: SyncResult = {
     created: 0,
@@ -501,13 +556,13 @@ export async function syncToLocalFiles(
     knownShortHashes.set(local.shortHash, local.path);
   }
 
-  // Collection ids synced in a previous run (persisted to plugin config after
-  // every successful sync). A known collection is NEVER re-created: if the
-  // user renamed, moved, or deleted its folder, that local state is
-  // authoritative — same "download new content only" model as articles.
-  const knownCollectionIds = new Set(
-    (await getConfig()).knownCollectionIds ?? [],
-  );
+  const knownIds = knownCollectionIds ?? new Set<string>();
+
+  // Collection ids confirmed locally present by THIS run (created, identity-
+  // marker match, previously-synced gate, or path-existing skip). The caller
+  // persists union(stored, these) — a collection whose creation failed is
+  // absent and therefore retried next run.
+  const syncedCollectionIds: string[] = [];
 
   const totalItems = articles.length + drafts.length + collections.length + 1; // +1 for homepage
   let processedItems = 0;
@@ -521,39 +576,15 @@ export async function syncToLocalFiles(
   console.log(`   Content folder: ${folders.article}/`);
   console.log(`   Drafts folder: ${folders.drafts}/`);
 
-  // Build article ID → collection memberships mapping.
+  // Pass 1: article → collection membership maps.
   // articleCollections stays slug-keyed (slugs are what the `collections:`
   // frontmatter field carries); articleFirstCollection maps to the collection
-  // ID so placement can go through the resolved local folder below.
+  // ID so placement can go through the resolved local location below.
   const articleCollections = new Map<string, Record<string, number>>();
   const articleFirstCollection = new Map<string, string>();
-  const collectionSlugById = new Map<string, string>();
-  const collectionDirById = new Map<string, string>();
 
   for (const collection of collections) {
     const collectionSlug = slugify(collection.title);
-    collectionSlugById.set(collection.id, collectionSlug);
-
-    // Resolve the collection's ACTUAL local folder: the identity marker wins
-    // (exact match, survives any rename); for collections synced in a prior
-    // run, fall back to the folder holding the plurality of its member
-    // articles. Genuinely new collections always get the computed slug —
-    // member location must not hijack them (their members may legitimately
-    // live elsewhere, e.g. as standalone articles).
-    const markerPath = localCollectionFiles.get(collection.id);
-    let localDir: string | null = markerPath !== undefined ? parentDir(markerPath) : null;
-    if (localDir === null && knownCollectionIds.has(collection.id)) {
-      localDir = majorityParentDir(
-        collection.articles
-          .map((a) => knownShortHashes.get(a.shortHash))
-          .filter((p): p is string => p !== undefined),
-      );
-    }
-    collectionDirById.set(
-      collection.id,
-      localDir ?? `${folders.article}/${collectionSlug}`,
-    );
-
     for (let i = 0; i < collection.articles.length; i++) {
       const article = collection.articles[i];
       const articleKey = article.shortHash;
@@ -565,6 +596,112 @@ export async function syncToLocalFiles(
 
       if (!articleFirstCollection.has(articleKey)) {
         articleFirstCollection.set(articleKey, collection.id);
+      }
+    }
+  }
+
+  // Pass 2: resolve each collection's actual LOCAL location (needs the
+  // complete first-collection map from pass 1).
+  //
+  // - dir: where new member articles are placed in folder mode. null means
+  //   "no collection folder" → members go to the article-folder root. Never
+  //   "" — collection content is never placed at the project root.
+  // - link: site path for the homepage pinned-works grid.
+  //
+  // Resolution order: identity marker (exact, survives any rename; layout-
+  // aware — a self-named/index home maps to its folder, a plain page to its
+  // own URL) → for previously-synced collections, the folder holding the
+  // plurality of member articles that belong to THIS collection first (shared
+  // members live in their own first collection's folder and must not vote) →
+  // computed remote-title slug for genuinely new collections. Known
+  // collections never fall back to the computed slug: if nothing local can be
+  // resolved the user deleted the collection, and re-creating its folder for
+  // new members would resurrect the rename bug.
+  const HOME_STEMS = new Set(["index", "readme", "_index", "main"]);
+  interface CollectionInfo {
+    slug: string;
+    markerPath?: string;
+    known: boolean;
+    dir: string | null;
+    link: string;
+  }
+  const collectionInfoById = new Map<string, CollectionInfo>();
+  // Majority-resolved dirs with their vote counts, for the pass-2b collision
+  // check (marker- and slug-resolved dirs are exempt: markers are explicit
+  // user state, and computed slugs are namespaced by the remote title).
+  const majorityVotes = new Map<string, { dir: string; votes: number }>();
+
+  for (const collection of collections) {
+    const slug = slugify(collection.title);
+    const markerPath = localCollectionFiles.get(collection.id);
+    const known = knownIds.has(collection.id);
+
+    let dir: string | null;
+    let link: string;
+    if (markerPath !== undefined) {
+      const parent = parentDir(markerPath);
+      const stem = markerPath
+        .substring(markerPath.lastIndexOf("/") + 1)
+        .replace(/\.md$/i, "");
+      const parentName = parent.substring(parent.lastIndexOf("/") + 1);
+      const isFolderHome =
+        parent !== "" &&
+        (stem === parentName || HOME_STEMS.has(stem.toLowerCase()));
+      if (isFolderHome) {
+        dir = parent;
+        link = `/${parent}/`;
+      } else {
+        // Plain page (file-mode layout, any folder incl. project root):
+        // members live beside it; the page renders at its own URL.
+        dir = parent || null;
+        link = `/${markerPath.replace(/\.md$/i, "")}`;
+      }
+    } else if (known) {
+      const ownMemberPaths = collection.articles
+        .filter((a) => articleFirstCollection.get(a.shortHash) === collection.id)
+        .map((a) => knownShortHashes.get(a.shortHash))
+        .filter((p): p is string => p !== undefined);
+      dir = majorityParentDir(ownMemberPaths) || null; // "" (root) → null
+      link = dir !== null ? `/${dir}/` : `/${folders.article}/${slug}/`;
+      if (dir !== null) {
+        majorityVotes.set(collection.id, {
+          dir,
+          votes: ownMemberPaths.filter((p) => parentDir(p) === dir).length,
+        });
+      }
+    } else {
+      dir = `${folders.article}/${slug}`;
+      link = useFileMode ? `/${dir}` : `/${dir}/`;
+    }
+
+    collectionInfoById.set(collection.id, { slug, markerPath, known, dir, link });
+  }
+
+  // Pass 2b: majority-resolved dirs must be uniquely WON. A stray member
+  // sitting in another collection's folder can point a collection's plurality
+  // at that folder; without this, the loser could claim the winner's folder —
+  // placing its articles there and backfilling ITS marker into the winner's
+  // home file. On a shared dir, the collection with the most own-member votes
+  // keeps it; everyone else (and everyone on an exact tie) becomes unresolved.
+  {
+    const byDir = new Map<string, Array<{ id: string; votes: number }>>();
+    for (const [id, { dir, votes }] of majorityVotes) {
+      const list = byDir.get(dir);
+      if (list) list.push({ id, votes });
+      else byDir.set(dir, [{ id, votes }]);
+    }
+    for (const [, contenders] of byDir) {
+      if (contenders.length < 2) continue;
+      const top = Math.max(...contenders.map((c) => c.votes));
+      const winners = contenders.filter((c) => c.votes === top);
+      const losers =
+        winners.length === 1
+          ? contenders.filter((c) => c.votes !== top)
+          : contenders; // exact tie → nobody wins
+      for (const { id } of losers) {
+        const info = collectionInfoById.get(id)!;
+        info.dir = null;
+        info.link = `/${folders.article}/${info.slug}/`;
       }
     }
   }
@@ -605,26 +742,27 @@ export async function syncToLocalFiles(
       if (profile.pinnedWorks && profile.pinnedWorks.length > 0) {
         const gridItems = profile.pinnedWorks.map((work) => {
           if (work.type === "collection") {
+            // Link through the RESOLVED local location so a renamed
+            // collection folder/file keeps working (layout-aware: folder
+            // homes render at the folder URL, plain pages at their own URL).
+            const info = collectionInfoById.get(work.id);
             const slug = slugify(work.title);
-            // In file mode, collections are .md files; in folder mode, they
-            // are directories. Both link through the RESOLVED local location
-            // so a renamed collection folder/file keeps working.
-            const markerPath = localCollectionFiles.get(work.id);
-            const collectionPath = useFileMode
-              ? `/${(markerPath ?? `${folders.article}/${slug}.md`).replace(/\.md$/, "")}`
-              : `/${collectionDirById.get(work.id) ?? `${folders.article}/${slug}`}/`;
+            const collectionPath =
+              info?.link ??
+              (useFileMode
+                ? `/${folders.article}/${slug}`
+                : `/${folders.article}/${slug}/`);
             return `[${work.title}](${collectionPath})`;
           } else {
             // Article — find its path (standalone or in collection)
             const slug = work.slug || slugify(work.title);
             const shortHash = work.shortHash ?? "";
             const firstCollectionId = articleFirstCollection.get(shortHash);
-            const collectionDir = firstCollectionId
-              ? collectionDirById.get(firstCollectionId)
+            const info = firstCollectionId
+              ? collectionInfoById.get(firstCollectionId)
               : undefined;
-            const path = collectionDir !== undefined
-              ? `/${joinPath(collectionDir, slug)}/`
-              : `/${folders.article}/${slug}/`;
+            const dir = info && info.dir !== null ? info.dir : folders.article;
+            const path = `/${joinPath(dir, slug)}/`;
             return `[${work.title}](${path})`;
           }
         });
@@ -685,20 +823,43 @@ export async function syncToLocalFiles(
 
     try {
       const collectionSlug = slugify(collection.title);
+      const info = collectionInfoById.get(collection.id)!;
 
       // Identity gates — a collection that exists locally under ANY name
       // (identity marker in `syndicated:`) or that was synced in a previous
       // run (id persisted to plugin config) is never re-created. The user's
       // local rename/move/delete is authoritative; path-based existence
       // checks below can't see renames.
-      const markerPath = localCollectionFiles.get(collection.id);
-      if (markerPath !== undefined) {
-        console.log(`   ⏭️  Skipping collection (exists locally as: ${markerPath})`);
+      if (info.markerPath !== undefined) {
+        console.log(`   ⏭️  Skipping collection (exists locally as: ${info.markerPath})`);
+        syncedCollectionIds.push(collection.id);
         result.skipped++;
         continue;
       }
-      if (knownCollectionIds.has(collection.id)) {
+      if (info.known) {
+        // One-time identity backfill: collections synced before the marker
+        // existed carry no durable identity in their files. When the local
+        // folder resolved, stamp the marker into that folder's own home file
+        // so identity stops depending on machine-local plugin config. The
+        // article folder's root is excluded — its home belongs to the
+        // section, not to any collection.
+        if (info.dir !== null && info.dir !== folders.article) {
+          const dirPrefix = `${info.dir}/`;
+          const homeInDir = projectTree.find(
+            (f) =>
+              f.path.startsWith(dirPrefix) &&
+              !f.path.substring(dirPrefix.length).includes("/") &&
+              f.is_home
+          );
+          if (homeInDir) {
+            await backfillCollectionMarker(
+              homeInDir.path,
+              collectionUrl(userName, collection.id)
+            );
+          }
+        }
         console.log(`   ⏭️  Skipping collection (synced previously): ${collection.title}`);
+        syncedCollectionIds.push(collection.id);
         result.skipped++;
         continue;
       }
@@ -717,6 +878,13 @@ export async function syncToLocalFiles(
         );
         if (homeInFolder) {
           console.log(`   ⏭️  Skipping collection index (folder has home file: ${homeInFolder.path})`);
+          // The existing home IS this collection's local page (that's what
+          // the skip asserts) — record the identity durably.
+          await backfillCollectionMarker(
+            homeInFolder.path,
+            collectionUrl(userName, collection.id)
+          );
+          syncedCollectionIds.push(collection.id);
           result.skipped++;
           continue;
         }
@@ -765,12 +933,19 @@ export async function syncToLocalFiles(
 
       if (existingContent !== null) {
         console.log(`   ⏭️  Skipping collection (already exists): ${collectionPath}`);
+        // Same identity judgment as the folder-home skip above.
+        await backfillCollectionMarker(
+          collectionPath,
+          collectionUrl(userName, collection.id)
+        );
+        syncedCollectionIds.push(collection.id);
         result.skipped++;
         continue;
       }
 
       await writeFile(collectionPath, fullContent);
       console.log(`   ✅ Created collection: ${collectionPath}`);
+      syncedCollectionIds.push(collection.id);
       result.created++;
     } catch (error) {
       const errorMsg = `Failed to sync collection "${collection.title}": ${error}`;
@@ -802,15 +977,16 @@ export async function syncToLocalFiles(
         filename = `${folders.article}/${articleSlug}.md`;
       } else {
         // Folder mode: articles in their first collection's RESOLVED local
-        // folder (survives a locally-renamed collection folder)
+        // folder (survives a locally-renamed collection folder). A null dir
+        // (known collection with no local presence — deleted by the user) and
+        // standalone articles both land at the article-folder root.
         const firstCollectionId = articleFirstCollection.get(article.shortHash);
-        const collectionDir = firstCollectionId
-          ? collectionDirById.get(firstCollectionId)
+        const info = firstCollectionId
+          ? collectionInfoById.get(firstCollectionId)
           : undefined;
-        if (collectionDir !== undefined) {
-          filename = joinPath(collectionDir, `${articleSlug}.md`);
+        if (info && info.dir !== null) {
+          filename = joinPath(info.dir, `${articleSlug}.md`);
         } else {
-          // Standalone articles (not in any collection) go directly under article/
           filename = `${folders.article}/${articleSlug}.md`;
         }
       }
@@ -842,7 +1018,9 @@ export async function syncToLocalFiles(
       } else {
         // Folder mode: only additional collections (not the first one where article lives)
         const firstId = articleFirstCollection.get(article.shortHash);
-        const firstCollectionSlug = firstId ? collectionSlugById.get(firstId) : undefined;
+        const firstCollectionSlug = firstId
+          ? collectionInfoById.get(firstId)?.slug
+          : undefined;
         const additionalCollections: Record<string, number> = {};
         for (const [slug, order] of Object.entries(allCollections)) {
           if (slug !== firstCollectionSlug) {
@@ -965,5 +1143,5 @@ export async function syncToLocalFiles(
     }
   }
 
-  return { result, articlePathMap };
+  return { result, articlePathMap, syncedCollectionIds };
 }

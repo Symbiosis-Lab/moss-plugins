@@ -103,10 +103,15 @@ export interface SyncResult {
 /**
  * Extended sync result that includes the article path map for link rewriting.
  * The articlePathMap maps Matters URLs and shortHashes to local file paths.
+ * syncedCollectionIds lists collections confirmed locally present this run
+ * (created, identity-marker match, known gate, or path-existing skip) — the
+ * caller persists union(stored, these) as knownCollectionIds, so a failed
+ * creation is retried next run instead of being gated forever.
  */
 export interface SyncResultWithMap {
   result: SyncResult;
   articlePathMap: Map<string, string>;
+  syncedCollectionIds: string[];
 }
 
 export interface MediaDownloadResult {

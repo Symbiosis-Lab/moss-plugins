@@ -1860,6 +1860,25 @@ export function normalizeHtmlForMatters(html: string): string {
   // would otherwise leak into matters' heading text). See stripHeadingAnchors.
   result = stripHeadingAnchors(result);
 
+  // Step 0.5: Reshape moss math into the shapes matters' sanitizer keeps.
+  // MUST run before Step 3 (`wrapImagesForMatters`) so that any future
+  // math-as-figure emission is already shaped and Step E's bare-<img>
+  // auto-wrap cannot reach inside it. See transformMathForMatters.
+  result = transformMathForMatters(result).html;
+
+  // Step 0.6: matters' sanitizer allows no `<svg>` element and unwraps it to
+  // its children — and `<path>` has no text, so an inline SVG silently
+  // DISAPPEARS while syndication still reports success. Nothing moss emits
+  // today puts an SVG in article body HTML; if that ever changes (P2 typeset
+  // math is the expected source), the loss must not be silent.
+  if (/<svg\b/i.test(result)) {
+    console.warn(
+      "    ⚠️ Article body contains <svg>, which matters' sanitizer deletes " +
+        "silently (the element is unwrapped and <path> has no text). The " +
+        "syndicated copy will be missing that content.",
+    );
+  }
+
   // Step 1: Collapse h4, h5, h6 → h3 (process these BEFORE h1 to avoid double-shifting)
   result = result.replace(/<(\/?)h[456](\s[^>]*)?>/gi, (_match, slash, attrs) => {
     return `<${slash}h3${attrs || ""}>`;
@@ -1957,6 +1976,128 @@ export function wrapImagesForMatters(html: string): string {
   });
 
   return result;
+}
+
+/** What `transformMathForMatters` did, for the syndication summary. */
+export interface MathTransformStats {
+  html: string;
+  /** Inline spans unwrapped to their LaTeX source text. */
+  inline: number;
+  /** Display equations hoisted into `<pre><code>`. */
+  display: number;
+  /** Display equations that could NOT be hoisted (mixed with prose in a `<p>`). */
+  displayInline: number;
+  /** `%` comments dropped before an unavoidable newline collapse. */
+  commentsStripped: number;
+}
+
+/**
+ * Reshape moss's P1 math emission into the only shapes matters' sanitizer keeps.
+ *
+ * moss P1 renders math as its own LaTeX SOURCE WITH DELIMITERS, wrapped in
+ * `<code class="moss-math" data-moss-math="inline|display">` with the TeX
+ * HTML-escaped. Verified against real `moss build` output 2026-07-21:
+ *
+ *   <code class="moss-math" data-moss-math="inline">$E = mc^2$</code>
+ *   <p><code class="moss-math" data-moss-math="display">$$ o_t = x $$</code></p>
+ *   <code class="moss-math" data-moss-math="inline">$a &lt; b \&amp; c &gt; d$</code>
+ *
+ * Matters' write paths run `normalizeArticleHTML(sanitizeHTML(content))`
+ * (matters-server putDraft/publishArticle/editArticle). Smoke-tested 2026-07-21
+ * by running the REAL `@matters/matters-editor` transformers bundle over each
+ * candidate shape:
+ *
+ *   - `class` is emptied (only /^language-./ on `code` survives) and `data-*`
+ *     is stripped, so `moss-math` / `data-moss-math` NEVER reach matters.
+ *   - The TipTap round-trip has CodeBlock but NO inline Code mark, so a bare
+ *     `<code>` element is DELETED, promoting its text into the parent. Today
+ *     `<code class="moss-math">$E=mc^2$</code>` already arrives as plain
+ *     `$E=mc^2$` — accidentally correct, but unchosen and untested. We now
+ *     make it deliberate.
+ *   - Newlines OUTSIDE `<pre>` are COLLAPSED to single spaces. Verified:
+ *     `<p>$$\na % note\nb\n$$</p>` → `<p>$$ a % note b $$</p>`. The newline
+ *     that terminated the LaTeX comment is gone, so `b` is now commented out —
+ *     a silently WRONG but valid-looking formula.
+ *   - `<pre><code>…</code></pre>` survives VERBATIM, newlines and leading
+ *     indentation intact. It is the ONLY whitespace-preserving container in
+ *     matters' pipeline.
+ *   - A `<pre>` left inside a `<p>` is split out, leaving stray `<p></p>`
+ *     siblings — same hazard `wrapAudioForMatters` Pass 1 hoists around.
+ *   - `<svg>` is in NEITHER matters' tagNames additions NOR hast-util-sanitize's
+ *     defaults. Non-allowed elements are UNWRAPPED TO THEIR CHILDREN, and
+ *     `<path>` has no text. Verified: `<p>x <svg …><path …/></svg> y</p>` →
+ *     `<p>x y</p>` — the equation VANISHES and syndication reports success.
+ *     P2 (typeset SVG) MUST NOT reach this transform. See the no-`<svg>` guard
+ *     in the test suite.
+ *
+ * Passes, in order:
+ *   1. Display alone in its paragraph → `<pre><code>`, hoisted out of the `<p>`.
+ *      This keeps multi-line align/cases line structure AND structurally
+ *      defuses the newline-collapse corruption above.
+ *   2. Display NOT alone (mixed with prose) → unwrap to text, then pass 4.
+ *   3. Inline → unwrap to text, then pass 4.
+ *   4. For pass-2/3 output only, where newline collapse is unavoidable: drop
+ *      unescaped `%`-to-end-of-line, then collapse newlines to single spaces.
+ *      Dropping a comment is lossless for the formula; leaving it lets the
+ *      comment eat real math.
+ *
+ * Exported for unit testing.
+ */
+export function transformMathForMatters(html: string): MathTransformStats {
+  const mathOpen = '<code\\b[^>]*\\bclass="[^"]*\\bmoss-math\\b[^"]*"[^>]*\\bdata-moss-math="';
+  let inline = 0;
+  let display = 0;
+  let displayInline = 0;
+  let commentsStripped = 0;
+
+  /**
+   * Make a fragment safe for a newline-collapsing container: drop `%` comments
+   * (a `%` NOT preceded by a backslash runs to end of line) and flatten the
+   * remaining newlines to single spaces.
+   */
+  const flattenForProse = (tex: string): string => {
+    const decommented = tex.replace(/(^|[^\\])%[^\n]*/g, (_full, prefix: string) => {
+      commentsStripped++;
+      return prefix;
+    });
+    return decommented.replace(/\s*\n\s*/g, " ").trim();
+  };
+
+  let result = html;
+
+  // Pass 1: display math alone in its paragraph → hoist to <pre><code>.
+  // Content is already HTML-escaped by moss, which is exactly what <pre><code>
+  // wants, so it is copied through untouched — newlines and all.
+  result = result.replace(
+    new RegExp(`<p>\\s*(?:${mathOpen}display"[^>]*>)([\\s\\S]*?)</code>\\s*</p>`, "gi"),
+    (_full, tex: string) => {
+      display++;
+      return `<pre><code>${tex}</code></pre>`;
+    },
+  );
+
+  // Pass 2: display math NOT alone in its paragraph (mixed with prose). It
+  // cannot be hoisted without tearing the sentence apart, so it degrades to
+  // text and takes the newline-collapse treatment.
+  result = result.replace(
+    new RegExp(`${mathOpen}display"[^>]*>([\\s\\S]*?)</code>`, "gi"),
+    (_full, tex: string) => {
+      displayInline++;
+      return flattenForProse(tex);
+    },
+  );
+
+  // Pass 3: inline math → its LaTeX source text. matters deletes the <code>
+  // element anyway; doing it here makes the outcome ours and testable.
+  result = result.replace(
+    new RegExp(`${mathOpen}inline"[^>]*>([\\s\\S]*?)</code>`, "gi"),
+    (_full, tex: string) => {
+      inline++;
+      return flattenForProse(tex);
+    },
+  );
+
+  return { html: result, inline, display, displayInline, commentsStripped };
 }
 
 /**

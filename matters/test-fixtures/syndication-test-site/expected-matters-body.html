@@ -1,0 +1,85 @@
+
+<div class="date-line"><span class="date">2025 · 2 · 10</span><div class="font-anchor"><button class="font-trigger size-std" aria-label="Reading preferences" aria-expanded="false" type="button"></button><div class="font-pill" id="fontPill"><button data-scale="small" aria-label="Small text"></button><button data-scale="" class="active" aria-label="Standard text"></button><button data-scale="large" aria-label="Large text"></button><button data-scale="xlarge" aria-label="Extra large text"></button></div></div></div>
+<h2 id="introduction">Introduction</h2>
+<p>This article tests the full syndication pipeline from a local moss project to <a target="_blank" rel="noopener" href="https://matters.icu">Matters</a>, a decentralized publishing platform built on IPFS. The goal is to verify that all markdown elements render correctly after conversion to HTML.</p>
+<h2 id="why-decentralized-publishing-matters">Why Decentralized Publishing Matters</h2>
+<p>Traditional publishing platforms come with <strong>inherent risks</strong>: content can be censored, servers can go down, and users don't truly <em>own</em> their work. Decentralized platforms address these issues by:</p>
+<ol>
+<li>Storing content on <strong>distributed networks</strong> like IPFS</li>
+<li>Giving authors <strong>cryptographic ownership</strong> of their publications</li>
+<li>Enabling <strong>peer-to-peer</strong> content distribution</li>
+<li>Providing <strong>censorship resistance</strong> through redundancy</li>
+</ol>
+<blockquote>
+<p>"The internet was designed to be decentralized. We're simply returning to first principles."
+-- Tim Berners-Lee</p>
+</blockquote>
+<h2 id="technical-deep-dive">Technical Deep Dive</h2>
+<p>The syndication process works through a POSSE (Publish Own Site, Syndicate Elsewhere) workflow:</p>
+<h3 id="step-1:-content-processing">Step 1: Content Processing</h3>
+<p>The plugin reads local markdown files and converts them to HTML using a custom converter. Here's a simplified example of the conversion pipeline:</p>
+<pre><code class="language-python">def convert_article(markdown_content: str) -&gt; str:
+    """Convert markdown to Matters-compatible HTML."""
+    html = markdown_to_html(markdown_content)
+    html = rewrite_image_urls(html)
+    html = add_canonical_link(html)
+    return html
+</code></pre>
+<h3 id="step-2:-draft-creation">Step 2: Draft Creation</h3>
+<p>After conversion, the plugin creates a draft on Matters via the GraphQL API:</p>
+<pre><code class="language-graphql">mutation PutDraft($input: PutDraftInput!) {
+  putDraft(input: $input) {
+    id
+    title
+    content
+    publishState
+  }
+}
+</code></pre>
+<h3 id="step-3:-user-review-&amp;-publish">Step 3: User Review &amp; Publish</h3>
+<p>The draft opens in a browser window for review. The user can:</p>
+<ul>
+<li>Edit the title and summary</li>
+<li>Add or modify tags</li>
+<li>Upload a cover image</li>
+<li>Click <strong>Publish</strong> when ready</li>
+</ul>
+<h3 id="step-4:-content-addressing">Step 4: Content Addressing</h3>
+<p>Each syndicated revision is content-addressed, so the identifier of a revision
+is the hash $h = H(c)$ of its bytes $c$. Storage cost across $n$ revisions of a
+document is therefore bounded by the number of <em>distinct</em> blocks:</p>
+<pre><code>$$
+\mathrm{cost}(n) = \sum_{i=1}^{n} |B_i \setminus \bigcup_{j&lt;i} B_j|
+$$</code></pre>
+<p>For a multi-line derivation the line structure has to survive syndication too:</p>
+<pre><code>$$
+\begin{align}
+S_t &amp;= \sum_{i \le t} \phi(k_i) v_i^\top \\
+z_t &amp;= \sum_{i \le t} \phi(k_i)
+\end{align}
+$$</code></pre>
+<p>A LaTeX comment must never be allowed to eat the line that follows it:</p>
+<pre><code>$$
+\mathrm{dedup} = 1 - \frac{|U|}{\sum_i |B_i|} % ratio of unique to total
+\quad\text{where } U = \bigcup_i B_i
+$$</code></pre>
+<p>Note that $50 \%$ of a corpus being duplicate is common, and the escaped
+percent above is a literal sign, not a comment.</p>
+<h2 id="feature-checklist">Feature Checklist</h2>
+<p>Here's what we're testing with this article:</p>
+<ul>
+<li>[x] Basic paragraphs and text formatting</li>
+<li>[x] Headings (H2, H3)</li>
+<li>[x] Bold and italic text</li>
+<li>[x] Ordered and unordered lists</li>
+<li>[x] Code blocks with syntax highlighting</li>
+<li>[x] Blockquotes</li>
+<li>[x] External links</li>
+<li>[x] Horizontal rules</li>
+<li>[ ] Image embedding (requires separate test)</li>
+</ul>
+<hr />
+<h2 id="conclusion">Conclusion</h2>
+<p>If you're reading this on Matters, the syndication was successful. The article was originally published on a local test site and automatically syndicated using the moss Matters plugin.</p>
+<p>For more information about moss, visit the <a target="_blank" rel="noopener" href="https://github.com/nicholasgasior/gostatic">project repository</a>.</p>
+<hr><p><a href="https://example.com/posts/rich-test-article/">Original link</a></p>

@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ArticleInfo } from "../types";
 
 // ============================================================================
@@ -136,6 +138,7 @@ import {
   normalizeHtmlForMatters,
   wrapImagesForMatters,
   wrapAudioForMatters,
+  transformMathForMatters,
   stripHeadingAnchors,
   stripArticleTitleH1,
   absolutizeRelativeHrefs,
@@ -803,6 +806,235 @@ describe("normalizeHtmlForMatters - strips heading anchors", () => {
 // So this transform restructures moss's audio into matters' figure shape and
 // absolutizes the <source src> against the article URL (same rule as
 // absolutizeRelativeHrefs), so matters' player streams from the live site.
+
+/**
+ * Every `html` literal below is REAL `moss build` output, captured 2026-07-21
+ * from a vault built with `moss build <site> --no-plugins`. Attribute order
+ * (`class` then `data-moss-math`) and the HTML-escaping of the TeX are
+ * verbatim, not reconstructed.
+ */
+describe("transformMathForMatters", () => {
+  it("unwraps inline math to its LaTeX source, delimiters included", () => {
+    const html =
+      '<p>Inline: <code class="moss-math" data-moss-math="inline">$E = mc^2$</code></p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe("<p>Inline: $E = mc^2$</p>");
+    expect(out.inline).toBe(1);
+  });
+
+  it("keeps moss's HTML-escaping when unwrapping inline math", () => {
+    // Escaping must survive: matters re-parses this HTML, so `&lt;` staying
+    // `&lt;` is what makes the reader see `<`.
+    const html =
+      '<p><code class="moss-math" data-moss-math="inline">$a &lt; b \\&amp; c &gt; d$</code></p>';
+    expect(transformMathForMatters(html).html).toBe("<p>$a &lt; b \\&amp; c &gt; d$</p>");
+  });
+
+  it("hoists display math alone in its paragraph into <pre><code>", () => {
+    const html =
+      '<p><code class="moss-math" data-moss-math="display">$$ o_t = \\frac{\\phi(q_t)^\\top S_t}{\\phi(q_t)^\\top z_t} $$</code></p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe(
+      "<pre><code>$$ o_t = \\frac{\\phi(q_t)^\\top S_t}{\\phi(q_t)^\\top z_t} $$</code></pre>",
+    );
+    expect(out.display).toBe(1);
+    // Hoisted OUT of the <p>: a <pre> left inside a <p> makes matters split the
+    // paragraph and emit stray empty <p></p> siblings.
+    expect(out.html).not.toContain("<p>");
+  });
+
+  it("preserves the line structure of a multi-line align block inside <pre>", () => {
+    // <pre> is the ONLY whitespace-preserving container in matters' pipeline.
+    const html =
+      '<p><code class="moss-math" data-moss-math="display">$$\n\\begin{align}\na &amp;= b \\\\\nc &amp;= d\n\\end{align}\n$$</code></p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe(
+      "<pre><code>$$\n\\begin{align}\na &amp;= b \\\\\nc &amp;= d\n\\end{align}\n$$</code></pre>",
+    );
+    expect(out.html.split("\n")).toHaveLength(6);
+  });
+
+  it("does NOT strip % comments inside <pre> — the newlines that end them survive", () => {
+    const html =
+      '<p><code class="moss-math" data-moss-math="display">$$\nx = 1 % this is a note\nb = 2\n$$</code></p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toContain("% this is a note");
+    expect(out.commentsStripped).toBe(0);
+  });
+
+  it("degrades display math mixed with prose to text", () => {
+    const html =
+      '<p>before <code class="moss-math" data-moss-math="display">$$a+b$$</code> after</p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe("<p>before $$a+b$$ after</p>");
+    expect(out.displayInline).toBe(1);
+    expect(out.display).toBe(0);
+  });
+
+  it("drops % comments and collapses newlines when math lands in prose", () => {
+    // Newline collapse is unavoidable outside <pre>. Without stripping the
+    // comment, `b = 2` would end up commented out — a silently WRONG but
+    // valid-looking formula.
+    const html =
+      '<p>see <code class="moss-math" data-moss-math="display">$$\nx = 1 % this is a note\nb = 2\n$$</code> ok</p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe("<p>see $$ x = 1 b = 2 $$ ok</p>");
+    expect(out.commentsStripped).toBe(1);
+    expect(out.html).not.toContain("%");
+  });
+
+  it("keeps an escaped \\% — it is a literal percent, not a comment", () => {
+    const html =
+      '<p>x <code class="moss-math" data-moss-math="inline">$50 \\% \\text{ of } x$</code> y</p>';
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe("<p>x $50 \\% \\text{ of } x$ y</p>");
+    expect(out.commentsStripped).toBe(0);
+  });
+
+  it("counts every equation it touched", () => {
+    const html =
+      '<p><code class="moss-math" data-moss-math="display">$$a$$</code></p>' +
+      '<p>t <code class="moss-math" data-moss-math="inline">$b$</code> ' +
+      '<code class="moss-math" data-moss-math="inline">$c$</code></p>';
+    const out = transformMathForMatters(html);
+    expect(out.display).toBe(1);
+    expect(out.inline).toBe(2);
+  });
+
+  it("leaves math-free HTML untouched", () => {
+    const html = "<p>No math here at all.</p><pre><code>echo $PATH</code></pre>";
+    const out = transformMathForMatters(html);
+    expect(out.html).toBe(html);
+    expect(out.inline + out.display + out.displayInline).toBe(0);
+  });
+});
+
+describe("normalizeHtmlForMatters - math", () => {
+  it("runs math BEFORE image wrapping, so wrapImagesForMatters cannot reach into it", () => {
+    // Ordering guard: if math ran after Step 3, a future math-as-figure
+    // emission would already have been rewritten by the bare-<img> auto-wrap.
+    const html =
+      '<p><code class="moss-math" data-moss-math="display">$$x$$</code></p>' +
+      '<figure class="moss-image"><img src="a.png"></figure>';
+    const out = normalizeHtmlForMatters(html);
+    expect(out).toContain("<pre><code>$$x$$</code></pre>");
+    expect(out).toContain('<figure class="image">');
+    // The math <pre> must not have been swept into a figure.
+    expect(out).not.toContain('<figure class="image"><pre>');
+  });
+
+  it("keeps math source out of headings' anchor-stripping path", () => {
+    const html =
+      '<h3>状态更新 <code class="moss-math" data-moss-math="inline">$S_t$</code> 的推导</h3>';
+    expect(normalizeHtmlForMatters(html)).toBe("<h3>状态更新 $S_t$ 的推导</h3>");
+  });
+
+  /**
+   * P2 GUARD — highest severity, because it fails INVISIBLY.
+   *
+   * matters' sanitizer allows no `<svg>`: the element is unwrapped to its
+   * children and `<path>` has no text, so the equation vanishes while
+   * syndication still reports success. Verified 2026-07-21 by running the real
+   * `@matters/matters-editor` transformers over
+   * `<p>x <svg viewBox="0 0 10 10"><path d="M0 0 L10 10"/></svg> y</p>`,
+   * which returned `<p>x y</p>`.
+   *
+   * P2 will introduce typeset math as inline `<svg>` with baked `<path>`
+   * glyphs. If this test fails, P2's SVG emission has reached the matters
+   * syndication path and MUST be converted to a raster image or a `<pre>`
+   * LaTeX-source fallback before shipping.
+   */
+  it("never lets an <svg> reach the matters draft body (P2 constraint)", () => {
+    const html =
+      '<p>Inline <code class="moss-math" data-moss-math="inline">$E = mc^2$</code></p>' +
+      '<p><code class="moss-math" data-moss-math="display">$$\\int_0^1 x\\,dx$$</code></p>';
+    const body = normalizeHtmlForMatters(html);
+    expect(
+      body.includes("<svg"),
+      "matters' sanitizer DELETES <svg> silently — an equation emitted as SVG " +
+        "would vanish from the syndicated article with no error. P2 (typeset " +
+        "math) must not emit SVG on the matters path.",
+    ).toBe(false);
+  });
+});
+
+/**
+ * GOLDEN PAYLOAD — the whole transform chain over a real moss article.
+ *
+ * `test-fixtures/syndication-test-site/moss-emitted-body.html` is the verbatim
+ * `<article>` inner HTML that `moss build --no-plugins` produced for
+ * `input/posts/rich-test-article.md` (captured 2026-07-21). Regenerate it with:
+ *
+ *   cd plugins/matters/test-fixtures/syndication-test-site/input
+ *   moss build . --no-plugins
+ *   # then extract the <article> inner HTML from
+ *   # .moss/build/current/posts/rich-test-article/index.html
+ *
+ * This is the ONLY test that exercises the transforms against real emission
+ * rather than hand-written literals, so it is where a change in moss's math
+ * markup will surface first.
+ */
+describe("syndication golden payload - rich-test-article", () => {
+  const fixtureDir = join(__dirname, "..", "..", "test-fixtures", "syndication-test-site");
+  const canonicalUrl = "https://example.com/posts/rich-test-article/";
+  const title = "Exploring Decentralized Publishing: A Test Article";
+
+  const assembleBody = (): string => {
+    const emitted = readFileSync(join(fixtureDir, "moss-emitted-body.html"), "utf8");
+    let content = stripArticleTitleH1(emitted, title);
+    content = normalizeHtmlForMatters(content);
+    content = addCanonicalLinkToContent(content, canonicalUrl, true, "en");
+    content = absolutizeRelativeHrefs(content, canonicalUrl);
+    content = wrapAudioForMatters(content, canonicalUrl);
+    return content;
+  };
+
+  it("matches the committed golden payload", async () => {
+    await expect(assembleBody()).toMatchFileSnapshot(
+      join(fixtureDir, "expected-matters-body.html"),
+    );
+  });
+
+  it("leaves no moss-math markup in the assembled body", () => {
+    const body = assembleBody();
+    expect(body).not.toContain("moss-math");
+    expect(body).not.toContain("data-moss-math");
+  });
+
+  it("keeps every equation's LaTeX source, delimiters included", () => {
+    const body = assembleBody();
+    expect(body).toContain("$h = H(c)$");
+    expect(body).toContain("\\mathrm{cost}(n)");
+    expect(body).toContain("\\begin{align}");
+  });
+
+  it("puts multi-line display math in <pre><code> with its lines intact", () => {
+    const body = assembleBody();
+    const align = body.match(/<pre><code>[\s\S]*?\\begin\{align\}[\s\S]*?<\/code><\/pre>/);
+    expect(align).not.toBeNull();
+    expect(align![0]).toContain("S_t &amp;= \\sum_{i \\le t} \\phi(k_i) v_i^\\top \\\\\n");
+    expect(align![0]).toContain("z_t &amp;=");
+  });
+
+  it("keeps a % comment inside <pre>, where the newline ending it survives", () => {
+    const body = assembleBody();
+    expect(body).toContain("% ratio of unique to total");
+    // …and the line the comment must not eat is still on its own line.
+    expect(body).toContain("\n\\quad\\text{where } U = \\bigcup_i B_i");
+  });
+
+  it("keeps an escaped \\% as a literal percent sign", () => {
+    expect(assembleBody()).toContain("$50 \\%$");
+  });
+
+  it("contains no <svg> (P2 constraint — matters deletes it silently)", () => {
+    expect(
+      assembleBody().includes("<svg"),
+      "matters' sanitizer DELETES <svg> silently. P2 (typeset math) must not " +
+        "emit SVG on the matters syndication path.",
+    ).toBe(false);
+  });
+});
 
 describe("wrapAudioForMatters", () => {
   const base = "https://example.com/posts/test/";

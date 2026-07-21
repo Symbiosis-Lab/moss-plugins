@@ -67,6 +67,35 @@ The draft opens in a browser window for review. The user can:
 - Upload a cover image
 - Click **Publish** when ready
 
+### Step 4: Content Addressing
+
+Each syndicated revision is content-addressed, so the identifier of a revision
+is the hash $h = H(c)$ of its bytes $c$. Storage cost across $n$ revisions of a
+document is therefore bounded by the number of *distinct* blocks:
+
+$$
+\mathrm{cost}(n) = \sum_{i=1}^{n} |B_i \setminus \bigcup_{j<i} B_j|
+$$
+
+For a multi-line derivation the line structure has to survive syndication too:
+
+$$
+\begin{align}
+S_t &= \sum_{i \le t} \phi(k_i) v_i^\top \\
+z_t &= \sum_{i \le t} \phi(k_i)
+\end{align}
+$$
+
+A LaTeX comment must never be allowed to eat the line that follows it:
+
+$$
+\mathrm{dedup} = 1 - \frac{|U|}{\sum_i |B_i|} % ratio of unique to total
+\quad\text{where } U = \bigcup_i B_i
+$$
+
+Note that $50 \%$ of a corpus being duplicate is common, and the escaped
+percent above is a literal sign, not a comment.
+
 ## Feature Checklist
 
 Here's what we're testing with this article:

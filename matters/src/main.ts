@@ -1896,6 +1896,20 @@ export function normalizeHtmlForMatters(html: string): string {
 }
 
 /**
+ * A paragraph open tag, with or without attributes.
+ *
+ * Every "is this element ALONE in its paragraph?" hoist below must use this,
+ * never a literal `<p>`. The HTML these transforms receive is NOT the shipped
+ * page HTML — it is `article-map.json`'s `html_content`, which
+ * `load_articles_for_syndication` reads and `getArticleContent` hands to the
+ * transform chain. `data-source-line` is stripped only by `ship_phase`'s
+ * staging→site FILE copy, which never touches `article-map.json`. So in
+ * production every top-level paragraph arrives as `<p data-source-line="N">`,
+ * and a literal `<p>` pattern silently matches nothing.
+ */
+const PARAGRAPH_OPEN = "<p(?:\\s[^>]*)?>";
+
+/**
  * Convert every moss image-emission pattern into matters' required shape:
  * `<figure class="image"><img src="..."><figcaption>...</figcaption></figure>`.
  *
@@ -1944,8 +1958,9 @@ export function wrapImagesForMatters(html: string): string {
   // Step B: `<p>` containing only a `<picture>` → hoist to a figure wrap.
   // A `<figure>` inside a `<p>` is invalid HTML and matters' parser splits the
   // `<p>` around it, producing stray empty `<p></p>` siblings. Hoist first.
+  // The open tag must allow attributes — see PARAGRAPH_OPEN.
   result = result.replace(
-    /<p>\s*(<picture\b[^>]*>[\s\S]*?<\/picture>)\s*<\/p>/gi,
+    new RegExp(`${PARAGRAPH_OPEN}\\s*(<picture\\b[^>]*>[\\s\\S]*?</picture>)\\s*</p>`, "gi"),
     (_full, picture: string) => `<figure class="image">${picture}<figcaption></figcaption></figure>`,
   );
 
@@ -1962,7 +1977,7 @@ export function wrapImagesForMatters(html: string): string {
 
   // Step D: `<p>` containing only an `<img>` → same hoist as Step B.
   result = result.replace(
-    /<p>\s*(<img\b[^>]*>)\s*<\/p>/gi,
+    new RegExp(`${PARAGRAPH_OPEN}\\s*(<img\\b[^>]*>)\\s*</p>`, "gi"),
     (_full, img: string) => `<figure class="image">${img}<figcaption></figcaption></figure>`,
   );
 
@@ -1987,8 +2002,17 @@ export interface MathTransformStats {
   display: number;
   /** Display equations that could NOT be hoisted (mixed with prose in a `<p>`). */
   displayInline: number;
-  /** `%` comments dropped before an unavoidable newline collapse. */
+  /** `%` comments dropped so a newline collapse cannot let one eat the formula. */
   commentsStripped: number;
+  /**
+   * `<svg>` elements seen in the input — always a contract violation.
+   *
+   * matters' sanitizer allows no `<svg>`: the element is unwrapped to its
+   * children, `<path>` has no text, so the equation VANISHES while syndication
+   * reports success. P1 never emits SVG; P2 (typeset math) will. This counter
+   * is the tripwire that makes that arrival loud instead of silent.
+   */
+  svgDetected: number;
 }
 
 /**
@@ -2032,14 +2056,17 @@ export interface MathTransformStats {
  *
  * Passes, in order:
  *   1. Display alone in its paragraph → `<pre><code>`, hoisted out of the `<p>`.
- *      This keeps multi-line align/cases line structure AND structurally
- *      defuses the newline-collapse corruption above.
+ *      This keeps multi-line align/cases line structure. `%` comments are
+ *      dropped here too — see the pass-1 comment for why the `<pre>` is not a
+ *      guarantee we own.
  *   2. Display NOT alone (mixed with prose) → unwrap to text, then pass 4.
  *   3. Inline → unwrap to text, then pass 4.
- *   4. For pass-2/3 output only, where newline collapse is unavoidable: drop
- *      unescaped `%`-to-end-of-line, then collapse newlines to single spaces.
- *      Dropping a comment is lossless for the formula; leaving it lets the
- *      comment eat real math.
+ *   4. For pass-2/3 output, where newline collapse is unavoidable: collapse
+ *      newlines to single spaces (after the same `%` strip).
+ *
+ * Every paragraph pattern uses `PARAGRAPH_OPEN`, never a literal `<p>`: the
+ * input is `article-map.json`'s `html_content`, where every top-level paragraph
+ * carries `data-source-line`. See that constant's docblock.
  *
  * Exported for unit testing.
  */
@@ -2051,28 +2078,64 @@ export function transformMathForMatters(html: string): MathTransformStats {
   let commentsStripped = 0;
 
   /**
-   * Make a fragment safe for a newline-collapsing container: drop `%` comments
-   * (a `%` NOT preceded by a backslash runs to end of line) and flatten the
-   * remaining newlines to single spaces.
+   * Drop `%` comments — a `%` NOT preceded by a backslash runs to end of line.
+   * Lossless for the formula; leaving one in lets it eat real math the moment
+   * anything downstream collapses the newline that terminates it.
    */
-  const flattenForProse = (tex: string): string => {
-    const decommented = tex.replace(/(^|[^\\])%[^\n]*/g, (_full, prefix: string) => {
+  const stripTexComments = (tex: string): string =>
+    tex.replace(/(^|[^\\])%[^\n]*/g, (_full, prefix: string) => {
       commentsStripped++;
       return prefix;
     });
-    return decommented.replace(/\s*\n\s*/g, " ").trim();
-  };
+
+  /**
+   * Make a fragment safe for a newline-collapsing container: drop `%` comments
+   * and flatten the remaining newlines to single spaces.
+   */
+  const flattenForProse = (tex: string): string =>
+    stripTexComments(tex)
+      .replace(/\s*\n\s*/g, " ")
+      .trim();
+
+  // Guard: an `<svg>` reaching this transform means P2's typeset emission has
+  // arrived on the syndication path. matters deletes it silently, so the
+  // failure mode without this guard is equations disappearing from published
+  // articles with no error anywhere. Counted AND logged.
+  const svgDetected = (html.match(/<svg\b/gi) ?? []).length;
+  if (svgDetected > 0) {
+    console.error(
+      `    ❌ ${svgDetected} <svg> element(s) in the syndication body. matters' ` +
+        `sanitizer DELETES <svg> (unwrapped to children; <path> has no text), so ` +
+        `every equation emitted this way will vanish from the published article ` +
+        `with no error. Typeset math must be converted to a raster image or a ` +
+        `<pre> LaTeX-source fallback before it reaches matters.`,
+    );
+  }
 
   let result = html;
 
   // Pass 1: display math alone in its paragraph → hoist to <pre><code>.
   // Content is already HTML-escaped by moss, which is exactly what <pre><code>
-  // wants, so it is copied through untouched — newlines and all.
+  // wants, so the newlines are copied through and the line structure survives.
+  //
+  // The `%` comments are dropped even here, where <pre> would preserve the
+  // newline that ends them. Hoisting is not a guarantee we control: matters'
+  // TipTap schema decides which parents may hold a codeBlock, and where it
+  // refuses one (a blockquote is the case moss actually emits — it emits a BARE
+  // `<p>` inside `<blockquote data-source-line=…>`, so this pass fires) the
+  // <pre> is normalized back down to a <p> and the newline collapse happens
+  // after we are done. A comment that survives that collapse eats the rest of
+  // the equation and publishes a valid-looking but WRONG formula. Dropping the
+  // comment is lossless for the formula, so pay it unconditionally rather than
+  // stake correctness on a downstream schema we cannot test against.
   result = result.replace(
-    new RegExp(`<p>\\s*(?:${mathOpen}display"[^>]*>)([\\s\\S]*?)</code>\\s*</p>`, "gi"),
+    new RegExp(
+      `${PARAGRAPH_OPEN}\\s*(?:${mathOpen}display"[^>]*>)([\\s\\S]*?)</code>\\s*</p>`,
+      "gi",
+    ),
     (_full, tex: string) => {
       display++;
-      return `<pre><code>${tex}</code></pre>`;
+      return `<pre><code>${stripTexComments(tex)}</code></pre>`;
     },
   );
 
@@ -2097,7 +2160,7 @@ export function transformMathForMatters(html: string): MathTransformStats {
     },
   );
 
-  return { html: result, inline, display, displayInline, commentsStripped };
+  return { html: result, inline, display, displayInline, commentsStripped, svgDetected };
 }
 
 /**
@@ -2152,7 +2215,7 @@ export function wrapAudioForMatters(html: string, baseUrl: string): string {
   // Pass 1: hoist `<p>…audio…</p>` out of the paragraph — a `<figure>` inside a
   // `<p>` is invalid HTML and matters splits the `<p>`, leaving stray empties.
   result = result.replace(
-    new RegExp(`<p>\\s*(?:${audioPattern})\\s*</p>`, "gi"),
+    new RegExp(`${PARAGRAPH_OPEN}\\s*(?:${audioPattern})\\s*</p>`, "gi"),
     (_full, inner: string) => buildFigure(inner),
   );
   // Pass 2: any remaining standalone moss audio.

@@ -854,12 +854,23 @@ describe("transformMathForMatters", () => {
     expect(out.html.split("\n")).toHaveLength(6);
   });
 
-  it("does NOT strip % comments inside <pre> — the newlines that end them survive", () => {
+  it("strips % comments on the hoisted path too — the <pre> is not ours to guarantee", () => {
+    // This test previously asserted the opposite: that a `%` comment SURVIVES
+    // the hoist because <pre> preserves the newline that ends it. That reasoning
+    // holds only while the <pre> itself survives, and whether it does is matters'
+    // TipTap schema's call, not ours — a blockquote (which moss really emits, as
+    // a bare <p> inside <blockquote data-source-line=…>) refuses a codeBlock
+    // child and normalizes it back to a <p>, collapsing the newlines after this
+    // transform has returned. A surviving comment then eats the rest of the
+    // formula. Dropping it is lossless; the wager was not worth taking.
     const html =
-      '<p><code class="moss-math" data-moss-math="display">$$\nx = 1 % this is a note\nb = 2\n$$</code></p>';
+      '<p data-source-line="7"><code class="moss-math" data-moss-math="display">$$\nx = 1 % this is a note\nb = 2\n$$</code></p>';
     const out = transformMathForMatters(html);
-    expect(out.html).toContain("% this is a note");
-    expect(out.commentsStripped).toBe(0);
+    expect(out.html).not.toContain("% this is a note");
+    expect(out.commentsStripped).toBe(1);
+    expect(out.display).toBe(1);
+    // Line structure is still preserved — only the comment went.
+    expect(out.html).toContain("<pre><code>$$\nx = 1 \nb = 2\n$$</code></pre>");
   });
 
   it("degrades display math mixed with prose to text", () => {
@@ -923,6 +934,77 @@ describe("normalizeHtmlForMatters - math", () => {
     expect(out).not.toContain('<figure class="image"><pre>');
   });
 
+  /**
+   * PRODUCTION INPUT SHAPE.
+   *
+   * The transforms do NOT receive the shipped page HTML. They receive
+   * `article-map.json`'s `html_content` (`load_articles_for_syndication` →
+   * `getArticleContent`), where every top-level paragraph still carries
+   * `data-source-line` — `ship_phase` strips that attribute only during the
+   * staging→site FILE copy, which never rewrites `article-map.json`.
+   *
+   * A literal `<p>` pattern therefore matches NOTHING in production. Verified
+   * 2026-07-21 against a real `moss build`: before the fix, the whole
+   * math-test-site payload reported `display: 0` and every display equation
+   * degraded to flattened prose.
+   */
+  it("hoists display math out of a paragraph that carries data-source-line", () => {
+    const html =
+      '<p data-source-line="11"><code class="moss-math" data-moss-math="display">' +
+      "$$\nS_t &amp;= \\sum_i \\phi(k_i) \\\\\nz_t &amp;= \\sum_i \\phi(k_i)\n$$</code></p>";
+    const stats = transformMathForMatters(html);
+    expect(stats.display).toBe(1);
+    expect(stats.displayInline).toBe(0);
+    // …and the line structure survived the hoist.
+    expect(stats.html).toContain("<pre><code>$$\nS_t &amp;= \\sum_i \\phi(k_i) \\\\\n");
+  });
+
+  it("wraps an image in a paragraph that carries data-source-line", () => {
+    const html = '<p data-source-line="5"><img src="a.png"></p>';
+    const out = normalizeHtmlForMatters(html);
+    expect(out).toContain('<figure class="image"><img src="a.png"><figcaption></figcaption></figure>');
+    // The hoist must consume the <p>, not leave it wrapping the figure.
+    expect(out).not.toContain("<p data-source-line");
+  });
+
+  /**
+   * BLOCKQUOTE — the container where hoisting is NOT ours to guarantee.
+   *
+   * moss emits a BARE `<p>` inside `<blockquote data-source-line=…>` (verified
+   * by real `moss build` emission, 2026-07-21), so Pass 1 fires there. But
+   * matters' TipTap schema decides which parents accept a codeBlock child, and
+   * a blockquote is reported to refuse one — normalizing `<pre>` back down to
+   * `<p>`, which re-enters the newline-collapsing path AFTER this transform has
+   * finished. If a `%` comment were still present at that point it would eat
+   * the rest of the equation and publish a valid-looking but WRONG formula.
+   *
+   * So the `%` strip is unconditional, including on the hoisted path. Dropping
+   * a comment is lossless for the formula; staking correctness on a downstream
+   * schema we cannot run locally is not.
+   */
+  it("strips % comments even when hoisting, so a downstream collapse cannot corrupt the formula", () => {
+    const html =
+      '<blockquote data-source-line="4">\n' +
+      '<p><code class="moss-math" data-moss-math="display">$$\na % note\nb\n$$</code></p>\n' +
+      "</blockquote>";
+    const stats = transformMathForMatters(html);
+    expect(stats.display).toBe(1);
+    expect(stats.commentsStripped).toBe(1);
+    expect(stats.html).not.toContain("% note");
+    // Collapse the newlines the way a <pre>-refusing container would, and the
+    // formula must still read `$$ a b $$` — `b` outside any comment.
+    const collapsed = stats.html.replace(/\s*\n\s*/g, " ");
+    expect(collapsed).toContain("$$ a b $$");
+  });
+
+  it("keeps an escaped \\% through the hoist", () => {
+    const html =
+      '<p data-source-line="2"><code class="moss-math" data-moss-math="display">$$50 \\% x$$</code></p>';
+    const stats = transformMathForMatters(html);
+    expect(stats.commentsStripped).toBe(0);
+    expect(stats.html).toContain("$$50 \\% x$$");
+  });
+
   it("keeps math source out of headings' anchor-stripping path", () => {
     const html =
       '<h3>状态更新 <code class="moss-math" data-moss-math="inline">$S_t$</code> 的推导</h3>';
@@ -940,21 +1022,31 @@ describe("normalizeHtmlForMatters - math", () => {
    * which returned `<p>x y</p>`.
    *
    * P2 will introduce typeset math as inline `<svg>` with baked `<path>`
-   * glyphs. If this test fails, P2's SVG emission has reached the matters
-   * syndication path and MUST be converted to a raster image or a `<pre>`
-   * LaTeX-source fallback before shipping.
+   * glyphs. If the tripwire below fires in production, P2's SVG emission has
+   * reached the matters syndication path and MUST be converted to a raster
+   * image or a `<pre>` LaTeX-source fallback before shipping.
    */
-  it("never lets an <svg> reach the matters draft body (P2 constraint)", () => {
-    const html =
-      '<p>Inline <code class="moss-math" data-moss-math="inline">$E = mc^2$</code></p>' +
-      '<p><code class="moss-math" data-moss-math="display">$$\\int_0^1 x\\,dx$$</code></p>';
-    const body = normalizeHtmlForMatters(html);
+  it("raises the P2 tripwire when an <svg> reaches the transform", () => {
+    // SVG-BEARING input. The old form of this test fed math-only markup and
+    // asserted the OUTPUT had no "<svg" — a tautology: the input had none and
+    // no code path can introduce one, so it stayed green no matter what the
+    // transform did. Deleting the transform entirely left it passing. The
+    // property worth pinning is that an <svg> ARRIVING is detected.
+    const withSvg =
+      '<p data-source-line="3">x <svg viewBox="0 0 10 10"><path d="M0 0 L10 10"/></svg> y</p>';
     expect(
-      body.includes("<svg"),
-      "matters' sanitizer DELETES <svg> silently — an equation emitted as SVG " +
-        "would vanish from the syndicated article with no error. P2 (typeset " +
-        "math) must not emit SVG on the matters path.",
-    ).toBe(false);
+      transformMathForMatters(withSvg).svgDetected,
+      "an <svg> on the matters path must be counted — matters' sanitizer " +
+        "deletes it silently, so an undetected one means equations vanish " +
+        "from the published article with no error anywhere.",
+    ).toBe(1);
+  });
+
+  it("leaves the P2 tripwire down for P1's own emission", () => {
+    const html =
+      '<p data-source-line="1">Inline <code class="moss-math" data-moss-math="inline">$E = mc^2$</code></p>' +
+      '<p data-source-line="2"><code class="moss-math" data-moss-math="display">$$\\int_0^1 x\\,dx$$</code></p>';
+    expect(transformMathForMatters(html).svgDetected).toBe(0);
   });
 });
 
@@ -962,17 +1054,26 @@ describe("normalizeHtmlForMatters - math", () => {
  * GOLDEN PAYLOAD — the whole transform chain over a real moss article.
  *
  * `test-fixtures/syndication-test-site/moss-emitted-body.html` is the verbatim
- * `<article>` inner HTML that `moss build --no-plugins` produced for
- * `input/posts/rich-test-article.md` (captured 2026-07-21). Regenerate it with:
+ * `html_content` that `moss build --no-plugins` wrote to `article-map.json`
+ * for `input/posts/rich-test-article.md` (recaptured 2026-07-21).
  *
- *   cd plugins/matters/test-fixtures/syndication-test-site/input
- *   moss build . --no-plugins
- *   # then extract the <article> inner HTML from
- *   # .moss/build/current/posts/rich-test-article/index.html
+ * It MUST come from `article-map.json`, NOT from the shipped page HTML under
+ * `.moss/build/current/`. `article-map.json` is what the plugin actually
+ * receives (`load_articles_for_syndication` → `getArticleContent`); the shipped
+ * page has already had `data-source-line` stripped by `ship_phase`'s
+ * staging→site file copy. Capturing from the shipped page is how this fixture
+ * green-lit a shape production never produces, hiding a dead Pass 1 behind 17
+ * passing tests. Regenerate with:
+ *
+ *   cd plugins/matters/test-fixtures/syndication-test-site
+ *   moss build input --no-plugins
+ *   python3 -c "import json; print(json.load(open('input/.moss/build/article-map.json'))\
+ *     ['articles']['posts/rich-test-article/']['html_content'])" > moss-emitted-body.html
  *
  * This is the ONLY test that exercises the transforms against real emission
  * rather than hand-written literals, so it is where a change in moss's math
- * markup will surface first.
+ * markup will surface first — which only holds while it is wired to the real
+ * emission.
  */
 describe("syndication golden payload - rich-test-article", () => {
   const fixtureDir = join(__dirname, "..", "..", "test-fixtures", "syndication-test-site");
@@ -1016,10 +1117,11 @@ describe("syndication golden payload - rich-test-article", () => {
     expect(align![0]).toContain("z_t &amp;=");
   });
 
-  it("keeps a % comment inside <pre>, where the newline ending it survives", () => {
+  it("drops the % comment but keeps the line it must not eat", () => {
     const body = assembleBody();
-    expect(body).toContain("% ratio of unique to total");
-    // …and the line the comment must not eat is still on its own line.
+    expect(body).not.toContain("% ratio of unique to total");
+    // The line the comment would have eaten is still there, still on its own
+    // line — so even if matters collapses this <pre>, the formula reads right.
     expect(body).toContain("\n\\quad\\text{where } U = \\bigcup_i B_i");
   });
 

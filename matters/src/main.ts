@@ -2005,12 +2005,23 @@ export interface MathTransformStats {
   /** `%` comments dropped so a newline collapse cannot let one eat the formula. */
   commentsStripped: number;
   /**
-   * `<svg>` elements seen in the input — always a contract violation.
+   * P2 typeset `<svg class="moss-math">` equations degraded to their LaTeX
+   * source (Pass 0). matters cannot render SVG, so the source — carried in the
+   * SVG's `<title>` / `aria-label` (ADR-030's a11y carrier) — is what the
+   * reader sees instead of a blank. These then flow through the inline/display
+   * source passes like P1's own emission.
+   */
+  mathSvg: number;
+  /**
+   * `<svg>` elements STILL PRESENT in the output — always a contract violation.
    *
    * matters' sanitizer allows no `<svg>`: the element is unwrapped to its
    * children, `<path>` has no text, so the equation VANISHES while syndication
-   * reports success. P1 never emits SVG; P2 (typeset math) will. This counter
-   * is the tripwire that makes that arrival loud instead of silent.
+   * reports success. Pass 0 converts every `<svg class="moss-math">` to its
+   * LaTeX source, so a math equation never counts here; any survivor is an
+   * `<svg>` we could NOT recover a source for (a non-math SVG, or a math SVG
+   * with no `<title>`/`aria-label`). This counter is the tripwire that makes
+   * such an arrival loud instead of a silent deletion.
    */
   svgDetected: number;
 }
@@ -2051,10 +2062,19 @@ export interface MathTransformStats {
  *     defaults. Non-allowed elements are UNWRAPPED TO THEIR CHILDREN, and
  *     `<path>` has no text. Verified: `<p>x <svg …><path …/></svg> y</p>` →
  *     `<p>x y</p>` — the equation VANISHES and syndication reports success.
- *     P2 (typeset SVG) MUST NOT reach this transform. See the no-`<svg>` guard
- *     in the test suite.
+ *     So P2's typeset `<svg class="moss-math">` cannot be shipped as-is. matters
+ *     has no SVG projection (PNG-upload is a FUTURE step); the correct P2
+ *     fallback is the LaTeX SOURCE, which the SVG carries in its `<title>` /
+ *     `aria-label` (ADR-030's a11y carrier). Pass 0 recovers that source and
+ *     reshapes the equation into the very same `<code class="moss-math">` shape
+ *     P1 emits, so a matters reader sees `$tex$` / `$$tex$$`, never a blank.
  *
  * Passes, in order:
+ *   0. `<svg class="moss-math">` (P2 typeset math) → its LaTeX source, taken
+ *      from the SVG `<title>` (preferred; element-escaped like `<code>` text)
+ *      or `aria-label`, re-wrapped as `<code class="moss-math" data-moss-math>`
+ *      so passes 1–3 handle it identically to P1's own emission. This is the
+ *      only new P2 pass; everything below is shape-agnostic afterwards.
  *   1. Display alone in its paragraph → `<pre><code>`, hoisted out of the `<p>`.
  *      This keeps multi-line align/cases line structure. `%` comments are
  *      dropped here too — see the pass-1 comment for why the `<pre>` is not a
@@ -2063,6 +2083,11 @@ export interface MathTransformStats {
  *   3. Inline → unwrap to text, then pass 4.
  *   4. For pass-2/3 output, where newline collapse is unavoidable: collapse
  *      newlines to single spaces (after the same `%` strip).
+ *
+ * The `svgDetected` tripwire is measured on the OUTPUT, after Pass 0: a math
+ * SVG never reaches it (converted to source), so a survivor is a genuine
+ * silent-deletion hazard (non-math SVG, or a math SVG missing its source
+ * carrier) rather than a false alarm on P2's expected emission.
  *
  * Every paragraph pattern uses `PARAGRAPH_OPEN`, never a literal `<p>`: the
  * input is `article-map.json`'s `html_content`, where every top-level paragraph
@@ -2076,6 +2101,7 @@ export function transformMathForMatters(html: string): MathTransformStats {
   let display = 0;
   let displayInline = 0;
   let commentsStripped = 0;
+  let mathSvg = 0;
 
   /**
    * Drop `%` comments — a `%` NOT preceded by a backslash runs to end of line.
@@ -2097,22 +2123,41 @@ export function transformMathForMatters(html: string): MathTransformStats {
       .replace(/\s*\n\s*/g, " ")
       .trim();
 
-  // Guard: an `<svg>` reaching this transform means P2's typeset emission has
-  // arrived on the syndication path. matters deletes it silently, so the
-  // failure mode without this guard is equations disappearing from published
-  // articles with no error anywhere. Counted AND logged.
-  const svgDetected = (html.match(/<svg\b/gi) ?? []).length;
-  if (svgDetected > 0) {
-    console.error(
-      `    ❌ ${svgDetected} <svg> element(s) in the syndication body. matters' ` +
-        `sanitizer DELETES <svg> (unwrapped to children; <path> has no text), so ` +
-        `every equation emitted this way will vanish from the published article ` +
-        `with no error. Typeset math must be converted to a raster image or a ` +
-        `<pre> LaTeX-source fallback before it reaches matters.`,
-    );
-  }
+  /** Guarantee the source carries its `$`/`$$` delimiters (P1 emits them; a P2
+   * `aria-label` might not). Idempotent when they are already present. */
+  const ensureDelimiters = (src: string, isDisplay: boolean): string => {
+    const trimmed = src.trim();
+    if (isDisplay) return trimmed.startsWith("$$") ? src : `$$${src}$$`;
+    return trimmed.startsWith("$") ? src : `$${src}$`;
+  };
 
   let result = html;
+
+  // Pass 0: P2 typeset math. moss P2 renders `$tex$` as an inline
+  // `<svg class="moss-math" … aria-label="<tex>"><title><tex></title>…</svg>`
+  // (ADR-030). matters' sanitizer has no SVG projection — it unwraps the
+  // element to its childless `<path>`s and the equation VANISHES with
+  // syndication still reporting success. matters cannot render SVG and
+  // PNG-upload is a future step, so the correct fallback is the LaTeX SOURCE
+  // the SVG already carries. Recover it (prefer the `<title>`, which is
+  // element-escaped exactly like `<code>` text; else `aria-label`) and reshape
+  // the equation into the SAME `<code class="moss-math">` shape P1 emits, so
+  // passes 1–3 below degrade it to `$tex$` / `$$tex$$` identically. A math SVG
+  // that survives Pass 0 (no recoverable source) is left in place so the
+  // output `svgDetected` tripwire counts it instead of it silently vanishing.
+  const svgMathElement = /<svg\b([^>]*\bclass="[^"]*\bmoss-math\b[^"]*"[^>]*)>([\s\S]*?)<\/svg>/gi;
+  result = result.replace(svgMathElement, (full, attrs: string, inner: string) => {
+    const fromTitle = inner.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+    const fromAria = attrs.match(/\baria-label="([^"]*)"/i)?.[1];
+    const src = fromTitle ?? fromAria;
+    if (src == null || src.trim() === "") return full;
+    let kind = (attrs.match(/\bdata-moss-math="(inline|display)"/i)?.[1] ?? "").toLowerCase();
+    if (kind !== "inline" && kind !== "display") {
+      kind = src.trim().startsWith("$$") ? "display" : "inline";
+    }
+    mathSvg++;
+    return `<code class="moss-math" data-moss-math="${kind}">${ensureDelimiters(src, kind === "display")}</code>`;
+  });
 
   // Pass 1: display math alone in its paragraph → hoist to <pre><code>.
   // Content is already HTML-escaped by moss, which is exactly what <pre><code>
@@ -2160,7 +2205,22 @@ export function transformMathForMatters(html: string): MathTransformStats {
     },
   );
 
-  return { html: result, inline, display, displayInline, commentsStripped, svgDetected };
+  // Tripwire, measured on the OUTPUT so Pass 0's conversions never trip it: a
+  // surviving `<svg>` is one we could not degrade to source and matters WILL
+  // delete it silently. Loud here so the loss is never invisible.
+  const svgDetected = (result.match(/<svg\b/gi) ?? []).length;
+  if (svgDetected > 0) {
+    console.error(
+      `    ❌ ${svgDetected} <svg> element(s) survived into the syndication body. ` +
+        `matters' sanitizer DELETES <svg> (unwrapped to children; <path> has no ` +
+        `text), so this content will vanish from the published article with no ` +
+        `error. A typeset math <svg class="moss-math"> is degraded to its LaTeX ` +
+        `source automatically; a survivor means the source carrier ` +
+        `(<title>/aria-label) was missing or the <svg> is not moss math.`,
+    );
+  }
+
+  return { html: result, inline, display, displayInline, commentsStripped, mathSvg, svgDetected };
 }
 
 /**

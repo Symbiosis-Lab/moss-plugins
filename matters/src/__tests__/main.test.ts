@@ -1012,41 +1012,125 @@ describe("normalizeHtmlForMatters - math", () => {
   });
 
   /**
-   * P2 GUARD — highest severity, because it fails INVISIBLY.
+   * P2 — the typeset `<svg>` shape, which fails INVISIBLY if shipped as-is.
    *
    * matters' sanitizer allows no `<svg>`: the element is unwrapped to its
-   * children and `<path>` has no text, so the equation vanishes while
+   * children and `<path>` has no text, so a bare equation vanishes while
    * syndication still reports success. Verified 2026-07-21 by running the real
    * `@matters/matters-editor` transformers over
    * `<p>x <svg viewBox="0 0 10 10"><path d="M0 0 L10 10"/></svg> y</p>`,
    * which returned `<p>x y</p>`.
    *
-   * P2 will introduce typeset math as inline `<svg>` with baked `<path>`
-   * glyphs. If the tripwire below fires in production, P2's SVG emission has
-   * reached the matters syndication path and MUST be converted to a raster
-   * image or a `<pre>` LaTeX-source fallback before shipping.
+   * P2 renders `$tex$` as an inline `<svg class="moss-math" … aria-label="…">`
+   * carrying the LaTeX source in its `<title>`/`aria-label` (ADR-030). matters
+   * has no SVG projection (PNG-upload is a FUTURE step), so the transform MUST
+   * degrade a math SVG to that source before it reaches the draft body. These
+   * tests feed the REAL P2 shape and pin: (a) no `<svg>` survives to matters,
+   * (b) the reader sees the source instead of a blank, (c) the `svgDetected`
+   * tripwire still fires for an SVG we genuinely cannot recover.
    */
-  it("raises the P2 tripwire when an <svg> reaches the transform", () => {
-    // SVG-BEARING input. The old form of this test fed math-only markup and
-    // asserted the OUTPUT had no "<svg" — a tautology: the input had none and
-    // no code path can introduce one, so it stayed green no matter what the
-    // transform did. Deleting the transform entirely left it passing. The
-    // property worth pinning is that an <svg> ARRIVING is detected.
+  it("degrades a P2 inline math <svg> to its LaTeX source, no <svg> left", () => {
     const withSvg =
-      '<p data-source-line="3">x <svg viewBox="0 0 10 10"><path d="M0 0 L10 10"/></svg> y</p>';
+      '<p data-source-line="1">Mass–energy: ' +
+      '<svg class="moss-math" data-moss-math="inline" role="img" fill="currentColor" ' +
+      'aria-label="$E = mc^2$"><title>$E = mc^2$</title>' +
+      '<path d="M0 0 L10 10"/></svg> holds.</p>';
+    const out = transformMathForMatters(withSvg);
+    // MUTATION WITNESS: neuter Pass 0's conversion and this line goes red —
+    // the raw <svg> reaches the assembled matters body and the equation vanishes.
+    expect(out.html).not.toContain("<svg");
+    expect(out.html).not.toContain("moss-math");
+    expect(out.html).toBe("<p data-source-line=\"1\">Mass–energy: $E = mc^2$ holds.</p>");
+    expect(out.mathSvg).toBe(1);
+    expect(out.svgDetected).toBe(0);
+  });
+
+  it("degrades a P2 display math <svg> alone in its paragraph to <pre><code>", () => {
+    // A display SVG carries multi-line source; degrading to <pre><code> keeps
+    // the line structure, the same treatment P1's display <code> gets.
+    const withSvg =
+      '<p data-source-line="2"><svg class="moss-math" data-moss-math="display" role="img" ' +
+      'fill="currentColor" aria-label="$$\n\\begin{align}\na &amp;= b \\\\\nc &amp;= d\n\\end{align}\n$$">' +
+      '<title>$$\n\\begin{align}\na &amp;= b \\\\\nc &amp;= d\n\\end{align}\n$$</title>' +
+      '<path d="M0 0"/></svg></p>';
+    const out = transformMathForMatters(withSvg);
+    expect(out.html).not.toContain("<svg");
+    expect(out.html).toBe(
+      "<pre><code>$$\n\\begin{align}\na &amp;= b \\\\\nc &amp;= d\n\\end{align}\n$$</code></pre>",
+    );
+    expect(out.mathSvg).toBe(1);
+    expect(out.display).toBe(1);
+    expect(out.svgDetected).toBe(0);
+  });
+
+  it("recovers source from aria-label when a math <svg> has no <title>", () => {
+    // ADR-030 lists both carriers; if a build ever drops the <title>, the
+    // aria-label must still save the equation from silent deletion.
+    const withSvg =
+      '<p data-source-line="3">See <svg class="moss-math" data-moss-math="inline" ' +
+      'aria-label="$a &lt; b$"><path d="M0 0"/></svg> here.</p>';
+    const out = transformMathForMatters(withSvg);
+    expect(out.html).not.toContain("<svg");
+    expect(out.html).toBe('<p data-source-line="3">See $a &lt; b$ here.</p>');
+    expect(out.mathSvg).toBe(1);
+    expect(out.svgDetected).toBe(0);
+  });
+
+  it("infers display from a $$ prefix when the SVG carries no data-moss-math", () => {
+    const withSvg =
+      '<p data-source-line="4"><svg class="moss-math" aria-label="$$x+y$$">' +
+      "<title>$$x+y$$</title><path d=\"M0 0\"/></svg></p>";
+    const out = transformMathForMatters(withSvg);
+    expect(out.html).toBe("<pre><code>$$x+y$$</code></pre>");
+    expect(out.display).toBe(1);
+    expect(out.svgDetected).toBe(0);
+  });
+
+  it("wraps a delimiter-less aria-label source so the reader sees real LaTeX", () => {
+    // Defensive: if a build ever emits the bare TeX (no $ delimiters) in the
+    // carrier, we still hand matters a well-formed `$…$` span, not naked prose.
+    const withSvg =
+      '<p data-source-line="5">x <svg class="moss-math" data-moss-math="inline" ' +
+      'aria-label="E = mc^2"><path d="M0 0"/></svg> y</p>';
+    const out = transformMathForMatters(withSvg);
+    expect(out.html).toBe('<p data-source-line="5">x $E = mc^2$ y</p>');
+    expect(out.svgDetected).toBe(0);
+  });
+
+  it("still trips svgDetected for a non-math <svg> it cannot degrade to source", () => {
+    // A non-math <svg> (no moss-math class, no source carrier) is NOT ours to
+    // rescue; matters deletes it silently, so it must stay counted and loud.
+    const withSvg =
+      '<p data-source-line="6">x <svg viewBox="0 0 10 10"><path d="M0 0 L10 10"/></svg> y</p>';
+    const out = transformMathForMatters(withSvg);
+    expect(out.html).toContain("<svg"); // untouched — not moss math
+    expect(out.mathSvg).toBe(0);
     expect(
-      transformMathForMatters(withSvg).svgDetected,
-      "an <svg> on the matters path must be counted — matters' sanitizer " +
-        "deletes it silently, so an undetected one means equations vanish " +
-        "from the published article with no error anywhere.",
+      out.svgDetected,
+      "an <svg> matters will delete must be counted — an undetected one means " +
+        "content vanishes from the published article with no error anywhere.",
     ).toBe(1);
   });
 
-  it("leaves the P2 tripwire down for P1's own emission", () => {
+  it("leaves the tripwire down for P1's own <code> emission", () => {
     const html =
       '<p data-source-line="1">Inline <code class="moss-math" data-moss-math="inline">$E = mc^2$</code></p>' +
       '<p data-source-line="2"><code class="moss-math" data-moss-math="display">$$\\int_0^1 x\\,dx$$</code></p>';
-    expect(transformMathForMatters(html).svgDetected).toBe(0);
+    const out = transformMathForMatters(html);
+    expect(out.svgDetected).toBe(0);
+    expect(out.mathSvg).toBe(0);
+  });
+
+  it("degrades a P2 math <svg> through the full normalizeHtmlForMatters chain", () => {
+    // End-to-end at the same altitude the golden payload runs: a P2 SVG on the
+    // real assembly path must reach the draft body as source, never as <svg>.
+    const html =
+      '<p data-source-line="1"><svg class="moss-math" data-moss-math="display" ' +
+      'aria-label="$$\\int_0^1 x\\,dx$$"><title>$$\\int_0^1 x\\,dx$$</title>' +
+      '<path d="M0 0"/></svg></p>';
+    const body = normalizeHtmlForMatters(html);
+    expect(body).not.toContain("<svg");
+    expect(body).toContain("<pre><code>$$\\int_0^1 x\\,dx$$</code></pre>");
   });
 });
 

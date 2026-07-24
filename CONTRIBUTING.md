@@ -71,7 +71,7 @@ To try it in moss, point a project's plugin directory at your build — from a
 moss project folder:
 
 ```bash
-ln -s /path/to/moss-plugins/<id>/dist ~/my-site/.moss/plugins/<id>
+ln -s /path/to/moss-registry/<id>/dist ~/my-site/.moss/plugins/<id>
 ```
 
 moss respects symlinked plugin directories, so your rebuilds land directly.

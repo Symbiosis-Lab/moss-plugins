@@ -17,7 +17,7 @@ catalog with the reason.
       "id": "example",
       "versions": ["1.1.0", "1.1.1"],
       "reason": "Exfiltrated vault contents via an undisclosed endpoint.",
-      "advisory_url": "https://github.com/Symbiosis-Lab/moss-plugins/security/advisories/..."
+      "advisory_url": "https://github.com/Symbiosis-Lab/moss-registry/security/advisories/..."
     }
   ]
 }

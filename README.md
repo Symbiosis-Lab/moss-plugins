@@ -1,12 +1,35 @@
-# moss-plugins
+# moss-registry
 
-> Plugins for [moss](https://mosspub.com) — and the registry that distributes them.
+> Plugins and themes for [moss](https://mosspub.com) — and the registry that
+> distributes them.
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-This repository holds the source of every published moss plugin, first-party and
-community alike, plus the registry metadata the moss app reads to offer them.
-**Pull requests are welcome** — see [CONTRIBUTING.md](CONTRIBUTING.md).
+This repository holds the source of everything moss can install — plugins and
+themes, first-party and community alike — plus the registry metadata the app
+reads to offer them. **Pull requests are welcome** — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Plugins and themes
+
+Two kinds of package live here, and the difference is worth stating plainly
+because it decides how each is reviewed:
+
+- A **plugin** *does* something. It is code moss executes on your machine, in a
+  sandboxed JavaScript engine with access to host functions — the network, your
+  project's files, and (when declared) running native programs. Plugins
+  accumulate: several can be active at once, each activated by the capabilities
+  it declares.
+- A **theme** *looks like* something. It is presentation the site build reads —
+  CSS and assets, never code moss runs. Themes are exclusive: exactly one is
+  active, chosen by a pointer in your project's config.
+
+The registry is the layer they share: submit, review, release, index, install,
+update, revoke. It does not care which kind it is moving.
+
+The practical rule: **if it needs to run code, it is a plugin; if it only
+changes how things look, it is a theme.** A theme that wants logic is really a
+plugin (moss has a presentation hook for exactly that).
 
 > Previously this repo was a read-only mirror, generated from the moss monorepo
 > and force-pushed on each sync — which is why older docs said PRs could not be
@@ -69,10 +92,17 @@ Archived (no longer maintained): `astro`, `eleventy`, `gatsby`, `hugo`, `jekyll`
   assets/            manifest.json + icon, copied verbatim into the bundle
   package.json       standalone; pins @symbiosis-lab/moss-api, own lockfile
   dist/              build output — gitignored; CI builds it from src/
+themes/<id>/         a published theme (planned): style.css, assets, manifest,
+                     preview.png — no executable entry point
 registry/
   revoked.json       versions moss must refuse to load (the kill switch)
 WIP/, archive/       not published to the registry
 ```
+
+Installed packages land in different places, and neither overwrites work you
+authored yourself: a plugin installs to `.moss/plugins/<id>/`, a theme to
+`.moss/themes/<id>/`. Your own hand-written `.moss/theme/style.css` is yours
+alone — moss never replaces it, and it wins over an installed theme.
 
 `dist/` is never committed. The artifact users install is always built by CI from
 the source in the pull request, so what a reviewer reads is what ships.

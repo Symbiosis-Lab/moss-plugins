@@ -13,6 +13,13 @@ A moss publishing plugin for matters.town. See [moss.pub](https://mosspub.com) a
 
 This plugin is 0.x. APIs may change between minor versions until 1.0. See [CHANGELOG.md](../CHANGELOG.md).
 
+## Network access
+
+- `matters.town` — signs in, publishes and updates posts, and reads your
+  articles when importing.
+- `matters.icu` — the Matters staging environment. Only contacted when the
+  plugin is configured to use it.
+
 ## License
 
 MIT — see [LICENSE](../LICENSE).

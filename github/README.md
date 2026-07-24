@@ -13,6 +13,14 @@ A moss publishing plugin for GitHub Pages. See [moss.pub](https://mosspub.com) a
 
 This plugin is 0.x. APIs may change between minor versions until 1.0. See [CHANGELOG.md](../CHANGELOG.md).
 
+## Network access
+
+- `github.com` / `api.github.com` — creates and updates the deployment
+  repository, pushes the built site, and reads Pages/workflow status.
+
+This plugin also runs `git` on your machine to push the built site, which is why
+its manifest declares `requires: ["execute_binary"]`.
+
 ## License
 
 MIT — see [LICENSE](../LICENSE).

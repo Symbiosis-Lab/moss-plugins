@@ -5,6 +5,7 @@
   "author": "moss team",
   "entry": "main.bundle.js",
   "capabilities": ["deploy"],
+  "requires": ["execute_binary"],
   "domain": "github.com",
   "global_name": "GithubPlugin",
   "icon": "icon.svg",

@@ -24,11 +24,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Symbiosis-Lab/moss-plugins.git",
+    "url": "https://github.com/Symbiosis-Lab/moss-registry.git",
     "directory": "terrarium"
   },
   "devDependencies": {
-    "@symbiosis-lab/moss-api": "workspace:*",
+    "@symbiosis-lab/moss-api": "^0.10.0",
     "@tauri-apps/api": "^2.11.1",
     "@types/node": "^20.19.43",
     "esbuild": "^0.28.1",

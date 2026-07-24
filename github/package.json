@@ -33,12 +33,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Symbiosis-Lab/moss-plugins.git",
+    "url": "https://github.com/Symbiosis-Lab/moss-registry.git",
     "directory": "github"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.2.1",
-    "@symbiosis-lab/moss-api": "workspace:*",
+    "@symbiosis-lab/moss-api": "^0.10.0",
     "@types/node": "^20.19.43",
     "@vitest/coverage-v8": "^3.2.7",
     "chokidar-cli": "^3.0.0",

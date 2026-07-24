@@ -20,7 +20,7 @@
  *    articles that BELONG to this collection first), never in a re-created
  *    folder named after the remote title.
  */
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { setupMockTauri, type MockTauriContext } from "@symbiosis-lab/moss-api/testing";

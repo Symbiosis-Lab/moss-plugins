@@ -1,0 +1,106 @@
+name: validate
+
+# PR gate. This workflow runs UNTRUSTED contributor code (dependency installs,
+# esbuild, plugin tests), so it is deliberately powerless:
+#   - `pull_request`, never `pull_request_target` (fork PRs get no secrets)
+#   - read-only token, no secrets referenced anywhere
+#   - installs run with --ignore-scripts (verified compatible with esbuild,
+#     which resolves its platform binary via optionalDependencies)
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: detect changed plugins
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.detect.outputs.plugins }}
+      any: ${{ steps.detect.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        name: List changed top-level plugin directories
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # A "plugin" is a top-level directory containing assets/manifest.json.
+          # WIP/ and archive/ are containers, not plugins, so their nested
+          # changes reduce to a first path component that has no manifest and
+          # drop out here without needing an exclusion list.
+          selected=$(git diff --name-only "$BASE_SHA"...HEAD \
+            | cut -d/ -f1 | sort -u \
+            | while IFS= read -r dir; do
+                if [ -f "$dir/assets/manifest.json" ]; then
+                  printf '%s\n' "$dir"
+                fi
+              done)
+          if [ -z "$selected" ]; then
+            echo "No plugin directories touched."
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "plugins=[]" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Changed plugins:\n%s\n' "$selected"
+            json=$(printf '%s\n' "$selected" | jq -R . | jq -sc .)
+            echo "any=true" >> "$GITHUB_OUTPUT"
+            echo "plugins=$json" >> "$GITHUB_OUTPUT"
+          fi
+
+  validate:
+    name: ${{ matrix.plugin }}
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.detect.outputs.plugins) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags: the validator compares against released versions
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install (no lifecycle scripts)
+        working-directory: ${{ matrix.plugin }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build from source
+        working-directory: ${{ matrix.plugin }}
+        run: npm run build
+
+      - name: Test (unit scope only)
+        working-directory: ${{ matrix.plugin }}
+        run: |
+          # Run the UNIT scope, not the full `test`. A plugin's full suite may
+          # include features/e2e/integration projects that hit a live service,
+          # need a real browser, or need the moss binary — none of which this
+          # powerless gate has (matters' features/e2e call the live Matters API).
+          # test:unit is the deterministic subset, matching the monorepo's own
+          # plugin CI scope.
+          if node -e "process.exit(require('./package.json').scripts?.['test:unit'] ? 0 : 1)"; then
+            npm run test:unit
+          elif node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            echo "::warning::${{ matrix.plugin }} has no test:unit script; running full test — it must not depend on a browser, network, or the moss binary"
+            npm test
+          else
+            echo "No test script; skipping."
+          fi
+
+      # dist/ is gitignored, so what ships is always built here from the source
+      # under review — there is no committed build that could drift from it.
+      - name: Validate against registry rules
+        run: node .github/scripts/validate-plugin.mjs "${{ matrix.plugin }}"

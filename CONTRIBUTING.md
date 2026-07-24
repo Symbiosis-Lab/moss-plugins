@@ -81,7 +81,9 @@ Reopen the folder in moss to pick up a changed bundle.
 
 1. Bump `version` in **both** `package.json` and `assets/manifest.json` (CI
    rejects a mismatch), and add a `CHANGELOG.md` entry.
-2. Run `npm run build` and `npm test` locally. Don't commit `dist/` — it is
+2. Run `npm run build` and `npm run test:unit` locally (CI runs the unit
+   scope — keep those tests free of browser, network, and moss-binary
+   dependencies). Don't commit `dist/` — it is
    gitignored, and CI rebuilds it from your source so that what reviewers read
    is what ships.
 3. Open a PR touching only your plugin's directory.
